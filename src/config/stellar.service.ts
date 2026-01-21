@@ -6,29 +6,6 @@ export class StellarConfigService {
   constructor(private configService: ConfigService) {}
 
   get network(): string {
-<<<<<<< HEAD
-    return this.configService.get('stellar.network');
-  }
-
-  get horizonUrl(): string {
-    return this.configService.get('stellar.horizonUrl');
-  }
-
-  get sorobanRpcUrl(): string {
-    return this.configService.get('stellar.sorobanRpcUrl');
-  }
-
-  get networkPassphrase(): string {
-    return this.configService.get('stellar.networkPassphrase');
-  }
-
-  get apiTimeout(): number {
-    return this.configService.get('stellar.apiTimeout');
-  }
-
-  get maxRetries(): number {
-    return this.configService.get('stellar.maxRetries');
-=======
     return this.configService.get<string>('stellar.network') ?? 'testnet';
   }
 
@@ -59,7 +36,6 @@ export class StellarConfigService {
 
   get maxRetries(): number {
     return this.configService.get<number>('stellar.maxRetries') ?? 3;
->>>>>>> upstream/main
   }
 
   isTestnet(): boolean {
