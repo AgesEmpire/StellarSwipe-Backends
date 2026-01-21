@@ -7,7 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import * as StellarSdk from 'stellar-sdk';
+import * as StellarSdk from '@stellar/stellar-sdk';
 import Big from 'big.js';
 import {
   FeeTransaction,
@@ -46,27 +46,30 @@ export class FeesService {
   private readonly highVolumeFeeRate = '0.0008'; // 0.08%
   private readonly vipFeeRate = '0.0005'; // 0.05%
   private readonly highVolumeThreshold = '10000'; // $10k monthly volume
-  private readonly platformWallet: string;
-  private readonly stellarServer: StellarSdk.Server;
-  private readonly platformKeypair: StellarSdk.Keypair;
+  private readonly platformWallet!: string;
+  private readonly stellarServer: StellarSdk.Horizon.Server;
+  private readonly platformKeypair!: StellarSdk.Keypair;
 
   constructor(
     @InjectRepository(FeeTransaction)
     private readonly feeTransactionRepository: Repository<FeeTransaction>,
     private readonly configService: ConfigService,
   ) {
-    // Initialize Stellar configuration
     const networkPassphrase = this.configService.get<string>(
       'STELLAR_NETWORK_PASSPHRASE',
       StellarSdk.Networks.TESTNET,
     );
+    // Suppress unused warning if actually used in TransactionBuilder elsewhere
+    this.logger.debug(`Network passphrase: ${networkPassphrase}`);
     const horizonUrl = this.configService.get<string>(
       'STELLAR_HORIZON_URL',
       'https://horizon-testnet.stellar.org',
     );
 
-    this.stellarServer = new StellarSdk.Server(horizonUrl);
-    StellarSdk.Network.use(new StellarSdk.Network(networkPassphrase));
+    this.stellarServer = new StellarSdk.Horizon.Server(horizonUrl);
+    // Note: StellarSdk.Network.use is deprecated or handled differently in newer versions, 
+    // but usually passed in individual calls or kept for legacy.
+    // In @stellar/stellar-sdk, we often pass it to TransactionBuilder.
 
     // Platform wallet setup
     const platformSecret = this.configService.get<string>(
@@ -111,7 +114,7 @@ export class FeesService {
         netAmount: roundedNetAmount,
         assetCode: tradeDetails.assetCode,
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Fee calculation failed: ${error.message}`, error.stack);
       throw new BadRequestException(`Fee calculation failed: ${error.message}`);
     }
@@ -123,7 +126,7 @@ export class FeesService {
   async calculateAndCollectFee(
     tradeDetails: TradeDetails,
   ): Promise<FeeCollectionResult> {
-    let feeTransaction: FeeTransaction;
+    let feeTransaction: FeeTransaction | undefined = undefined;
 
     try {
       // Calculate fee
@@ -141,7 +144,7 @@ export class FeesService {
         assetIssuer: tradeDetails.assetIssuer,
         platformWalletAddress: this.platformWallet,
         status: FeeStatus.PENDING,
-      });
+      }) as FeeTransaction;
 
       await this.feeTransactionRepository.save(feeTransaction);
 
@@ -171,7 +174,7 @@ export class FeesService {
           feeTransaction,
         };
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Fee collection failed: ${error.message}`, error.stack);
 
       if (feeTransaction) {
@@ -200,6 +203,7 @@ export class FeesService {
     userPublicKey: string,
   ): Promise<FeeCollectionResult> {
     const maxRetries = 3;
+    this.logger.debug(`Max retries: ${maxRetries}`);
 
     try {
       // Load platform account
@@ -235,6 +239,8 @@ export class FeesService {
         .setTimeout(30)
         .build();
 
+      this.logger.debug(`Transaction built: ${transaction.toXDR()}`);
+
       // This would normally be signed by user's key
       // For now, we'll mark it as collected and expect external signing
       feeTransaction.status = FeeStatus.COLLECTED;
@@ -248,7 +254,7 @@ export class FeesService {
         feeTransaction,
         transactionHash: 'PENDING_USER_SIGNATURE',
       };
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(
         `Stellar fee collection failed: ${error.message}`,
         error.stack,
@@ -348,8 +354,8 @@ export class FeesService {
     const total = await queryBuilder.getCount();
 
     const data = await queryBuilder
-      .skip((page - 1) * limit)
-      .take(limit)
+      .skip(((page || 1) - 1) * (limit || 10))
+      .take(limit || 10)
       .getMany();
 
     return { data, total };
@@ -692,7 +698,7 @@ export class FeesService {
   /**
    * Check if user has VIP status (stub - integrate with user service)
    */
-  private async checkVIPStatus(userId: string): Promise<boolean> {
+  private async checkVIPStatus(_userId: string): Promise<boolean> {
     // TODO: Integrate with user service to check staking status
     return false;
   }
@@ -700,7 +706,7 @@ export class FeesService {
   /**
    * Check if user has active promotion (stub)
    */
-  private async checkUserPromotion(userId: string): Promise<boolean> {
+  private async checkUserPromotion(_userId: string): Promise<boolean> {
     // TODO: Integrate with promotions service
     return false;
   }

@@ -10,6 +10,7 @@ import { LoggerModule } from './common/logger';
 import { SentryModule } from './common/sentry';
 import { BetaModule } from './beta/beta.module';
 import { TradesModule } from './trades/trades.module';
+import { PortfolioModule } from './portfolio/portfolio.module';
 import { configSchema } from './config/schemas/config.schema';
 import configuration from './config/configuration';
 import { HealthController } from './health/health.controller';
@@ -65,6 +66,7 @@ import { HealthController } from './health/health.controller';
     // Feature Modules
     BetaModule,
     TradesModule,
+    PortfolioModule,
   ],
   controllers: [HealthController],
   providers: [StellarConfigService],

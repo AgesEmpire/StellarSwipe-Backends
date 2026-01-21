@@ -5,25 +5,25 @@ import { FeeTier, FeeStatus } from '../entities/fee-transaction.entity';
 
 export class FeeSummaryDto {
   @ApiProperty({ description: 'Total fees collected in the period' })
-  totalFeesCollected: string;
+  totalFeesCollected!: string;
 
   @ApiProperty({ description: 'Total trade volume in the period' })
-  totalTradeVolume: string;
+  totalTradeVolume!: string;
 
   @ApiProperty({ description: 'Number of fee transactions' })
-  transactionCount: number;
+  transactionCount!: number;
 
   @ApiProperty({ description: 'Average fee per transaction' })
-  averageFee: string;
+  averageFee!: string;
 
   @ApiProperty({ description: 'Failed fee collection count' })
-  failedCollections: number;
+  failedCollections!: number;
 
   @ApiProperty({ description: 'Pending fee collection count' })
-  pendingCollections: number;
+  pendingCollections!: number;
 
   @ApiProperty({ description: 'Fee breakdown by tier' })
-  feesByTier: {
+  feesByTier!: {
     [key in FeeTier]?: {
       count: number;
       totalFees: string;
@@ -32,7 +32,7 @@ export class FeeSummaryDto {
   };
 
   @ApiProperty({ description: 'Fee breakdown by asset' })
-  feesByAsset: {
+  feesByAsset!: {
     [assetCode: string]: {
       count: number;
       totalFees: string;
@@ -41,33 +41,33 @@ export class FeeSummaryDto {
   };
 
   @ApiProperty({ description: 'Period start date' })
-  periodStart: Date;
+  periodStart!: Date;
 
   @ApiProperty({ description: 'Period end date' })
-  periodEnd: Date;
+  periodEnd!: Date;
 }
 
 export class UserFeeSummaryDto {
   @ApiProperty({ description: 'User ID' })
-  userId: string;
+  userId!: string;
 
   @ApiProperty({ description: 'Total fees paid by user' })
-  totalFeesPaid: string;
+  totalFeesPaid!: string;
 
   @ApiProperty({ description: 'User trade volume' })
-  totalTradeVolume: string;
+  totalTradeVolume!: string;
 
   @ApiProperty({ description: 'Number of trades' })
-  tradeCount: number;
+  tradeCount!: number;
 
   @ApiProperty({ description: 'Current fee tier' })
-  currentFeeTier: FeeTier;
+  currentFeeTier!: FeeTier;
 
   @ApiProperty({ description: 'Current fee rate' })
-  currentFeeRate: string;
+  currentFeeRate!: string;
 
   @ApiProperty({ description: 'Monthly volume for tier calculation' })
-  monthlyVolume: string;
+  monthlyVolume!: string;
 
   @ApiProperty({ description: 'Fees saved compared to standard rate' })
   feesSaved?: string;
@@ -75,22 +75,22 @@ export class UserFeeSummaryDto {
 
 export class FeeCalculationDto {
   @ApiProperty({ description: 'Trade amount before fees' })
-  tradeAmount: string;
+  tradeAmount!: string;
 
   @ApiProperty({ description: 'Calculated fee amount' })
-  feeAmount: string;
+  feeAmount!: string;
 
   @ApiProperty({ description: 'Applied fee rate' })
-  feeRate: string;
+  feeRate!: string;
 
   @ApiProperty({ description: 'Fee tier applied' })
-  feeTier: FeeTier;
+  feeTier!: FeeTier;
 
   @ApiProperty({ description: 'Net amount after fee deduction' })
-  netAmount: string;
+  netAmount!: string;
 
   @ApiProperty({ description: 'Asset code' })
-  assetCode: string;
+  assetCode!: string;
 }
 
 export class GetFeeHistoryDto {
@@ -135,60 +135,60 @@ export class GetFeeHistoryDto {
 
 export class FeeConfigDto {
   @ApiProperty({ description: 'Standard fee rate', example: '0.001' })
-  standardRate: string;
+  standardRate!: string;
 
   @ApiProperty({ description: 'High volume fee rate', example: '0.0008' })
-  highVolumeRate: string;
+  highVolumeRate!: string;
 
   @ApiProperty({ description: 'VIP fee rate', example: '0.0005' })
-  vipRate: string;
+  vipRate!: string;
 
   @ApiProperty({ description: 'High volume threshold', example: '10000' })
-  highVolumeThreshold: string;
+  highVolumeThreshold!: string;
 
   @ApiProperty({ description: 'Platform wallet address' })
-  platformWalletAddress: string;
+  platformWalletAddress!: string;
 }
 
 export class MonthlyRevenueReportDto {
   @ApiProperty({ description: 'Report year' })
-  year: number;
+  year!: number;
 
   @ApiProperty({ description: 'Report month (1-12)' })
-  month: number;
+  month!: number;
 
   @ApiProperty({ description: 'Total revenue collected' })
-  totalRevenue: string;
+  totalRevenue!: string;
 
   @ApiProperty({ description: 'Total trade volume' })
-  totalVolume: string;
+  totalVolume!: string;
 
   @ApiProperty({ description: 'Number of transactions' })
-  transactionCount: number;
+  transactionCount!: number;
 
   @ApiProperty({ description: 'Number of unique users' })
-  uniqueUsers: number;
+  uniqueUsers!: number;
 
   @ApiProperty({ description: 'Revenue by tier' })
-  revenueByTier: {
+  revenueByTier!: {
     [key in FeeTier]?: string;
   };
 
   @ApiProperty({ description: 'Revenue by asset' })
-  revenueByAsset: {
+  revenueByAsset!: {
     [assetCode: string]: string;
   };
 
   @ApiProperty({ description: 'Top fee-paying users' })
-  topUsers: Array<{
+  topUsers!: Array<{
     userId: string;
     totalFees: string;
     tradeCount: number;
   }>;
 
   @ApiProperty({ description: 'Failed collections total' })
-  failedCollectionsTotal: string;
+  failedCollectionsTotal!: string;
 
   @ApiProperty({ description: 'Average fee per transaction' })
-  averageFeePerTransaction: string;
+  averageFeePerTransaction!: string;
 }

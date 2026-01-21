@@ -5,8 +5,6 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
-  ManyToOne,
-  JoinColumn,
 } from 'typeorm';
 
 export enum FeeStatus {
@@ -29,27 +27,27 @@ export enum FeeTier {
 @Index(['feeTier'])
 export class FeeTransaction {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column()
   @Index()
-  userId: string;
+  userId!: string;
 
   @Column({ type: 'decimal', precision: 20, scale: 7 })
-  tradeAmount: string;
+  tradeAmount!: string;
 
   @Column({ type: 'decimal', precision: 20, scale: 7 })
-  feeAmount: string;
+  feeAmount!: string;
 
   @Column({ type: 'decimal', precision: 5, scale: 4 })
-  feeRate: string; // Stored as decimal (e.g., 0.001 for 0.1%)
+  feeRate!: string; // Stored as decimal (e.g., 0.001 for 0.1%)
 
   @Column({
     type: 'enum',
     enum: FeeTier,
     default: FeeTier.STANDARD,
   })
-  feeTier: FeeTier;
+  feeTier!: FeeTier;
 
   @Column({
     type: 'enum',
@@ -57,31 +55,31 @@ export class FeeTransaction {
     default: FeeStatus.PENDING,
   })
   @Index()
-  status: FeeStatus;
+  status!: FeeStatus;
 
   @Column({ nullable: true })
-  tradeId: string;
+  tradeId?: string;
 
   @Column({ nullable: true })
-  stellarTransactionHash: string;
+  stellarTransactionHash?: string;
 
   @Column()
-  assetCode: string;
+  assetCode!: string;
 
   @Column()
-  assetIssuer: string;
+  assetIssuer!: string;
 
   @Column({ nullable: true })
-  platformWalletAddress: string;
+  platformWalletAddress!: string;
 
   @Column({ type: 'text', nullable: true })
-  failureReason: string;
+  failureReason?: string;
 
   @Column({ type: 'int', default: 0 })
-  retryCount: number;
+  retryCount!: number;
 
   @Column({ type: 'jsonb', nullable: true })
-  metadata: {
+  metadata?: {
     promotionCode?: string;
     originalFeeRate?: string;
     userTier?: string;
@@ -90,11 +88,11 @@ export class FeeTransaction {
   };
 
   @CreateDateColumn()
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn()
-  updatedAt: Date;
+  updatedAt!: Date;
 
   @Column({ type: 'timestamp', nullable: true })
-  collectedAt: Date;
+  collectedAt?: Date;
 }
