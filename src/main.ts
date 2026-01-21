@@ -1,26 +1,27 @@
-import { NestFactory } from '@nestjs/core';
-import { ConfigService } from '@nestjs/config';
-import { ValidationPipe } from '@nestjs/common';
-import { AppModule } from './app.module';
-import { GlobalExceptionFilter } from './common/filters';
+import { NestFactory } from "@nestjs/core";
+import { ConfigService } from "@nestjs/config";
+import { ValidationPipe } from "@nestjs/common";
+import { AppModule } from "./app.module";
+import { GlobalExceptionFilter } from "./common/filters";
 import {
   LoggingInterceptor,
   TransformInterceptor,
-} from './common/interceptors';
+} from "./common/interceptors";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
 
   // Get configuration
-  const port = configService.get('app.port');
-  const host = configService.get('app.host');
-  const apiPrefix = configService.get('app.apiPrefix');
-  const apiVersion = configService.get('app.apiVersion');
-  const corsConfig = configService.get('app.cors');
+  const port = configService.get("app.port");
+  const host = configService.get("app.host");
+  const apiPrefix = configService.get("app.apiPrefix");
+  const apiVersion = configService.get("app.apiVersion");
+  const corsConfig = configService.get("app.cors");
+  const globalPrefix = `${apiPrefix}/${apiVersion}`;
 
   // Set global prefix
-  app.setGlobalPrefix(`${apiPrefix}/${apiVersion}`);
+  app.setGlobalPrefix(globalPrefix);
 
   // Enable CORS
   app.enableCors(corsConfig);
@@ -45,14 +46,14 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TransformInterceptor());
 
   await app.listen(port, host, () => {
-    console.log(`StellarSwipe Backend running on http://${host}:${port}`);
+    console.log(`🚀 StellarSwipe Backend running on http://${host}:${port}`);
     console.log(
-      `API available at http://${host}:${port}/${apiPrefix}/${apiVersion}`,
+      `📚 API available at http://${host}:${port}${globalPrefix}`,
     );
   });
 }
 
 bootstrap().catch((err) => {
-  console.error('Failed to start application:', err);
+  console.error("Failed to start application:", err);
   process.exit(1);
 });

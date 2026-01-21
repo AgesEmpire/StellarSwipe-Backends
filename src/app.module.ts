@@ -6,6 +6,7 @@ import { databaseConfig, redisConfig } from './config/database.config';
 import { appConfig } from './config/app.config';
 import { StellarConfigService } from './config/stellar.service';
 import { BetaModule } from './beta/beta.module';
+import { TradesModule } from './trades/trades.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { BetaModule } from './beta/beta.module';
     }),
     // Feature Modules
     BetaModule,
+    TradesModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
