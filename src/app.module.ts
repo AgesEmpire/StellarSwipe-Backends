@@ -12,6 +12,7 @@ import { BetaModule } from './beta/beta.module';
 import { TradesModule } from './trades/trades.module';
 import { configSchema } from './config/schemas/config.schema';
 import configuration from './config/configuration';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import configuration from './config/configuration';
     BetaModule,
     TradesModule,
   ],
+  controllers: [HealthController],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
 })
