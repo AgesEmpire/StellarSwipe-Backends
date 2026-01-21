@@ -3,29 +3,29 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 @Entity('risk_settings')
 export class RiskSettings {
   @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  id: string = '';
 
   @Column({ type: 'uuid' })
-  userId!: string;
+  userId: string = '';
 
   @Column({ default: 10 })
-  maxOpenPositions!: number;
+  maxOpenPositions: number = 10;
 
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 50.0 })
-  maxExposurePercentage!: number;
+  maxExposurePercentage: number = 50;
 
   @Column({ default: true })
-  requireStopLoss!: boolean;
+  requireStopLoss: boolean = true;
 
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 5.0 })
-  minStopLossPercentage!: number;
+  minStopLossPercentage: number = 5;
 
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 20.0 })
-  maxStopLossPercentage!: number;
+  maxStopLossPercentage: number = 20;
 
   @CreateDateColumn()
-  createdAt!: Date;
+  createdAt: Date = new Date();
 
   @UpdateDateColumn()
-  updatedAt!: Date;
+  updatedAt: Date = new Date();
 }

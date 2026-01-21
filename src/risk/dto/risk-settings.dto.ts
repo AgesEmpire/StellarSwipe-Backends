@@ -4,25 +4,25 @@ export class CreateRiskSettingsDto {
   @IsNumber()
   @Min(1)
   @Max(50)
-  maxOpenPositions!: number;
+  maxOpenPositions: number = 10;
 
   @IsNumber()
   @Min(1)
   @Max(100)
-  maxExposurePercentage!: number;
+  maxExposurePercentage: number = 50;
 
   @IsBoolean()
-  requireStopLoss!: boolean;
+  requireStopLoss: boolean = true;
 
   @IsNumber()
   @Min(1)
   @Max(100)
-  minStopLossPercentage!: number;
+  minStopLossPercentage: number = 5;
 
   @IsNumber()
   @Min(1)
   @Max(100)
-  maxStopLossPercentage!: number;
+  maxStopLossPercentage: number = 20;
 }
 
 export class UpdateRiskSettingsDto {

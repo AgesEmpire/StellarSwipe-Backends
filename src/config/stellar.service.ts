@@ -1,39 +1,48 @@
-import { ConfigService } from "@nestjs/config";
-import { Injectable } from "@nestjs/common";
+import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class StellarConfigService {
   constructor(private configService: ConfigService) {}
 
   get network(): string {
-    return this.configService.get("stellar.network");
+    return this.configService.get<string>('stellar.network') ?? 'testnet';
   }
 
   get horizonUrl(): string {
-    return this.configService.get("stellar.horizonUrl");
+    return (
+      this.configService.get<string>('stellar.horizonUrl') ??
+      'https://horizon-testnet.stellar.org'
+    );
   }
 
   get sorobanRpcUrl(): string {
-    return this.configService.get("stellar.sorobanRpcUrl");
+    return (
+      this.configService.get<string>('stellar.sorobanRpcUrl') ??
+      'https://soroban-testnet.stellar.org:443'
+    );
   }
 
   get networkPassphrase(): string {
-    return this.configService.get("stellar.networkPassphrase");
+    return (
+      this.configService.get<string>('stellar.networkPassphrase') ??
+      'Test SDF Network ; September 2015'
+    );
   }
 
   get apiTimeout(): number {
-    return this.configService.get("stellar.apiTimeout");
+    return this.configService.get<number>('stellar.apiTimeout') ?? 30000;
   }
 
   get maxRetries(): number {
-    return this.configService.get("stellar.maxRetries");
+    return this.configService.get<number>('stellar.maxRetries') ?? 3;
   }
 
   isTestnet(): boolean {
-    return this.network === "testnet";
+    return this.network === 'testnet';
   }
 
   isMainnet(): boolean {
-    return this.network === "mainnet";
+    return this.network === 'mainnet';
   }
 }
