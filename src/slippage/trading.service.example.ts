@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SlippageProtectionService } from './slippage/slippage-protection.service';
-import { SlippageCalculatorService } from './slippage/slippage-calculator.service';
+import { SlippageProtectionService } from './slippage-protection.service';
+import { SlippageCalculatorService } from './slippage-calculator.service';
 import {
   SlippageConfigDto,
   SlippageToleranceLevel,
-} from './slippage/dto/slippage-config.dto';
+} from './dto/slippage-config.dto';
 
 /**
  * Example integration showing how to use the slippage module
@@ -131,10 +131,10 @@ export class TradingService {
         actualSlippage: slippageReport.slippagePercent,
       };
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(
         `Error executing trade for ${params.symbol}`,
-        error.stack,
+        (error as Error).stack,
       );
       throw error;
     }
@@ -214,7 +214,7 @@ export class TradingService {
           : 'N/A',
         totalCost: `$${statistics.totalSlippageCost.toFixed(2)}`,
       },
-      recentTrades: recentReports.map(r => ({
+      recentTrades: recentReports.map((r: any) => ({
         timestamp: r.timestamp,
         side: r.side,
         expectedPrice: r.expectedPrice,
@@ -289,8 +289,8 @@ export class TradingService {
    * Mock method - replace with actual exchange integration
    */
   private async getCurrentMarketPrice(
-    symbol: string,
-    side: 'buy' | 'sell',
+    _symbol: string,
+    _side: 'buy' | 'sell',
   ): Promise<number> {
     // TODO: Integrate with your exchange API
     return 45000;
@@ -317,4 +317,4 @@ export class TradingService {
       actualPrice: basePrice * slippageFactor,
     };
   }
-}g
+}

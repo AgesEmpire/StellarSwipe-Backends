@@ -16,7 +16,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { FeesService } from './fee.service';
+import { FeesService } from './fees.service';
 import {
   FeeSummaryDto,
   UserFeeSummaryDto,

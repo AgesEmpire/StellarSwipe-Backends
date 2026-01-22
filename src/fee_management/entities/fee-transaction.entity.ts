@@ -85,7 +85,7 @@ export class FeeTransaction {
     userTier?: string;
     monthlyVolume?: string;
     [key: string]: any;
-  };
+  } = {};
 
   @CreateDateColumn()
   createdAt!: Date;

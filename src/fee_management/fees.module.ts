@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
-import { FeesService } from './fee.service';
+import { FeesService } from './fees.service';
 import { FeesController } from './fees.controller';
 import { FeeTransaction } from './entities/fee-transaction.entity';
 

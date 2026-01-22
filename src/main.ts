@@ -77,6 +77,9 @@ async function bootstrap() {
     logger.info(
       `📚 API available at http://${host}:${port}${globalPrefix}`,
     );
+    logger.info(
+      `📚 Swagger documentation at http://${host}:${port}${globalPrefix}/docs`,
+    );
   });
 
   // Unhandled rejection handler
@@ -110,7 +113,6 @@ async function bootstrap() {
     await sentryService.flush();
     await app.close();
   });
-
 
 }
 

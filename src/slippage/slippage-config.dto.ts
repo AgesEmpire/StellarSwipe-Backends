@@ -17,7 +17,7 @@ export class SlippageConfigDto {
   @IsNumber()
   @Min(0)
   @Max(100)
-  maxSlippagePercent: number;
+  maxSlippagePercent: number = 0.5;
 
   @ApiPropertyOptional({
     description: 'Predefined slippage tolerance level',
@@ -26,14 +26,14 @@ export class SlippageConfigDto {
   })
   @IsOptional()
   @IsEnum(SlippageToleranceLevel)
-  toleranceLevel?: SlippageToleranceLevel;
+  toleranceLevel?: SlippageToleranceLevel = SlippageToleranceLevel.MODERATE;
 
   @ApiPropertyOptional({
     description: 'Enable automatic slippage adjustment based on market conditions',
     example: true,
   })
   @IsOptional()
-  enableDynamicSlippage?: boolean;
+  enableDynamicSlippage?: boolean = true;
 
   @ApiPropertyOptional({
     description: 'Maximum execution time in milliseconds before considering price stale',
@@ -45,7 +45,7 @@ export class SlippageConfigDto {
   @IsNumber()
   @Min(100)
   @Max(30000)
-  maxExecutionTimeMs?: number;
+  maxExecutionTimeMs?: number = 5000;
 }
 
 export class SlippageEstimationDto {
@@ -53,13 +53,13 @@ export class SlippageEstimationDto {
     description: 'Symbol/trading pair',
     example: 'BTC/USD',
   })
-  symbol: string;
+  symbol: string = '';
 
   @ApiProperty({
     description: 'Trade side (buy/sell)',
     example: 'buy',
   })
-  side: 'buy' | 'sell';
+  side: 'buy' | 'sell' = 'buy';
 
   @ApiProperty({
     description: 'Order size/quantity',
@@ -67,7 +67,7 @@ export class SlippageEstimationDto {
   })
   @IsNumber()
   @Min(0)
-  quantity: number;
+  quantity: number = 0;
 
   @ApiPropertyOptional({
     description: 'Expected price for the trade',
@@ -83,61 +83,61 @@ export class SlippageReportDto {
     description: 'Expected price before execution',
     example: 45000.00,
   })
-  expectedPrice: number;
+  expectedPrice: number = 0;
 
   @ApiProperty({
     description: 'Actual execution price',
     example: 45022.50,
   })
-  actualPrice: number;
+  actualPrice: number = 0;
 
   @ApiProperty({
     description: 'Slippage amount in currency units',
     example: 22.50,
   })
-  slippageAmount: number;
+  slippageAmount: number = 0;
 
   @ApiProperty({
     description: 'Slippage percentage',
     example: 0.05,
   })
-  slippagePercent: number;
+  slippagePercent: number = 0;
 
   @ApiProperty({
     description: 'Trade quantity',
     example: 1.5,
   })
-  quantity: number;
+  quantity: number = 0;
 
   @ApiProperty({
     description: 'Total cost impact of slippage',
     example: 33.75,
   })
-  totalSlippageCost: number;
+  totalSlippageCost: number = 0;
 
   @ApiProperty({
     description: 'Whether slippage was within acceptable limits',
     example: true,
   })
-  withinLimits: boolean;
+  withinLimits: boolean = true;
 
   @ApiProperty({
     description: 'Timestamp of the report',
     example: '2026-01-21T10:30:00Z',
   })
-  timestamp: Date;
+  timestamp: Date = new Date();
 
   @ApiProperty({
     description: 'Trading symbol',
     example: 'BTC/USD',
   })
-  symbol: string;
+  symbol: string = '';
 
   @ApiProperty({
     description: 'Trade side',
     example: 'buy',
   })
-  side: 'buy' | 'sell';
+  side: 'buy' | 'sell' = 'buy';
 }
 
 export class SlippageEstimateResponseDto {
@@ -145,44 +145,44 @@ export class SlippageEstimateResponseDto {
     description: 'Estimated slippage percentage',
     example: 0.12,
   })
-  estimatedSlippagePercent: number;
+  estimatedSlippagePercent: number = 0;
 
   @ApiProperty({
     description: 'Estimated slippage amount',
     example: 54.00,
   })
-  estimatedSlippageAmount: number;
+  estimatedSlippageAmount: number = 0;
 
   @ApiProperty({
     description: 'Current market price',
     example: 45000.00,
   })
-  currentMarketPrice: number;
+  currentMarketPrice: number = 0;
 
   @ApiProperty({
     description: 'Estimated execution price range',
     example: { min: 44946.00, max: 45054.00 },
   })
-  estimatedPriceRange: {
+  estimatedPriceRange!: {
     min: number;
     max: number;
-  };
+  } = { min: 0, max: 0 };
 
   @ApiProperty({
     description: 'Market liquidity indicator (0-1, higher is better)',
     example: 0.85,
   })
-  liquidityScore: number;
+  liquidityScore: number = 0;
 
   @ApiProperty({
     description: 'Recommended action based on current conditions',
     example: 'proceed',
   })
-  recommendation: 'proceed' | 'caution' | 'delay';
+  recommendation: 'proceed' | 'caution' | 'delay' = 'proceed';
 
   @ApiProperty({
     description: 'Reasoning for the recommendation',
     example: 'Market conditions are favorable with good liquidity',
   })
-  reasoning: string;
+  reasoning: string = '';
 }

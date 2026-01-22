@@ -11,11 +11,16 @@ import { LoggerModule } from './common/logger';
 import { SentryModule } from './common/sentry';
 import { BetaModule } from './beta/beta.module';
 import { TradesModule } from './trades/trades.module';
+import { RiskManagerModule } from './risk/risk-manager.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
+ feat/signal-performance
+
+import { UsersModule } from './users/users.module';
+ main
 import { SignalsModule } from './signals/signals.module';
 import { configSchema } from './config/schemas/config.schema';
 import configuration from './config/configuration';
-import { HealthController } from './health/health.controller';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -63,6 +68,7 @@ import { HealthController } from './health/health.controller';
         migrations: ['dist/migrations/*{.ts,.js}'],
         subscribers: ['dist/subscribers/*{.ts,.js}'],
         ssl: configService.get<boolean>('database.ssl') ?? false,
+ feat/signal-performance
       }),
     }),
     // Bull Queue Module for background jobs
@@ -76,15 +82,22 @@ import { HealthController } from './health/health.controller';
           password: configService.get<string>('redis.password'),
           db: configService.get<number>('redis.db'),
         },
+ main
       }),
     }),
     // Feature Modules
+    UsersModule,
+    SignalsModule,
     BetaModule,
     TradesModule,
+    RiskManagerModule,
     PortfolioModule,
+ feat/signal-performance
     SignalsModule,
+
+    HealthModule,
+ main
   ],
-  controllers: [HealthController],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
 })

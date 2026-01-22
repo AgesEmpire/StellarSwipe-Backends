@@ -5,15 +5,23 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+ feat/signal-performance
   Index,
 } from 'typeorm';
 import { Signal } from './signal.entity';
 
 @Entity('signal_performance')
+
+} from 'typeorm';
+import { Signal } from './signal.entity';
+
+@Entity('signal_performances')
+ main
 export class SignalPerformance {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+ feat/signal-performance
   @Column({ name: 'signal_id', type: 'uuid' })
   @Index()
   signalId!: string;
@@ -60,4 +68,24 @@ export class SignalPerformance {
 
   @CreateDateColumn({ name: 'checked_at' })
   checkedAt!: Date;
+
+  @Column()
+  signal_id!: string;
+
+  @ManyToOne(() => Signal)
+  @JoinColumn({ name: 'signal_id' })
+  signal!: Signal;
+
+  @Column({ type: 'decimal', precision: 18, scale: 8 })
+  price_at_timestamp!: number;
+
+  @Column({ type: 'decimal', precision: 18, scale: 8 })
+  unrealized_pnl!: number;
+
+  @Column({ type: 'decimal', precision: 5, scale: 2 })
+  current_roi!: number;
+
+  @CreateDateColumn()
+  timestamp!: Date;
+ main
 }
