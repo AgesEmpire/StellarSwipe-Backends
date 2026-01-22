@@ -21,6 +21,7 @@ import configuration from './config/configuration';
 import { HealthModule } from './health/health.module';
 import { CacheModule } from './cache/cache.module';
 import { redisCacheConfig } from './config/redis.config';
+import { SorobanModule } from './soroban/soroban.module';
 
 @Module({
   imports: [
@@ -95,6 +96,7 @@ import { redisCacheConfig } from './config/redis.config';
     HealthModule,
     // Cache Module - Redis-based caching for sessions and data
     CacheModule,
+    SorobanModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
