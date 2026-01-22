@@ -1,17 +1,21 @@
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { StellarConfigService } from "../config/stellar.service";
-import { TradesController } from "./trades.controller";
-import { LimitOrderService } from "./services/limit-order.service";
-import { MarketOrderService } from "./services/market-order.service";
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Trade } from './entities/trade.entity';
+import { TradesController } from './trades.controller';
+import { TradesService } from './trades.service';
+import { RiskManagerService } from './services/risk-manager.service';
+import { TradeExecutorService } from './services/trade-executor.service';
+import { StellarConfigService } from '../config/stellar.service';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [TypeOrmModule.forFeature([Trade])],
   controllers: [TradesController],
   providers: [
+    TradesService,
+    RiskManagerService,
+    TradeExecutorService,
     StellarConfigService,
-    MarketOrderService,
-    LimitOrderService,
   ],
+  exports: [TradesService, RiskManagerService],
 })
 export class TradesModule {}

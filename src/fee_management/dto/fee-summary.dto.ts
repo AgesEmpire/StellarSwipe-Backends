@@ -70,7 +70,7 @@ export class UserFeeSummaryDto {
   monthlyVolume!: string;
 
   @ApiProperty({ description: 'Fees saved compared to standard rate' })
-  feesSaved?: string;
+  feesSaved?: string = '0';
 }
 
 export class FeeCalculationDto {

@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { Keypair, Asset, Networks, Operation, Memo, TransactionBuilder } from '@stellar/stellar-sdk';
 import Big from 'big.js';
 import {
   FeeTransaction,
@@ -56,12 +57,13 @@ export class FeesService {
     private readonly feeTransactionRepository: Repository<FeeTransaction>,
     private readonly configService: ConfigService,
   ) {
-    const networkPassphrase = this.configService.get<string>(
+    // Initialize Stellar configuration
+    this.networkPassphrase = this.configService.get<string>(
       'STELLAR_NETWORK_PASSPHRASE',
-      StellarSdk.Networks.TESTNET,
+      Networks.TESTNET,
     );
     // Suppress unused warning if actually used in TransactionBuilder elsewhere
-    this.logger.debug(`Network passphrase: ${networkPassphrase}`);
+    this.logger.debug(`Network passphrase: ${this.networkPassphrase}`);
     const horizonUrl = this.configService.get<string>(
       'STELLAR_HORIZON_URL',
       'https://horizon-testnet.stellar.org',
@@ -79,7 +81,7 @@ export class FeesService {
     if (!platformSecret) {
       this.logger.warn('Platform wallet secret not configured');
     } else {
-      this.platformKeypair = StellarSdk.Keypair.fromSecret(platformSecret);
+      this.platformKeypair = Keypair.fromSecret(platformSecret);
       this.platformWallet = this.platformKeypair.publicKey();
     }
     
@@ -221,19 +223,19 @@ export class FeesService {
       // Create asset
       const asset =
         feeTransaction.assetCode === 'XLM'
-          ? StellarSdk.Asset.native()
-          : new StellarSdk.Asset(
+          ? Asset.native()
+          : new Asset(
               feeTransaction.assetCode,
               feeTransaction.assetIssuer,
             );
 
       // Build transaction
-      const transaction = new StellarSdk.TransactionBuilder(platformAccount, {
+      const transaction = new TransactionBuilder(platformAccount, {
         fee: StellarSdk.BASE_FEE,
         networkPassphrase: this.networkPassphrase,
       })
         .addOperation(
-          StellarSdk.Operation.payment({
+          Operation.payment({
             destination: this.platformWallet,
             asset: asset,
             amount: feeTransaction.feeAmount,
@@ -241,7 +243,7 @@ export class FeesService {
           }),
         )
         .addMemo(
-          StellarSdk.Memo.text(`Fee:${feeTransaction.id.substring(0, 20)}`),
+          Memo.text(`Fee:${feeTransaction.id.substring(0, 20)}`),
         )
         .setTimeout(30)
         .build();
