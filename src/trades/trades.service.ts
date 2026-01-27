@@ -12,6 +12,7 @@ import {
 } from './dto/trade-result.dto';
 import { RiskManagerService, UserBalance } from './services/risk-manager.service';
 import { TradeExecutorService } from './services/trade-executor.service';
+import { RiskManagerService as VelocityRiskManager } from '../risk/risk-manager.service';
 
 interface SignalData {
   id: string;
@@ -33,6 +34,7 @@ export class TradesService {
     private readonly tradeRepository: Repository<Trade>,
     private readonly riskManager: RiskManagerService,
     private readonly tradeExecutor: TradeExecutorService,
+    private readonly velocityRiskManager: VelocityRiskManager,
   ) {}
 
   async executeTrade(dto: ExecuteTradeDto): Promise<TradeResultDto> {
@@ -50,7 +52,7 @@ export class TradesService {
     // Get user balance (in production, fetch from UserService/WalletService)
     const userBalance = await this.getUserBalance(dto.userId);
 
-    // Validate trade
+    // Validate trade with velocity checks
     const validation = await this.riskManager.validateTrade(dto, signalData, userBalance);
     if (!validation.isValid) {
       throw new BadRequestException({
@@ -58,6 +60,20 @@ export class TradesService {
         errors: validation.errors,
       });
     }
+
+    // Additional velocity validation
+    await this.velocityRiskManager.validateTrade(
+      {
+        userId: dto.userId,
+        asset: `${signalData.baseAsset}/${signalData.counterAsset}`,
+        amount: dto.amount,
+        entryPrice: parseFloat(signalData.entryPrice),
+        stopLossPrice: dto.stopLossPrice,
+      },
+      0, // currentOpenPositions - would be calculated in production
+      0, // totalExposureAmount - would be calculated in production
+      parseFloat(userBalance.available),
+    );
 
     // Create trade record
     const trade = this.tradeRepository.create({
@@ -96,6 +112,14 @@ export class TradesService {
       }
 
       await this.tradeRepository.save(trade);
+
+      // Record trade execution for velocity tracking
+      await this.velocityRiskManager.recordTradeExecution({
+        userId: trade.userId,
+        asset: `${trade.baseAsset}/${trade.counterAsset}`,
+        amount: parseFloat(trade.amount),
+        entryPrice: parseFloat(trade.entryPrice),
+      });
 
       this.logger.log(`Trade ${trade.id} executed successfully. Hash: ${trade.transactionHash}`);
 
@@ -163,6 +187,11 @@ export class TradesService {
       trade.closedAt = new Date();
 
       await this.tradeRepository.save(trade);
+
+      // Handle large loss for velocity tracking
+      if (parseFloat(profitLoss) < -1000) { // Loss threshold
+        await this.velocityRiskManager.handleTradeLoss(trade.userId, Math.abs(parseFloat(profitLoss)));
+      }
 
       this.logger.log(`Trade ${trade.id} closed. P&L: ${profitLoss} (${profitLossPercentage}%)`);
 

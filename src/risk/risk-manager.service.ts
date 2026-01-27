@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RiskSettings } from './entities/risk-settings.entity';
 import { UpdateRiskSettingsDto } from './dto/risk-settings.dto';
+import { VelocityCheckerService, TradeRequest } from './velocity/velocity-checker.service';
 
 export interface TradeDetails {
   userId: string;
@@ -17,6 +18,7 @@ export class RiskManagerService {
   constructor(
     @InjectRepository(RiskSettings)
     private readonly riskSettingsRepository: Repository<RiskSettings>,
+    private readonly velocityChecker: VelocityCheckerService,
   ) {}
 
   async getSettings(userId: string): Promise<RiskSettings> {
@@ -46,13 +48,26 @@ export class RiskManagerService {
 
   async validateTrade(trade: TradeDetails, currentOpenPositions: number, totalExposureAmount: number, userBalance: number): Promise<boolean> {
     const settings = await this.getSettings(trade.userId);
+    const tradeValue = (trade.amount * trade.entryPrice).toFixed(8);
 
-    // 1. Check open position count
+    // 1. Velocity and limits check
+    const velocityCheck = await this.velocityChecker.checkVelocity({
+      userId: trade.userId,
+      amount: trade.amount.toString(),
+      value: tradeValue,
+      assetPair: trade.asset,
+    });
+
+    if (!velocityCheck.allowed) {
+      throw new BadRequestException(velocityCheck.reason);
+    }
+
+    // 2. Check open position count
     if (currentOpenPositions >= settings.maxOpenPositions) {
       throw new BadRequestException(`Maximum open positions reached (${settings.maxOpenPositions})`);
     }
 
-    // 2. Stop-loss validation
+    // 3. Stop-loss validation
     if (settings.requireStopLoss) {
       if (!trade.stopLossPrice) {
         throw new BadRequestException('Stop-loss is required for this trade');
@@ -66,7 +81,7 @@ export class RiskManagerService {
       }
     }
 
-    // 3. Exposure validation
+    // 4. Exposure validation
     const newExposure = totalExposureAmount + (trade.amount * trade.entryPrice);
     const maxExposureValue = userBalance * (settings.maxExposurePercentage / 100);
     
@@ -76,7 +91,7 @@ export class RiskManagerService {
       );
     }
 
-    // 4. Sufficient balance for potential loss
+    // 5. Sufficient balance for potential loss
     if (trade.stopLossPrice) {
       const potentialLoss = (trade.entryPrice - trade.stopLossPrice) * trade.amount;
       if (potentialLoss > userBalance) {
@@ -85,5 +100,20 @@ export class RiskManagerService {
     }
 
     return true;
+  }
+
+  async recordTradeExecution(trade: TradeDetails): Promise<void> {
+    const tradeValue = (trade.amount * trade.entryPrice).toFixed(8);
+    
+    await this.velocityChecker.recordTrade({
+      userId: trade.userId,
+      amount: trade.amount.toString(),
+      value: tradeValue,
+      assetPair: trade.asset,
+    });
+  }
+
+  async handleTradeLoss(userId: string, lossAmount: number): Promise<void> {
+    await this.velocityChecker.handleLargeLoss(userId, lossAmount.toFixed(8));
   }
 }
