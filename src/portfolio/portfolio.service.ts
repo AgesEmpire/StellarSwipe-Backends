@@ -1,13 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { Trade, TradeStatus, TradeSide } from '../trades/entities/trade.entity';
+import { Trade, TradeStatus } from '../trades/entities/trade.entity';
 import { PriceService } from '../shared/price.service';
 import { PositionDetailDto } from './dto/position-detail.dto';
 import { PortfolioSummaryDto, TradeDetail } from './dto/portfolio-summary.dto';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject } from '@nestjs/common';
 import { Cache } from 'cache-manager';
+import { PnlCalculatorService } from './services/pnl-calculator.service';
 
 @Injectable()
 export class PortfolioService {
@@ -16,6 +17,7 @@ export class PortfolioService {
     private tradeRepository: Repository<Trade>,
     private priceService: PriceService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private pnlCalculator: PnlCalculatorService,
   ) {}
 
   async getPositions(userId: string): Promise<PositionDetailDto[]> {
@@ -37,7 +39,7 @@ export class PortfolioService {
     return openTrades.map((trade) => {
       const pair = `${trade.baseAsset}/${trade.counterAsset}`;
       const currentPrice = prices[pair] || Number(trade.entryPrice);
-      const unrealizedPnL = this.calculateUnrealizedPnL(trade, currentPrice);
+      const unrealizedPnL = this.pnlCalculator.calculateUnrealizedPnL(trade, currentPrice);
 
       return {
         id: trade.id,
@@ -99,7 +101,6 @@ export class PortfolioService {
     for (const trade of allTrades) {
       if (trade.status === TradeStatus.COMPLETED) {
         const pnl = Number(trade.profitLoss || 0);
-        realizedPnL += pnl;
         closedTradesCount++;
         if (pnl > 0) winningTrades++;
         
@@ -127,11 +128,15 @@ export class PortfolioService {
         openPositions++;
         const pair = `${trade.baseAsset}/${trade.counterAsset}`;
         const currentPrice = prices[pair] || Number(trade.entryPrice);
-        const positionPnL = this.calculateUnrealizedPnL(trade, currentPrice);
+        const positionPnL = this.pnlCalculator.calculateUnrealizedPnL(trade, currentPrice);
         unrealizedPnL += positionPnL;
         totalValue += Number(trade.amount) * currentPrice;
       }
     }
+
+    const pnlBreakdown = this.pnlCalculator.calculatePortfolioPnl(allTrades, prices);
+    realizedPnL = pnlBreakdown.realizedPnL;
+    unrealizedPnL = pnlBreakdown.unrealizedPnL;
 
     const winRate = closedTradesCount > 0 ? (winningTrades / closedTradesCount) * 100 : 0;
 
@@ -149,14 +154,5 @@ export class PortfolioService {
     return result;
   }
 
-  private calculateUnrealizedPnL(trade: Trade, currentPrice: number): number {
-    const amount = Number(trade.amount);
-    const entryPrice = Number(trade.entryPrice);
-    
-    if (trade.side === TradeSide.BUY) {
-      return (currentPrice - entryPrice) * amount;
-    } else {
-      return (entryPrice - currentPrice) * amount;
-    }
-  }
+  // Unrealized PnL is delegated to PnlCalculatorService for fee inclusion.
 }
