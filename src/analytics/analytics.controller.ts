@@ -6,12 +6,15 @@ import {
   Post,
   Query,
   BadRequestException,
+  Req,
 } from '@nestjs/common';
 import { IsEnum, IsISO8601, IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsQueryDto } from './dto/analytics-query.dto';
 import { MetricPeriod } from './entities/metric-snapshot.entity';
 import { UserEventType } from './entities/user-event.entity';
+import { RiskMetricsService } from './services/risk-metrics.service';
+import { RiskMetricsQueryDto } from './dto/risk-metrics.dto';
 
 class TrackEventDto {
   @IsEnum(UserEventType)
@@ -39,7 +42,10 @@ class TrackEventDto {
 
 @Controller('analytics')
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(
+    private readonly analyticsService: AnalyticsService,
+    private readonly riskMetricsService: RiskMetricsService,
+  ) {}
 
   @Post('events')
   async trackEvent(@Body() body: TrackEventDto) {
@@ -106,5 +112,15 @@ export class AnalyticsController {
       endDate,
       timezone,
     });
+  }
+
+  @Get('risk-metrics')
+  async getRiskMetrics(@Req() req: any, @Query() query: RiskMetricsQueryDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User authentication required');
+    }
+
+    return this.riskMetricsService.calculateRiskMetrics(userId, query.days);
   }
 }
