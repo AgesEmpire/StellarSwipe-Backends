@@ -26,6 +26,7 @@ import { CacheModule } from './cache/cache.module';
 import { redisCacheConfig } from './config/redis.config';
 import { SorobanModule } from './soroban/soroban.module';
 import { SdexModule } from './sdex/sdex.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -103,6 +104,7 @@ import { SdexModule } from './sdex/sdex.module';
     SdexModule,
     SorobanModule,
     CacheModule,
+    SubscriptionsModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
