@@ -26,6 +26,7 @@ import { CacheModule } from './cache/cache.module';
 import { redisCacheConfig } from './config/redis.config';
 import { SorobanModule } from './soroban/soroban.module';
 import { SdexModule } from './sdex/sdex.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { StellarModule } from './stellar/stellar.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { RatingsModule } from './ratings/ratings.module';
@@ -121,6 +122,7 @@ import { MentorshipModule } from './mentorship/mentorship.module';
     SorobanModule,
     StellarModule,
     CacheModule,
+    SubscriptionsModule,
     AuthModule,
     WebsocketModule,
     LocalI18nModule,
