@@ -42,6 +42,7 @@ import { ProvidersModule } from './providers/providers.module';
 import { MlModule } from './ml/ml.module';
 import { ValidationModule } from './common/validation/validation.module';
 import { ScalingModule } from './scaling/scaling.module';
+import { VersioningModule } from './common/modules/versioning.module';
 
 
 @Module({
@@ -134,6 +135,7 @@ import { ScalingModule } from './scaling/scaling.module';
     ProvidersModule,
     MlModule,
     ScalingModule,
+    VersioningModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],

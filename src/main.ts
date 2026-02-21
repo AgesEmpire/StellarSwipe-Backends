@@ -90,12 +90,23 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('StellarSwipe API')
     .setDescription('Copy trading DApp on Stellar')
-    .setVersion('1.0')
+    .setVersion('2.0')
     .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
+
+  // V1 Swagger (Deprecated)
+  const configV1 = new DocumentBuilder()
+    .setTitle('StellarSwipe API v1 (Deprecated)')
+    .setDescription('Legacy API - Sunset: 2025-12-31')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+
+  const documentV1 = SwaggerModule.createDocument(app, configV1);
+  SwaggerModule.setup('api/v1/docs', app, documentV1);
 
   await app.listen(port, host, () => {
     logger.info(`🚀 StellarSwipe Backend running on http://${host}:${port}`);
