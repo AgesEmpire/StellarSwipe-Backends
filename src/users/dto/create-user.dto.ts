@@ -13,13 +13,13 @@ export class CreateUserDto {
     @Length(3, 50)
     username!: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
     @Length(56, 56, { message: 'Wallet address must be exactly 56 characters' })
     @Matches(/^G[A-Z2-7]{55}$/, {
         message: 'Invalid Stellar wallet address format',
     })
-    walletAddress!: string;
+    walletAddress?: string;
 
     @IsOptional()
     @IsEmail()

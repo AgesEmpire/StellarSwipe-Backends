@@ -3,15 +3,17 @@ import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
-import { Keypair } from '@stellar/stellar-sdk'; // Will verify this import
+import { Keypair } from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class AuthService {
     constructor(
         private jwtService: JwtService,
+        private usersService: UsersService,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
     ) { }
 
@@ -54,8 +56,11 @@ export class AuthService {
         // 3. Clear challenge after successful verification (prevent replay)
         await this.cacheManager.del(`auth_challenge:${publicKey}`);
 
-        // 4. Generate JWT
-        const payload: JwtPayload = { sub: publicKey };
+        // 4. Find or create user
+        const user = await this.usersService.findOrCreateByWalletAddress(publicKey);
+
+        // 5. Generate JWT using Internal User ID
+        const payload: JwtPayload = { sub: user.id };
         const accessToken = this.jwtService.sign(payload);
 
         return { accessToken };

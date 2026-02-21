@@ -32,7 +32,7 @@ export class UsersService {
             if (existingUser.deletedAt) {
                 // Restore soft-deleted user
                 await this.userRepository.restore(existingUser.id);
-                return this.findByWalletAddress(createUserDto.walletAddress);
+                return this.findByWalletAddress(createUserDto.walletAddress!);
             }
             throw new ConflictException('User with this wallet address already exists');
         }
@@ -180,5 +180,18 @@ export class UsersService {
         return this.sessionRepository.find({
             where: { userId: user.id, isActive: true },
         });
+    }
+
+    async updateWalletAddress(userId: string, walletAddress: string): Promise<User> {
+        const user = await this.findById(userId);
+
+        // Check if wallet already linked to another user
+        const existing = await this.userRepository.findOne({ where: { walletAddress } });
+        if (existing && existing.id !== userId) {
+            throw new ConflictException('This wallet is already linked to another account');
+        }
+
+        user.walletAddress = walletAddress;
+        return this.userRepository.save(user);
     }
 }

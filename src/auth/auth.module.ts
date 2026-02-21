@@ -8,6 +8,12 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CacheModule } from '@nestjs/cache-manager';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from '../users/entities/user.entity';
+import { SocialConnection } from './social/entities/social-connection.entity';
+import { TwitterOauthService } from './social/twitter-oauth.service';
+import { SocialAuthController } from './social/social-auth.controller';
+import { UsersModule } from '../users/users.module';
 
 @Module({
     imports: [
@@ -23,9 +29,11 @@ import { CacheModule } from '@nestjs/cache-manager';
             }),
         }),
         CacheModule,
+        TypeOrmModule.forFeature([User, SocialConnection]),
+        UsersModule,
     ],
-    controllers: [AuthController],
-    providers: [AuthService, JwtStrategy, JwtAuthGuard],
-    exports: [AuthService, JwtAuthGuard],
+    controllers: [AuthController, SocialAuthController],
+    providers: [AuthService, JwtStrategy, JwtAuthGuard, TwitterOauthService],
+    exports: [AuthService, JwtAuthGuard, TwitterOauthService],
 })
 export class AuthModule { }

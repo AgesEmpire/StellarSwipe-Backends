@@ -1,6 +1,6 @@
 
 export interface JwtPayload {
-    sub: string; // Wallet public key
+    sub: string; // Internal User ID (UUID)
     iat?: number;
     exp?: number;
 }
