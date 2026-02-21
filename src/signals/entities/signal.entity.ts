@@ -35,9 +35,10 @@ export enum SignalOutcome {
 }
 
 @Entity('signals')
-@Index(['status', 'created_at'])
-@Index(['provider_id', 'created_at'])
+@Index(['status', 'created_at'], { name: 'idx_signals_feed' })
+@Index(['provider_id', 'created_at'], { name: 'idx_signals_provider' })
 @Index(['base_asset', 'counter_asset'])
+@Index(['status', 'type'], { name: 'idx_signals_status_type' })
 export class Signal {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -173,7 +174,11 @@ export class Signal {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamp with time zone' })
   updatedAt!: Date;
 
-  @DeleteDateColumn({ name: 'deleted_at', type: 'timestamp with time zone', nullable: true })
+  @DeleteDateColumn({
+    name: 'deleted_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
   deletedAt!: Date | null;
 
   @OneToMany(() => CopiedPosition, (p) => p.signalId)

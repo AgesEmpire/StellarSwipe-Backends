@@ -2,7 +2,15 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
+ feature/swipe-124
+// import { CacheModule } from '@nestjs/cache-manager';
+import { stellarConfig } from './config/stellar.config';
+import { databaseConfig, redisConfig } from './config/database.config';
+import { connectionPoolConfig } from './database/config/connection-pool.config';
+import { xaiConfig } from './config/xai.config';
+=======
 
+ main
 import { appConfig, sentryConfig } from './config/app.config';
 import { databaseConfig, redisConfig } from './config/database.config';
 import { jwtConfig } from './config/jwt.config';
@@ -25,8 +33,12 @@ import { ProvidersModule } from './providers/providers.module';
 import { MlModule } from './ml/ml.module';
 import { ValidationModule } from './common/validation/validation.module';
 import { ScalingModule } from './scaling/scaling.module';
+ feature/swipe-124
+import { DatabaseOptimizationModule } from './database/database.module';
+=======
 import { FeesModule } from './fee_management/fees.module';
 =======
+ main
  main
 
 @Module({
@@ -42,6 +54,7 @@ import { FeesModule } from './fee_management/fees.module';
         redisCacheConfig,
         jwtConfig,
         xaiConfig,
+        connectionPoolConfig,
         configuration,
       ],
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
@@ -66,6 +79,10 @@ import { FeesModule } from './fee_management/fees.module';
     }),
     LoggerModule,
     SentryModule,
+ feature/swipe-124
+    // Database Module with Connection Pool (min: 10, max: 30)
+=======
+ main
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -82,8 +99,27 @@ import { FeesModule } from './fee_management/fees.module';
         migrations: ['dist/migrations/*{.ts,.js}'],
         subscribers: ['dist/subscribers/*{.ts,.js}'],
         ssl: configService.get<boolean>('database.ssl') ?? false,
+        // Connection Pool Configuration (min: 10, max: 30 for 10k+ users)
+        extra: {
+          min: parseInt(process.env.DATABASE_POOL_MIN || '10', 10),
+          max: parseInt(process.env.DATABASE_POOL_MAX || '30', 10),
+          idleTimeoutMillis: parseInt(
+            process.env.DATABASE_POOL_IDLE_TIMEOUT || '30000',
+            10,
+          ),
+          connectionTimeoutMillis: parseInt(
+            process.env.DATABASE_POOL_CONNECTION_TIMEOUT || '2000',
+            10,
+          ),
+        },
       }),
     }),
+ feature/swipe-124
+    // Database Optimization Module
+    DatabaseOptimizationModule,
+    // Feature Modules
+=======
+ main
     UsersModule,
     SignalsModule,
     TradesModule,

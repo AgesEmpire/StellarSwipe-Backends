@@ -9,7 +9,10 @@ export const databaseConfig = registerAs(
     username: process.env.DATABASE_USER || 'postgres',
     password: process.env.DATABASE_PASSWORD || 'password',
     database: process.env.DATABASE_NAME || 'stellarswipe',
-    synchronize: process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'mainnet' && process.env.NODE_ENV !== 'public',
+    synchronize:
+      process.env.NODE_ENV !== 'production' &&
+      process.env.NODE_ENV !== 'mainnet' &&
+      process.env.NODE_ENV !== 'public',
     logging: process.env.DATABASE_LOGGING === 'true',
     // TypeORM specific properties
     type: 'postgres',
@@ -20,8 +23,32 @@ export const databaseConfig = registerAs(
       migrationsDir: 'src/migrations',
       subscribersDir: 'src/subscribers',
     },
+    // Connection Pool Configuration (min: 10, max: 30 for 10k+ users)
+    extra: {
+      min: parseInt(process.env.DATABASE_POOL_MIN || '10', 10),
+      max: parseInt(process.env.DATABASE_POOL_MAX || '30', 10),
+      idleTimeoutMillis: parseInt(
+        process.env.DATABASE_POOL_IDLE_TIMEOUT || '30000',
+        10,
+      ),
+      connectionTimeoutMillis: parseInt(
+        process.env.DATABASE_POOL_CONNECTION_TIMEOUT || '2000',
+        10,
+      ),
+      statement_timeout: parseInt(
+        process.env.DATABASE_STATEMENT_TIMEOUT || '100000',
+        10,
+      ),
+    },
+    // Query performance settings
+    maxQueryExecutionTime: parseInt(
+      process.env.DATABASE_MAX_QUERY_TIME || '10000',
+      10,
+    ),
     ssl:
-      process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'mainnet' || process.env.NODE_ENV === 'public'
+      process.env.NODE_ENV === 'production' ||
+      process.env.NODE_ENV === 'mainnet' ||
+      process.env.NODE_ENV === 'public'
         ? {
             rejectUnauthorized: false,
           }
