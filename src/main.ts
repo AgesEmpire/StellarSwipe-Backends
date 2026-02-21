@@ -3,6 +3,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import { ValidationPipe } from "@nestjs/common";
 import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
+import * as compression from 'compression';
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters";
 import {
@@ -12,6 +13,7 @@ import {
 import { LoggerService } from './common/logger';
 import { SentryService } from './common/sentry';
 import { SanitizationPipe } from './common/pipes';
+import { compressionConfig } from './common/config/compression.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -47,6 +49,9 @@ async function bootstrap() {
     origin: corsOrigin,
     credentials: corsCredentials,
   });
+
+  // Enable compression
+  app.use(compression(compressionConfig));
 
   // Global pipes
   app.useGlobalPipes(
