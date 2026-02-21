@@ -1,0 +1,14 @@
+[package]
+name = "whsper_stellar"
+version = "0.1.0"
+description = "Whsper Stellar - Pending claim contract for UI/frontend integration"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+
+[dependencies]
+soroban-sdk = "21.0"

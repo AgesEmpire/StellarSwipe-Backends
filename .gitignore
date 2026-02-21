@@ -44,3 +44,7 @@ secrets.json
 
 package-lock.json
 scripts
+
+# Rust / Soroban
+target/
+**/target/
