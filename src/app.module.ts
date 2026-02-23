@@ -39,6 +39,7 @@ import { VersioningModule } from './common/modules/versioning.module';
 import { ReferralsModule } from './referrals/referrals.module';
 import { EventsModule } from './events/events.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
+import { SecurityModule } from './security/security.module';
  main
 
 
@@ -136,6 +137,7 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
     ReferralsModule,
     EventsModule,
     ApiKeysModule,
+    SecurityModule,
  main
   ],
   providers: [StellarConfigService],
