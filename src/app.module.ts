@@ -33,8 +33,12 @@ import { ProvidersModule } from './providers/providers.module';
 import { MlModule } from './ml/ml.module';
 import { ValidationModule } from './common/validation/validation.module';
 import { ScalingModule } from './scaling/scaling.module';
+ feature/api-versioning
+import { VersioningModule } from './common/modules/versioning.module';
+=======
 import { ReferralsModule } from './referrals/referrals.module';
 import { EventsModule } from './events/events.module';
+ main
 
 
 @Module({
@@ -125,8 +129,12 @@ import { EventsModule } from './events/events.module';
  feature/swipe-103-stellar
     MlModule,
     ScalingModule,
+ feature/api-versioning
+    VersioningModule,
+=======
     ReferralsModule,
     EventsModule,
+ main
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
