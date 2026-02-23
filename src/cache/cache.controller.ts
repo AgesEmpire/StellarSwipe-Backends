@@ -10,12 +10,12 @@ export class CacheController {
   ) {}
 
   @Get('stats')
-  getStats() {
+  getStats(): unknown {
     return this.metricsService.getStats();
   }
 
   @Get('report')
-  getReport() {
+  getReport(): unknown {
     return {
       report: this.metricsService.getPerformanceReport(),
       stats: this.metricsService.getStats(),

@@ -3,7 +3,7 @@ import {
   ValidatorConstraintInterface,
   ValidationArguments,
 } from 'class-validator';
-import { isISO8601, isAfter, isBefore } from 'date-fns';
+import { isAfter, isBefore } from 'date-fns';
 
 @ValidatorConstraint({ name: 'isValidDateRange', async: false })
 export class IsValidDateRangeConstraint implements ValidatorConstraintInterface {

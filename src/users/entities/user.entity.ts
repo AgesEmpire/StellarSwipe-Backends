@@ -41,6 +41,9 @@ export class User {
   @Column({ default: 0 })
   reputationScore!: number;
 
+  @Column({ name: 'referred_by', type: 'uuid', nullable: true })
+  referredBy?: string;
+
   @Column({ type: 'timestamp', nullable: true })
   lastLoginAt?: Date;
 

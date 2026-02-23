@@ -4,6 +4,8 @@ import { EventEmitterService } from './event-emitter.service';
 import { TradeEventListener } from './listeners/trade-event.listener';
 import { SignalEventListener } from './listeners/signal-event.listener';
 import { PortfolioEventListener } from './listeners/portfolio-event.listener';
+import { ReferralEventListener } from './referral-event.listener';
+import { ReferralsModule } from '../referrals/referrals.module';
 
 @Global()
 @Module({
@@ -26,12 +28,14 @@ import { PortfolioEventListener } from './listeners/portfolio-event.listener';
       // Disable throwing uncaughtException if an error event is emitted and it has no listeners
       ignoreErrors: false,
     }),
+    ReferralsModule,
   ],
   providers: [
     EventEmitterService,
     TradeEventListener,
     SignalEventListener,
     PortfolioEventListener,
+    ReferralEventListener,
   ],
   exports: [EventEmitterService],
 })

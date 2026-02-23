@@ -68,7 +68,7 @@ export abstract class BaseCacheStrategy {
 
     // Clear L2 cache (Redis pattern matching)
     // Note: This requires Redis SCAN command support
-    await this.cacheManager.store.reset();
+    await this.cacheManager.clear();
   }
 
   // Cache-aside pattern
