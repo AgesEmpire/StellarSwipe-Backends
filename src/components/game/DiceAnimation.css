@@ -1,0 +1,80 @@
+.dice-container {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
+
+.dice {
+  width: 80px;
+  height: 80px;
+  perspective: 1000px;
+}
+
+.dice-face {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(145deg, #1a1a2e, #16213e);
+  border: 3px solid #0f3460;
+  border-radius: 12px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3), inset 0 2px 4px rgba(255, 255, 255, 0.1);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 4px;
+  padding: 8px;
+  position: relative;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  background: radial-gradient(circle, #e94560, #c72c41);
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(233, 69, 96, 0.5);
+}
+
+.dot-0 { grid-area: 1 / 1; }
+.dot-1 { grid-area: 1 / 2; }
+.dot-2 { grid-area: 1 / 3; }
+.dot-3 { grid-area: 2 / 1; }
+.dot-4 { grid-area: 2 / 2; }
+.dot-5 { grid-area: 2 / 3; }
+.dot-6 { grid-area: 3 / 1; }
+.dot-7 { grid-area: 3 / 2; }
+.dot-8 { grid-area: 3 / 3; }
+
+.dice.rolling .dice-face {
+  animation: roll 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+@keyframes roll {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(90deg) scale(0.9); }
+  50% { transform: rotate(180deg) scale(1.1); }
+  75% { transform: rotate(270deg) scale(0.95); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dice.rolling .dice-face {
+    animation: roll-reduced 0.3s ease-in-out;
+  }
+  
+  @keyframes roll-reduced {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
