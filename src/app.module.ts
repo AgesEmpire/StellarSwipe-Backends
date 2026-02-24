@@ -40,6 +40,7 @@ import { ReferralsModule } from './referrals/referrals.module';
 import { EventsModule } from './events/events.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { SecurityModule } from './security/security.module';
+import { ContestsModule } from './contests/contests.module';
  main
 
 
@@ -138,6 +139,7 @@ import { SecurityModule } from './security/security.module';
     EventsModule,
     ApiKeysModule,
     SecurityModule,
+    ContestsModule,
  main
   ],
   providers: [StellarConfigService],
