@@ -35,6 +35,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { SecurityMonitoringModule } from './security/security-monitoring.module';
 import { AccessControlModule } from './security/access-control/access-control.module';
 import { KycModule } from './kyc/kyc.module';
+import { ProductAnalyticsModule } from './analytics/product-analytics.module';
 
 @Module({
   imports: [
@@ -126,6 +127,7 @@ import { KycModule } from './kyc/kyc.module';
     SecurityMonitoringModule,
     AccessControlModule,
     KycModule,
+    ProductAnalyticsModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
