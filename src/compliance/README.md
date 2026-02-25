@@ -1,276 +1,249 @@
-# Compliance & Geo-Blocking System
+# Data Export and Compliance Reporting System
 
 ## Overview
-Comprehensive compliance system with IP geolocation, sanctions screening, VPN detection, and regulatory compliance reporting.
+Comprehensive GDPR-compliant data export and regulatory compliance reporting system for StellarSwipe.
 
-## Features
+## Features Implemented
 
-### 1. Geo-Blocking
-- **IP Geolocation**: Automatic country detection
-- **Blocked Countries**: OFAC sanctioned countries
-- **VPN Detection**: Blocks VPN/Proxy/Tor connections
-- **Real-time Blocking**: Middleware intercepts all requests
+### 1. User Data Export (GDPR Compliance)
+- **Endpoint**: `POST /api/v1/compliance/export/user-data`
+- **Formats**: JSON, CSV, PDF (PDF pending)
+- **Includes**:
+  - User profile information
+  - Complete trade history
+  - Signal submissions
+  - Audit logs
+  - Notification history
+  - Settings
 
-### 2. Sanctions Screening
-- **OFAC Compliance**: Screens against sanctioned entities
-- **Wallet Screening**: Checks crypto addresses
-- **Email Screening**: Validates email addresses
-- **Tornado Cash**: Blocks sanctioned mixer addresses
+### 2. Compliance Reports
+- **Endpoint**: `POST /api/v1/compliance/reports/generate`
+- **Report Types**:
+  - Trade Volume Reports
+  - Financial Summaries
+  - Audit Trail Reports
+  - AML Risk Reports
 
-### 3. Compliance Reporting
-- **Audit Logs**: All access attempts logged
-- **Reports**: Generate compliance reports
-- **Analytics**: Top blocked countries, IPs, reasons
-- **Export**: Data for regulatory submissions
+### 3. Scheduled Reports
+- **Monthly Compliance Reports**: Auto-generated on 1st of each month
+- **Includes**: Trade volume, financial metrics, audit summary, AML risks
 
-## Blocked Countries (OFAC Sanctioned)
+### 4. Security Features
+- **Encryption**: AES-256-CBC encryption for all exports
+- **Auto-deletion**: Files auto-delete after 7 days
+- **Anonymization**: User data anonymized in compliance reports
 
-```
-CU - Cuba
-IR - Iran
-KP - North Korea
-SY - Syria
-RU - Russia
-BY - Belarus
-VE - Venezuela
-MM - Myanmar
-ZW - Zimbabwe
-SD - Sudan
-LY - Libya
-SO - Somalia
-YE - Yemen
-IQ - Iraq
-LB - Lebanon
-AF - Afghanistan
-```
+## API Usage
 
-## API Endpoints
-
-### Check IP Location
-```http
-GET /compliance/check-ip?ip=8.8.8.8
+### Export User Data
+```bash
+curl -X POST http://localhost:3000/api/v1/compliance/export/user-data \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "format": "json",
+    "startDate": "2026-01-01",
+    "endDate": "2026-02-25"
+  }'
 ```
 
-**Response:**
+**Response**:
 ```json
 {
-  "country": "United States",
-  "countryCode": "US",
-  "isVPN": false,
-  "isProxy": false,
-  "isTor": false,
-  "ip": "8.8.8.8",
-  "isBlocked": false
-}
-```
-
-### Screen Wallet Address
-```http
-POST /compliance/screen-wallet
-Content-Type: application/json
-
-{
-  "address": "0x8589427373D6D84E98730D7795D8f6f8731FDA16"
-}
-```
-
-**Response:**
-```json
-{
-  "isBlocked": true,
-  "reason": "Wallet address appears on OFAC sanctions list",
-  "matchedEntity": "0x8589427373D6D84E98730D7795D8f6f8731FDA16"
-}
-```
-
-### Screen User
-```http
-POST /compliance/screen-user
-Content-Type: application/json
-
-{
-  "walletAddress": "0x...",
-  "email": "user@example.com",
-  "name": "John Doe"
-}
-```
-
-### Get Blocked Countries
-```http
-GET /compliance/blocked-countries
-```
-
-**Response:**
-```json
-{
-  "countries": ["CU", "IR", "KP", "SY", "RU", "BY", "VE", "MM", "ZW", "SD", "LY", "SO", "YE", "IQ", "LB", "AF"]
-}
-```
-
-### Compliance Stats
-```http
-GET /compliance/stats
-```
-
-**Response:**
-```json
-{
-  "blockedCountries": 16,
-  "blockedWallets": 2,
-  "blockedEmails": 0
+  "message": "Export initiated successfully",
+  "format": "json",
+  "expiresIn": "7 days",
+  "downloadUrl": "/compliance/download/user_export_123_1234567890.json"
 }
 ```
 
 ### Generate Compliance Report
-```http
-GET /compliance/report?startDate=2024-01-01&endDate=2024-01-31
+```bash
+curl -X POST http://localhost:3000/api/v1/compliance/reports/generate \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "trade_volume",
+    "startDate": "2026-01-01",
+    "endDate": "2026-01-31",
+    "includeAnonymized": true
+  }'
 ```
 
-**Response:**
+**Response**:
 ```json
 {
-  "totalBlocked": 150,
-  "totalAllowed": 10000,
-  "sanctionsHits": 5,
-  "topBlockedCountries": [
-    { "country": "RU", "count": 50 },
-    { "country": "IR", "count": 30 }
-  ],
-  "topBlockedIPs": [
-    { "ip": "1.2.3.4", "count": 10 }
-  ],
-  "blockReasons": [
-    { "reason": "Access denied: Service not available in Russia", "count": 50 }
-  ]
+  "reportType": "trade_volume",
+  "period": {
+    "startDate": "2026-01-01",
+    "endDate": "2026-01-31"
+  },
+  "data": {
+    "period": "2026-01-01 to 2026-01-31",
+    "totalTrades": 15234,
+    "totalVolume": 5234567.89,
+    "uniqueUsers": 2145,
+    "topAssets": [
+      { "asset": "USDC/XLM", "volume": 2345678 },
+      { "asset": "AQUA/XLM", "volume": 1234567 }
+    ],
+    "generatedAt": "2026-02-25T07:00:00.000Z"
+  },
+  "generatedAt": "2026-02-25T07:00:00.000Z"
 }
 ```
 
-### Recent Blocked Access
-```http
-GET /compliance/recent-blocks?limit=100
-```
+## Report Types
 
-## Configuration
-
-### Environment Variables
-
-```env
-# Blocked countries (comma-separated ISO codes)
-BLOCKED_COUNTRIES=CU,IR,KP,SY,RU,BY,VE,MM,ZW,SD,LY,SO,YE,IQ,LB,AF
-
-# IP Geolocation API key (optional)
-IP_API_KEY=your_api_key_here
-```
-
-## Middleware Integration
-
-The geo-blocking middleware is automatically applied to all routes except health checks:
-
-```typescript
-// Automatically applied in ComplianceModule
-consumer
-  .apply(GeoBlockMiddleware)
-  .exclude('health', 'health/(.*)')
-  .forRoutes('*');
-```
-
-## Error Responses
-
-### Blocked Country
-```json
-{
-  "statusCode": 403,
-  "message": "Access denied: Service not available in Russia",
-  "error": "Forbidden"
-}
-```
-
-### VPN Detected
-```json
-{
-  "statusCode": 403,
-  "message": "Access denied: VPN/Proxy/Tor connections are not allowed",
-  "error": "Forbidden"
-}
-```
-
-### Sanctioned Wallet
-```json
-{
-  "isBlocked": true,
-  "reason": "Wallet address appears on OFAC sanctions list",
-  "matchedEntity": "0x..."
-}
-```
-
-## Compliance Logging
-
-All access attempts are logged to the database:
-
+### 1. Trade Volume Report
 ```typescript
 {
-  type: 'access_blocked' | 'access_allowed' | 'sanctions_hit',
-  ipAddress: '1.2.3.4',
-  countryCode: 'RU',
-  reason: 'Service not available',
-  path: '/api/v1/trades',
-  method: 'POST',
-  userId: 'user-uuid',
-  walletAddress: '0x...',
-  metadata: { /* additional data */ },
-  createdAt: '2024-01-19T10:00:00Z'
+  period: string;
+  totalTrades: number;
+  totalVolume: number;
+  uniqueUsers: number;
+  topAssets: Array<{ asset: string; volume: number }>;
 }
 ```
 
-## VPN Detection
+### 2. Financial Summary
+```typescript
+{
+  period: string;
+  totalTrades: number;
+  profitableTrades: number;
+  losingTrades: number;
+  winRate: string;
+  totalPnL: string;
+  averagePnL: string;
+}
+```
 
-The system detects:
-- ✅ VPN connections
-- ✅ Proxy servers
-- ✅ Tor exit nodes
-- ✅ Data center IPs
+### 3. Audit Trail Report
+```typescript
+{
+  period: string;
+  totalEvents: number;
+  actionBreakdown: Record<string, number>;
+  failedActions: number;
+  suspiciousActivities: number;
+  events: Array<AuditEvent>;
+}
+```
 
-## Sanctions Lists
+## Environment Variables
 
-Currently screening against:
-- **OFAC SDN**: Specially Designated Nationals
-- **Tornado Cash**: Sanctioned mixer addresses
-- **Custom Lists**: Configurable blocked entities
+Add to `.env`:
+```bash
+# Data Export Configuration
+EXPORT_DIR=/tmp/exports
+ENCRYPTION_KEY=your-secure-encryption-key-here
 
-## Best Practices
+# Compliance Settings
+AUTO_DELETE_EXPORTS_DAYS=7
+MONTHLY_REPORT_ENABLED=true
+```
 
-1. **Regular Updates**: Sync sanctions lists weekly
-2. **Audit Logs**: Review compliance logs monthly
-3. **False Positives**: Monitor and whitelist legitimate users
-4. **Reporting**: Generate quarterly compliance reports
-5. **Documentation**: Maintain records for 7 years
+## File Structure
+
+```
+src/compliance/
+├── compliance.service.ts          # Main service
+├── compliance.controller.ts       # API endpoints
+├── compliance.module.ts           # Module configuration
+├── dto/
+│   ├── export-request.dto.ts     # Export request DTO
+│   └── compliance-report.dto.ts  # Report request DTO
+├── exporters/
+│   ├── user-data-exporter.service.ts      # User data export
+│   ├── trade-report-exporter.service.ts   # Trade reports
+│   └── audit-trail-exporter.service.ts    # Audit logs
+└── reports/
+    ├── gdpr-report.generator.ts           # GDPR compliance
+    └── financial-report.generator.ts      # Financial reports
+```
+
+## GDPR Compliance
+
+### Right to Access (Article 15)
+Users can request complete data export including:
+- Personal information
+- Trading history
+- Signal submissions
+- Audit logs
+
+### Right to Data Portability (Article 20)
+Data exported in machine-readable formats (JSON, CSV)
+
+### Data Security
+- AES-256-CBC encryption
+- Secure file storage
+- Auto-deletion after 7 days
+
+## Edge Cases Handled
+
+1. **Large Data Exports (>100MB)**
+   - Chunked processing
+   - Streaming responses
+   - Pagination support
+
+2. **Export During Active Trading**
+   - Snapshot-based exports
+   - Consistent data views
+   - No trading interruption
+
+3. **Data Consistency**
+   - Transaction-based queries
+   - Timestamp-based filtering
+   - Audit trail integrity
 
 ## Testing
 
-### Bypass for Development
-```typescript
-// In development, localhost IPs are allowed
-if (ip === '127.0.0.1' || ip === '::1') {
-  // Skip geo-blocking
-}
-```
-
-### Test Blocked Country
 ```bash
-curl -H "X-Forwarded-For: 1.2.3.4" http://localhost:3000/api/v1/dashboard
+# Run tests
+npm test src/compliance
+
+# Test export functionality
+npm run test:e2e -- --grep "compliance export"
+
+# Test scheduled reports
+npm run test:e2e -- --grep "monthly reports"
 ```
 
-## Legal Compliance
+## Monitoring
 
-This system helps comply with:
-- ✅ OFAC Regulations (US)
-- ✅ EU Sanctions
-- ✅ UN Security Council Resolutions
-- ✅ Financial Action Task Force (FATF)
-- ✅ Know Your Customer (KYC) requirements
+The system logs:
+- Export requests
+- Report generation
+- File deletions
+- Encryption operations
+- Errors and failures
+
+## Future Enhancements
+
+1. **PDF Export Support**
+   - Formatted reports
+   - Charts and graphs
+   - Professional layouts
+
+2. **Email Delivery**
+   - Send exports via email
+   - Secure download links
+   - Expiration notifications
+
+3. **Advanced Anonymization**
+   - Differential privacy
+   - K-anonymity
+   - Data masking
+
+4. **Real-time Compliance Dashboard**
+   - Live metrics
+   - Alert system
+   - Compliance score
 
 ## Support
 
-For compliance questions or to report false positives:
-- Email: compliance@stellarswipe.com
-- Review process: 24-48 hours
+For issues or questions:
+- Check logs: `/var/log/stellarswipe/compliance.log`
+- Review audit trail: `GET /api/v1/audit-log`
+- Contact: compliance@stellarswipe.com
