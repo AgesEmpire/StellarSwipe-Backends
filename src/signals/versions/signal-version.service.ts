@@ -55,7 +55,9 @@ export class SignalVersionService {
     }
 
     if (signal.providerId !== providerId) {
-      throw new ForbiddenException('Only the signal provider can update this signal');
+      throw new ForbiddenException(
+        'Only the signal provider can update this signal',
+      );
     }
 
     if (signal.status !== SignalStatus.ACTIVE) {
@@ -66,8 +68,15 @@ export class SignalVersionService {
       throw new BadRequestException('Cannot update expired signal');
     }
 
-    if (!dto.targetPrice && !dto.stopLossPrice && !dto.entryPrice && !dto.rationale) {
-      throw new BadRequestException('At least one field must be provided to update');
+    if (
+      !dto.targetPrice &&
+      !dto.stopLossPrice &&
+      !dto.entryPrice &&
+      !dto.rationale
+    ) {
+      throw new BadRequestException(
+        'At least one field must be provided to update',
+      );
     }
 
     const latestVersion = await this.versionRepository.findOne({
@@ -78,14 +87,21 @@ export class SignalVersionService {
     const currentVersionNumber = latestVersion?.versionNumber || 0;
 
     if (currentVersionNumber >= MAX_UPDATES_PER_SIGNAL) {
-      throw new BadRequestException(`Maximum ${MAX_UPDATES_PER_SIGNAL} updates per signal reached`);
+      throw new BadRequestException(
+        `Maximum ${MAX_UPDATES_PER_SIGNAL} updates per signal reached`,
+      );
     }
 
     if (latestVersion) {
-      const timeSinceLastUpdate = Date.now() - latestVersion.createdAt.getTime();
+      const timeSinceLastUpdate =
+        Date.now() - latestVersion.createdAt.getTime();
       if (timeSinceLastUpdate < UPDATE_COOLDOWN_MS) {
-        const remainingMinutes = Math.ceil((UPDATE_COOLDOWN_MS - timeSinceLastUpdate) / 60000);
-        throw new BadRequestException(`Must wait ${remainingMinutes} minutes before next update`);
+        const remainingMinutes = Math.ceil(
+          (UPDATE_COOLDOWN_MS - timeSinceLastUpdate) / 60000,
+        );
+        throw new BadRequestException(
+          `Must wait ${remainingMinutes} minutes before next update`,
+        );
       }
     }
 
@@ -209,7 +225,9 @@ export class SignalVersionService {
     }
 
     if (!version.requiresApproval) {
-      throw new BadRequestException('This signal update does not require approval');
+      throw new BadRequestException(
+        'This signal update does not require approval',
+      );
     }
 
     const existingApproval = await this.approvalRepository.findOne({
@@ -217,7 +235,9 @@ export class SignalVersionService {
     });
 
     if (existingApproval) {
-      throw new BadRequestException('You have already responded to this update');
+      throw new BadRequestException(
+        'You have already responded to this update',
+      );
     }
 
     const copierPosition = await this.copiedPositionRepository.findOne({
@@ -242,9 +262,17 @@ export class SignalVersionService {
     await this.approvalRepository.save(approval);
 
     if (dto.approved) {
-      await this.versionRepository.increment({ id: versionId }, 'approvedCount', 1);
+      await this.versionRepository.increment(
+        { id: versionId },
+        'approvedCount',
+        1,
+      );
     } else {
-      await this.versionRepository.increment({ id: versionId }, 'rejectedCount', 1);
+      await this.versionRepository.increment(
+        { id: versionId },
+        'rejectedCount',
+        1,
+      );
     }
 
     this.logger.log(
@@ -303,7 +331,10 @@ export class SignalVersionService {
     }));
   }
 
-  async getCopiedVersion(signalId: string, copierId: string): Promise<number | null> {
+  async getCopiedVersion(
+    signalId: string,
+    copierId: string,
+  ): Promise<number | null> {
     const position = await this.copiedPositionRepository.findOne({
       where: { signalId, userId: copierId },
     });
@@ -318,8 +349,9 @@ export class SignalVersionService {
       order: { versionNumber: 'ASC' },
     });
 
-    return versionAtCopyTime ? versionAtCopyTime.versionNumber - 1 : 
-           await this.getLatestVersionNumber(signalId);
+    return versionAtCopyTime
+      ? versionAtCopyTime.versionNumber - 1
+      : await this.getLatestVersionNumber(signalId);
   }
 
   private async getLatestVersionNumber(signalId: string): Promise<number> {
@@ -330,14 +362,22 @@ export class SignalVersionService {
     return latest?.versionNumber || 0;
   }
 
-  private buildChangeSummary(currentSignal: Signal, dto: UpdateSignalDto): string {
+  private buildChangeSummary(
+    currentSignal: Signal,
+    dto: UpdateSignalDto,
+  ): string {
     const changes: string[] = [];
 
     if (dto.targetPrice && dto.targetPrice !== currentSignal.targetPrice) {
       changes.push(`Target: ${currentSignal.targetPrice} → ${dto.targetPrice}`);
     }
-    if (dto.stopLossPrice && dto.stopLossPrice !== currentSignal.stopLossPrice) {
-      changes.push(`Stop Loss: ${currentSignal.stopLossPrice} → ${dto.stopLossPrice}`);
+    if (
+      dto.stopLossPrice &&
+      dto.stopLossPrice !== currentSignal.stopLossPrice
+    ) {
+      changes.push(
+        `Stop Loss: ${currentSignal.stopLossPrice} → ${dto.stopLossPrice}`,
+      );
     }
     if (dto.entryPrice && dto.entryPrice !== currentSignal.entryPrice) {
       changes.push(`Entry: ${currentSignal.entryPrice} → ${dto.entryPrice}`);
@@ -394,7 +434,10 @@ export class SignalVersionService {
 
       return copierPositions.length;
     } catch (error) {
-      this.logger.error(`Failed to notify copiers for signal ${signalId}`, error);
+      this.logger.error(
+        `Failed to notify copiers for signal ${signalId}`,
+        error,
+      );
       return 0;
     }
   }

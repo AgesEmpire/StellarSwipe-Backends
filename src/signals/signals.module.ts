@@ -6,7 +6,10 @@ import { Signal } from './entities/signal.entity';
 import { CopiedPosition } from './entities/copied-position.entity';
 import { SignalsService } from './signals.service';
 import { SignalsController } from './signals.controller';
-import { SignalVersion, SignalVersionApproval } from './versions/entities/signal-version.entity';
+import {
+  SignalVersion,
+  SignalVersionApproval,
+} from './versions/entities/signal-version.entity';
 import { SignalVersionService } from './versions/signal-version.service';
 import { SignalVersionController } from './versions/signal-version.controller';
 

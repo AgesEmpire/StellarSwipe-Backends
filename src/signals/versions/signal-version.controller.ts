@@ -56,7 +56,10 @@ export class SignalVersionController {
     @Req() req: any,
   ) {
     const copierId = req.user?.id;
-    const version = await this.versionService.getCopiedVersion(signalId, copierId);
+    const version = await this.versionService.getCopiedVersion(
+      signalId,
+      copierId,
+    );
     return { signalId, copiedVersion: version };
   }
 }

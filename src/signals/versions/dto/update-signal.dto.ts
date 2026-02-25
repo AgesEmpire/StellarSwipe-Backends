@@ -9,17 +9,24 @@ import {
 export class UpdateSignalDto {
   @IsOptional()
   @IsString()
-  @Matches(/^\d+(\.\d{1,8})?$/, { message: 'targetPrice must be a valid decimal with up to 8 decimal places' })
+  @Matches(/^\d+(\.\d{1,8})?$/, {
+    message: 'targetPrice must be a valid decimal with up to 8 decimal places',
+  })
   targetPrice?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^\d+(\.\d{1,8})?$/, { message: 'stopLossPrice must be a valid decimal with up to 8 decimal places' })
+  @Matches(/^\d+(\.\d{1,8})?$/, {
+    message:
+      'stopLossPrice must be a valid decimal with up to 8 decimal places',
+  })
   stopLossPrice?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^\d+(\.\d{1,8})?$/, { message: 'entryPrice must be a valid decimal with up to 8 decimal places' })
+  @Matches(/^\d+(\.\d{1,8})?$/, {
+    message: 'entryPrice must be a valid decimal with up to 8 decimal places',
+  })
   entryPrice?: string;
 
   @IsOptional()
