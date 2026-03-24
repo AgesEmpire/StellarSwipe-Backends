@@ -35,6 +35,7 @@ import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { ApiMonetizationModule } from './api-monetization/api-monetization.module';
+import { SlaModule } from './enterprise/sla/sla.module';
 
 @Module({
   imports: [
@@ -121,6 +122,7 @@ import { ApiMonetizationModule } from './api-monetization/api-monetization.modul
     AuthModule,
     WebsocketModule,
     ApiMonetizationModule,
+    SlaModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
