@@ -18,9 +18,8 @@ import { StellarConfigService } from './config/stellar.service';
 import { LoggerModule } from './common/logger';
 import { SentryModule } from './common/sentry';
 import { CacheModule } from './cache/cache.module';
-import { AuthModule } from './auth/auth.module';
- feature/sep24-fiat-on-off-ramp
 
+import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { ApiMonetizationModule } from './api-monetization/api-monetization.module';
@@ -46,6 +45,7 @@ import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { DrModule } from './disaster-recovery/dr.module';
+import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module';
 
 @Module({
   imports: [
@@ -139,6 +139,7 @@ import { DrModule } from './disaster-recovery/dr.module';
     MonitoringModule,
     WebhooksModule,
     DrModule,
+    MarketIntelligenceModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
