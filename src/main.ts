@@ -17,6 +17,8 @@ import { InstanceCoordinatorService } from './scaling/instance-coordinator.servi
 import { compressionConfig } from './common/config/compression.config';
 import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
 import { initTracing } from './monitoring/tracing/jaeger.config';
+import { DocGeneratorService } from './documentation/doc-generator.service';
+import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
 
 initTracing();
 
@@ -91,16 +93,14 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TransformInterceptor());
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
 
-  // Swagger Setup
-  const config = new DocumentBuilder()
-    .setTitle('StellarSwipe API')
-    .setDescription('Copy trading DApp on Stellar')
-    .setVersion('2.0')
-    .addBearerAuth()
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
+  // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
+  const { document, json, yaml } = generateOpenApiDocument(app);
   SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
+
+  // Feed the live document into the doc generator and trigger initial generation
+  const docGenerator = app.get(DocGeneratorService);
+  docGenerator.setDocument(document);
+  docGenerator.generateAll().catch((err) => logger.error('Initial doc generation failed', err));
 
   // V1 Swagger (Deprecated)
   const configV1 = new DocumentBuilder()
