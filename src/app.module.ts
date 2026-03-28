@@ -47,6 +47,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { DrModule } from './disaster-recovery/dr.module';
 import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module';
 import { DocumentationModule } from './documentation/documentation.module';
+import { CompetitionsModule } from './competitions/competitions.module';
 
 @Module({
   imports: [
@@ -142,6 +143,7 @@ import { DocumentationModule } from './documentation/documentation.module';
     DrModule,
     MarketIntelligenceModule,
     DocumentationModule,
+    CompetitionsModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],
