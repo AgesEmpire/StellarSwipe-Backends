@@ -15,6 +15,12 @@ import { CorrelationService } from './services/correlation.service';
 import { PriceHistory } from '../prices/entities/price-history.entity';
 import { AssetPair } from '../assets/entities/asset-pair.entity';
 import { TradePatternsModule } from './trade-patterns/trade-patterns.module';
+import { FunnelTrackerService } from './funnels/funnel-tracker.service';
+import { FunnelController } from './funnels/funnel.controller';
+import { AnalyzeFunnelsJob } from './funnels/jobs/analyze-funnels.job';
+import { Funnel } from './funnels/entities/funnel.entity';
+import { FunnelStep } from './funnels/entities/funnel-step.entity';
+import { UserFunnelProgress } from './funnels/entities/user-funnel-progress.entity';
  feature/ltv-calculator
 
 import { AbTestAnalyzerService } from './ab-testing/ab-test-analyzer.service';
@@ -44,15 +50,14 @@ import { CalculateLtvJob } from './ltv/jobs/calculate-ltv.job';
  main
       UserLtv,
       LtvSegment,
+      Funnel,
+      FunnelStep,
+      UserFunnelProgress,
     ]),
     ScheduleModule.forRoot(),
     TradePatternsModule,
   ],
- feature/ltv-calculator
-  controllers: [AnalyticsController, LtvController],
-
-  controllers: [AnalyticsController, AbTestController, LtvController],
- main
+  controllers: [AnalyticsController, AbTestController, LtvController, FunnelController],
   providers: [
     AnalyticsService,
     RiskMetricsService,
@@ -66,6 +71,8 @@ feature/ltv-calculator
 main
     LtvCalculatorService,
     CalculateLtvJob,
+    FunnelTrackerService,
+    AnalyzeFunnelsJob,
   ],
   exports: [
     AnalyticsService,
@@ -78,6 +85,7 @@ main
     AbTestAnalyzerService,
  main
     LtvCalculatorService,
+    FunnelTrackerService,
   ],
 })
 export class AnalyticsModule {}
