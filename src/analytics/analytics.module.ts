@@ -15,6 +15,7 @@ import { CorrelationService } from './services/correlation.service';
 import { PriceHistory } from '../prices/entities/price-history.entity';
 import { AssetPair } from '../assets/entities/asset-pair.entity';
 import { TradePatternsModule } from './trade-patterns/trade-patterns.module';
+import { FunnelsModule } from './funnels/funnels.module';
  feature/ltv-calculator
 
 import { AbTestAnalyzerService } from './ab-testing/ab-test-analyzer.service';
@@ -47,6 +48,7 @@ import { CalculateLtvJob } from './ltv/jobs/calculate-ltv.job';
     ]),
     ScheduleModule.forRoot(),
     TradePatternsModule,
+    FunnelsModule,
   ],
  feature/ltv-calculator
   controllers: [AnalyticsController, LtvController],
