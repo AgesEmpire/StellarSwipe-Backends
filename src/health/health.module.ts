@@ -8,6 +8,7 @@ import {
   RedisHealthIndicator,
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
+import { HealthSummaryService } from './health-summary.service';
 
 @Module({
   imports: [TerminusModule],
@@ -18,12 +19,14 @@ import { StellarConfigService } from '../config/stellar.service';
     SorobanHealthIndicator,
     DatabaseHealthIndicator,
     RedisHealthIndicator,
+    HealthSummaryService,
   ],
   exports: [
     StellarHealthIndicator,
     SorobanHealthIndicator,
     DatabaseHealthIndicator,
     RedisHealthIndicator,
+    HealthSummaryService,
   ],
 })
 export class HealthModule {}

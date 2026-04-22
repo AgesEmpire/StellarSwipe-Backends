@@ -10,6 +10,7 @@ import {
   DatabaseHealthIndicator,
   RedisHealthIndicator,
 } from './indicators';
+import { HealthSummaryService, ServiceHealthSummary } from './health-summary.service';
 
 @Controller('health')
 export class HealthController implements OnApplicationBootstrap {
@@ -21,6 +22,7 @@ export class HealthController implements OnApplicationBootstrap {
     private sorobanHealth: SorobanHealthIndicator,
     private databaseHealth: DatabaseHealthIndicator,
     private redisHealth: RedisHealthIndicator,
+    private healthSummary: HealthSummaryService,
   ) { }
 
   async onApplicationBootstrap(): Promise<void> {
@@ -96,6 +98,11 @@ export class HealthController implements OnApplicationBootstrap {
   @HealthCheck()
   async liveness(): Promise<HealthCheckResult> {
     return this.health.check([]);
+  }
+
+  @Get('summary')
+  async getHealthSummary(): Promise<ServiceHealthSummary> {
+    return this.healthSummary.getHealthSummary();
   }
 
   @Get('readiness')
