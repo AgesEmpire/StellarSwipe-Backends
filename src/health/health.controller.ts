@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, OnApplicationBootstrap, Logger } from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
@@ -12,7 +12,9 @@ import {
 } from './indicators';
 
 @Controller('health')
-export class HealthController {
+export class HealthController implements OnApplicationBootstrap {
+  private readonly logger = new Logger(HealthController.name);
+
   constructor(
     private health: HealthCheckService,
     private stellarHealth: StellarHealthIndicator,
@@ -20,6 +22,32 @@ export class HealthController {
     private databaseHealth: DatabaseHealthIndicator,
     private redisHealth: RedisHealthIndicator,
   ) { }
+
+  async onApplicationBootstrap(): Promise<void> {
+    const maxRetries = 5;
+    const retryDelayMs = 3000;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.health.check([
+          () => this.databaseHealth.isHealthy('database'),
+          () => this.redisHealth.isHealthy('cache'),
+        ]);
+        this.logger.log('Startup health check passed: database and cache are ready');
+        return;
+      } catch (err) {
+        this.logger.warn(
+          `Startup health check attempt ${attempt}/${maxRetries} failed: ${(err as Error).message}`,
+        );
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        } else {
+          this.logger.error('Critical dependencies unavailable after max retries — aborting startup');
+          process.exit(1);
+        }
+      }
+    }
+  }
 
   @Get()
   @HealthCheck()

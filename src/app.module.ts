@@ -49,6 +49,8 @@ import { MarketIntelligenceModule } from './market-intelligence/market-intellige
 import { DocumentationModule } from './documentation/documentation.module';
 import { CompetitionsModule } from './competitions/competitions.module';
 import { NftModule } from './nft/nft.module';
+import { HealthModule } from './health/health.module';
+import { RateLimitModule } from './common/rate-limit.module';
  feature/295-discord-community-integration
 import { DiscordBotModule } from './integrations/discord/discord-bot.module';
 
@@ -159,6 +161,8 @@ import { AutomationModule } from './integrations/automation-platforms/automation
     DocumentationModule,
     CompetitionsModule,
     NftModule,
+    HealthModule,
+    RateLimitModule,
  feature/295-discord-community-integration
     DiscordBotModule,
 
