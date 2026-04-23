@@ -31,6 +31,10 @@ export interface HealthStatus {
   lastChecked: string;
 }
 
+type HealthIndicatorResultWithResponseTime = Record<string, any> & {
+  responseTime?: number;
+};
+
 /**
  * #388 — Health summary service for backend services and dependencies.
  *
@@ -79,7 +83,7 @@ export class HealthSummaryService {
     };
   }
 
-  private async checkDatabase(): Promise<HealthIndicatorResult> {
+  private async checkDatabase(): Promise<HealthIndicatorResultWithResponseTime> {
     const start = Date.now();
     try {
       const result = await this.databaseHealth.isHealthy('database');
@@ -98,7 +102,7 @@ export class HealthSummaryService {
     }
   }
 
-  private async checkCache(): Promise<HealthIndicatorResult> {
+  private async checkCache(): Promise<HealthIndicatorResultWithResponseTime> {
     const start = Date.now();
     try {
       const result = await this.redisHealth.isHealthy('cache');
@@ -117,7 +121,7 @@ export class HealthSummaryService {
     }
   }
 
-  private async checkStellar(): Promise<HealthIndicatorResult> {
+  private async checkStellar(): Promise<HealthIndicatorResultWithResponseTime> {
     const start = Date.now();
     try {
       const result = await this.stellarHealth.isHealthy('stellar');
@@ -136,7 +140,7 @@ export class HealthSummaryService {
     }
   }
 
-  private async checkSoroban(): Promise<HealthIndicatorResult> {
+  private async checkSoroban(): Promise<HealthIndicatorResultWithResponseTime> {
     const start = Date.now();
     try {
       const result = await this.sorobanHealth.isHealthy('soroban');

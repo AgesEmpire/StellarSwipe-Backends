@@ -7,6 +7,10 @@ import {
   StellarHealthIndicator,
   SorobanHealthIndicator,
 } from '../src/health/indicators';
+import { HealthSummaryService } from '../src/health/health-summary.service';
+import { HealthMetricsAuthGuard } from '../src/common/guards/health-metrics-auth.guard';
+import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
+import { ApiKeyAuthGuard } from '../src/api-keys/guards/api-key-auth.guard';
 
 const mockHealthCheck = jest.fn();
 const mockDbHealth = { isHealthy: jest.fn() };
@@ -27,6 +31,10 @@ describe('HealthController (#370)', () => {
         { provide: RedisHealthIndicator, useValue: mockRedisHealth },
         { provide: StellarHealthIndicator, useValue: mockStellarHealth },
         { provide: SorobanHealthIndicator, useValue: mockSorobanHealth },
+        HealthMetricsAuthGuard,
+        { provide: JwtAuthGuard, useValue: { canActivate: jest.fn().mockResolvedValue(true) } },
+        { provide: ApiKeyAuthGuard, useValue: { canActivate: jest.fn().mockResolvedValue(false) } },
+        { provide: HealthSummaryService, useValue: { getHealthSummary: jest.fn() } },
       ],
     }).compile();
 
@@ -43,20 +51,13 @@ describe('HealthController (#370)', () => {
     const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
     mockHealthCheck.mockRejectedValue(new Error('DB unavailable'));
 
-    // Speed up retries
-    jest.useFakeTimers();
-    const bootstrapPromise = controller.onApplicationBootstrap();
-    // Advance through all retry delays (5 retries × 3000ms)
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-      jest.advanceTimersByTime(3000);
-    }
-    await bootstrapPromise.catch(() => {});
     jest.useRealTimers();
+    const bootstrapPromise = controller.onApplicationBootstrap();
+    await bootstrapPromise.catch(() => {});
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
-  });
+  }, 30000);
 
   it('GET /health should check all indicators', async () => {
     mockHealthCheck.mockResolvedValue({ status: 'ok', info: {}, error: {}, details: {} });

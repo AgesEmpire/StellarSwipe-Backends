@@ -9,6 +9,8 @@ import {
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
+import { AuthModule } from '../auth/auth.module';
+import { ApiKeysModule } from '../api-keys/api-keys.module';
 
 @Module({
   imports: [TerminusModule],

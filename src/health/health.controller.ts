@@ -1,4 +1,4 @@
-import { Controller, Get, OnApplicationBootstrap, Logger } from '@nestjs/common';
+import { Controller, Get, OnApplicationBootstrap, Logger, UseGuards } from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
@@ -11,8 +11,10 @@ import {
   RedisHealthIndicator,
 } from './indicators';
 import { HealthSummaryService, ServiceHealthSummary } from './health-summary.service';
+import { HealthMetricsAuthGuard } from '../common/guards/health-metrics-auth.guard';
 
 @Controller('health')
+@UseGuards(HealthMetricsAuthGuard)
 export class HealthController implements OnApplicationBootstrap {
   private readonly logger = new Logger(HealthController.name);
 
