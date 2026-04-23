@@ -32,6 +32,13 @@ export class PrometheusService implements OnModuleInit {
   readonly dbQueryDuration: Histogram;
   readonly dbConnectionsActive: Gauge;
 
+  // DB connection pool metrics
+  readonly dbPoolTotal: Gauge;
+  readonly dbPoolActive: Gauge;
+  readonly dbPoolIdle: Gauge;
+  readonly dbPoolWaiting: Gauge;
+  readonly dbPoolUtilizationRatio: Gauge;
+
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {
     this.registry = new Registry();
     this.registry.setDefaultLabels({ app: 'stellarswipe' });
@@ -111,6 +118,36 @@ export class PrometheusService implements OnModuleInit {
     this.dbConnectionsActive = new Gauge({
       name: 'postgresql_connections_active',
       help: 'Active PostgreSQL connections',
+      registers: [this.registry],
+    });
+
+    this.dbPoolTotal = new Gauge({
+      name: 'db_pool_connections_total',
+      help: 'Total connections in the database pool (active + idle)',
+      registers: [this.registry],
+    });
+
+    this.dbPoolActive = new Gauge({
+      name: 'db_pool_connections_active',
+      help: 'Connections currently executing a query',
+      registers: [this.registry],
+    });
+
+    this.dbPoolIdle = new Gauge({
+      name: 'db_pool_connections_idle',
+      help: 'Connections open but not executing a query',
+      registers: [this.registry],
+    });
+
+    this.dbPoolWaiting = new Gauge({
+      name: 'db_pool_connections_waiting',
+      help: 'Connections waiting on a lock or client',
+      registers: [this.registry],
+    });
+
+    this.dbPoolUtilizationRatio = new Gauge({
+      name: 'db_pool_utilization_ratio',
+      help: 'Ratio of total pool connections to configured maximum (0–1)',
       registers: [this.registry],
     });
   }
