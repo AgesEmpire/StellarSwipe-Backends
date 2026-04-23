@@ -9,6 +9,7 @@ import { CacheInvalidatorService } from './invalidation/cache-invalidator.servic
 import { CacheMetricsService } from './monitoring/cache-metrics.service';
 import { CacheController } from './cache.controller';
 import { CacheService } from './cache.service';
+import { CacheInvalidationService } from './cache-invalidation.service';
 
 @Global()
 @Module({
@@ -40,6 +41,7 @@ import { CacheService } from './cache.service';
     PriceCacheStrategy,
     CacheInvalidatorService,
     CacheMetricsService,
+    CacheInvalidationService,
   ],
   controllers: [CacheController],
   exports: [
@@ -49,6 +51,7 @@ import { CacheService } from './cache.service';
     PriceCacheStrategy,
     CacheInvalidatorService,
     CacheMetricsService,
+    CacheInvalidationService,
   ],
 })
 export class CacheModule { }
