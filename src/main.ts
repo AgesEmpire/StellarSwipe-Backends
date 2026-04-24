@@ -9,6 +9,7 @@ import { GlobalExceptionFilter } from "./common/filters";
 import {
   LoggingInterceptor,
   TransformInterceptor,
+  TimeoutInterceptor,
 } from './common/interceptors';
 import { LoggerService } from './common/logger';
 import { SentryService } from './common/sentry';
@@ -111,6 +112,7 @@ async function bootstrap() {
 
   // Global interceptors
   app.useGlobalInterceptors(new DeadlockRetryInterceptor());
+  app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new LoggingInterceptor(logger));
   app.useGlobalInterceptors(new TransformInterceptor());
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
