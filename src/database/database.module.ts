@@ -7,11 +7,13 @@ import { MaterializedViewService } from './optimization/materialized-view.servic
 import { SignalPerformance } from '../signals/entities/signal-performance.entity';
 import { ConnectionPoolMetricsService } from './connection-pool.metrics.service';
 import { MonitoringModule } from '../monitoring/monitoring.module';
+import { SchemaVersioningService } from './schema-versioning.service';
+import { SchemaVersion } from './schema-version.entity';
 
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SignalPerformance]),
+    TypeOrmModule.forFeature([SignalPerformance, SchemaVersion]),
     EventEmitterModule.forRoot(),
     MonitoringModule,
   ],
@@ -20,12 +22,14 @@ import { MonitoringModule } from '../monitoring/monitoring.module';
     IndexManagerService,
     MaterializedViewService,
     ConnectionPoolMetricsService,
+    SchemaVersioningService,
   ],
   exports: [
     QueryAnalyzerService,
     IndexManagerService,
     MaterializedViewService,
     ConnectionPoolMetricsService,
+    SchemaVersioningService,
   ],
 })
 export class DatabaseOptimizationModule {}
