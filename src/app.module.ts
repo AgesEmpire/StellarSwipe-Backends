@@ -61,6 +61,8 @@ import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 import { MobileModule } from './mobile/mobile.module';
 
 import { AutomationModule } from './integrations/automation-platforms/automation.module';
+import { CurrencyModule } from './currency/currency.module';
+import { ImportModule } from './import/import.module';
  main
  main
  main
@@ -173,6 +175,8 @@ import { AutomationModule } from './integrations/automation-platforms/automation
     MobileModule,
 
     AutomationModule,
+    CurrencyModule,
+    ImportModule,
  main
  main
  main

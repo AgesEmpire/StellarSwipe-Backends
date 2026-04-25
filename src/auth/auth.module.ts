@@ -16,6 +16,8 @@ import { UsersModule } from '../users/users.module';
 import { TwoFactor } from './two-factor/entities/two-factor.entity';
 import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
+import { AuthAuditService } from './auth-audit.service';
+import { AuditModule } from '../audit-log/audit.module';
 
 @Module({
   imports: [
@@ -31,6 +33,7 @@ import { TwoFactorController } from './two-factor/two-factor.controller';
       }),
     }),
     CacheModule,
+    AuditModule,
     TypeOrmModule.forFeature([User, SocialConnection, TwoFactor]),
     UsersModule,
   ],
@@ -41,7 +44,8 @@ import { TwoFactorController } from './two-factor/two-factor.controller';
     JwtAuthGuard,
     TwitterOauthService,
     TwoFactorService,
+    AuthAuditService,
   ],
-  exports: [AuthService, JwtAuthGuard, TwitterOauthService, TwoFactorService],
+  exports: [AuthService, JwtAuthGuard, TwitterOauthService, TwoFactorService, AuthAuditService],
 })
 export class AuthModule {}
