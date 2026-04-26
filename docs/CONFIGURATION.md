@@ -454,3 +454,62 @@ async handle(job: Job): Promise<void> {
 ```
 
 Inject `WorkerTracingService` by importing `TracingModule` into the feature module that owns the processor.
+
+## Nested Payload Validation
+
+`NestedPayloadValidator` (`src/common/validators/nested-payload.validator.ts`) closes the gap where the global `CustomValidationPipe` only validates top-level DTO fields — nested objects decorated with `@ValidateNested()` are now fully traversed.
+
+### Validation options applied
+
+| Option | Value | Effect |
+|---|---|---|
+| `whitelist` | `true` | Strips undeclared properties at every nesting level |
+| `forbidNonWhitelisted` | `true` | Rejects requests that contain extra properties (prevents mass-assignment) |
+| `enableImplicitConversion` | `true` | Coerces primitive types (e.g. `"3"` → `3`) via `class-transformer` |
+| `stopAtFirstError` | `false` | Collects all errors before throwing so callers receive a complete error map |
+
+### Error format
+
+Errors are returned as a flat object keyed by dot-notation path:
+
+```json
+{
+  "message": "Validation failed",
+  "errors": {
+    "address.street": ["street should not be empty"],
+    "items.0.quantity": ["quantity must not be less than 1"]
+  }
+}
+```
+
+### Usage in a service or controller
+
+```typescript
+// Inject via constructor (requires ValidationModule or manual provider registration)
+constructor(private readonly nestedValidator: NestedPayloadValidator) {}
+
+async createOrder(body: unknown) {
+  const dto = await this.nestedValidator.validate(CreateOrderDto, body);
+  // dto is a fully validated CreateOrderDto instance
+}
+```
+
+### DTO requirements
+
+Nested objects must use `@ValidateNested()` + `@Type(() => NestedClass)` from `class-transformer`:
+
+```typescript
+import { ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class CreateOrderDto {
+  @ValidateNested()
+  @Type(() => AddressDto)
+  address: AddressDto;
+}
+```
+
+### Security
+
+- Extra properties at any nesting depth are rejected (not silently dropped), preventing mass-assignment attacks on nested objects.
+- No authentication or authorization logic is modified.
