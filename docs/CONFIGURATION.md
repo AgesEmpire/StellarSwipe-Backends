@@ -406,3 +406,51 @@ Audit logs are retained for **2 years** (730 days). A scheduled job runs nightly
 1. Add the action to the `AuditAction` enum in `src/audit-log/entities/audit-log.entity.ts`.
 2. Apply `@Audit({ action: AuditAction.YOUR_ACTION, resource: 'resource-name' })` to the controller method.
 3. Ensure the controller's module imports `AuditModule` (or the module already exports `AuditLoggingInterceptor`).
+
+## Worker Tracing
+
+`WorkerTracingService` (`src/tracing/worker-tracing.service.ts`) extends the HTTP-layer tracing to asynchronous Bull worker jobs.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRACING_ENABLED` | `false` | Set to `true` to activate tracing for both HTTP and worker paths |
+| `TRACING_SERVICE_NAME` | `stellarswipe-backend` | Service name embedded in outbound trace headers |
+
+### How it works
+
+When a Bull job is processed, the worker calls `WorkerTracingService.start(job)` which:
+
+1. Reads `job.data.traceId` (or the legacy `x-trace-id` key) to continue an existing trace started by an HTTP request.
+2. Generates a fresh UUID v4 when no trace ID is present, so every job execution is always identifiable.
+3. Logs `worker:start`, `worker:finish`, and `worker:error` events tagged with the trace ID, queue name, and job ID.
+
+### Propagating a trace ID from HTTP to a worker
+
+```typescript
+// In a controller or service that enqueues a job:
+const traceId = this.tracingService.fromRequest(req);
+const jobData = traceId
+  ? this.workerTracing.injectTraceId(payload, traceId)
+  : payload;
+await this.queue.add('my-job', jobData);
+```
+
+### Using in a Bull @Processor
+
+```typescript
+@Process('my-job')
+async handle(job: Job): Promise<void> {
+  const traceId = this.workerTracing.start(job);
+  try {
+    // ... do work ...
+    this.workerTracing.finish(traceId, job);
+  } catch (err) {
+    this.workerTracing.error(traceId, job, err as Error);
+    throw err;
+  }
+}
+```
+
+Inject `WorkerTracingService` by importing `TracingModule` into the feature module that owns the processor.
