@@ -63,6 +63,8 @@ import { MobileModule } from './mobile/mobile.module';
 import { AutomationModule } from './integrations/automation-platforms/automation.module';
 import { CurrencyModule } from './currency/currency.module';
 import { ImportModule } from './import/import.module';
+import { ExportsModule } from './exports/exports.module';
+import { HttpRetryModule } from './http/http.module';
  main
  main
  main
@@ -177,6 +179,8 @@ import { ImportModule } from './import/import.module';
     AutomationModule,
     CurrencyModule,
     ImportModule,
+    ExportsModule,
+    HttpRetryModule,
  main
  main
  main

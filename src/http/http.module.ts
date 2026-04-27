@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { HttpRetryService } from './http-retry.service';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 /**
  * HttpRetryModule
@@ -20,7 +21,7 @@ import { HttpRetryService } from './http-retry.service';
       maxRedirects: 3,
     }),
   ],
-  providers: [HttpRetryService],
-  exports: [HttpRetryService],
+  providers: [HttpRetryService, CircuitBreakerService],
+  exports: [HttpRetryService, CircuitBreakerService],
 })
 export class HttpRetryModule {}

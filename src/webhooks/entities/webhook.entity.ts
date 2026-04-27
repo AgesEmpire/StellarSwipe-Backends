@@ -16,6 +16,7 @@ export const SUPPORTED_WEBHOOK_EVENTS = [
   'signal.created',
   'signal.validated',
   'signal.performance.updated',
+  'contest.updated',
   'payout.completed',
 ] as const;
 

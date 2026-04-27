@@ -78,6 +78,27 @@ export class WebhookEventListener {
     });
   }
 
+  @OnEvent('contest.updated', { async: true })
+  async onContestUpdated(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('contest.updated', {
+      contestId: event['contestId'],
+      status: event['status'],
+      winnerId: event['winnerId'],
+      prizePool: event['prizePool'],
+    });
+  }
+
+  @OnEvent('payout.completed', { async: true })
+  async onPayoutCompleted(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payout.completed', {
+      payoutId: event['payoutId'],
+      userId: event['userId'],
+      amount: event['amount'],
+      currency: event['currency'],
+      txHash: event['txHash'],
+    });
+  }
+
   private async dispatch(
     eventName: string,
     data: Record<string, unknown>,
