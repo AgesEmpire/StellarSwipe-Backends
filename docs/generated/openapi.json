@@ -1,0 +1,37 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Test API",
+    "version": "1.0",
+    "description": "Test"
+  },
+  "paths": {
+    "/signals": {
+      "get": {
+        "tags": [
+          "Signals"
+        ],
+        "summary": "List signals",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {}
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Signals"
+    }
+  ]
+}

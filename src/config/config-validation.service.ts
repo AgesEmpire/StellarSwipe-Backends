@@ -49,6 +49,13 @@ export class ConfigValidationService implements OnModuleInit {
       validate: (value) => value && value.length >= 32,
       errorMessage: 'JWT_SECRET must be at least 32 characters',
     },
+    // Encryption key
+    {
+      key: 'ENCRYPTION_KEY',
+      required: true,
+      validate: (value) => value && value.length >= 32,
+      errorMessage: 'ENCRYPTION_KEY must be at least 32 characters',
+    },
     // Stellar configuration
     {
       key: 'STELLAR_NETWORK',

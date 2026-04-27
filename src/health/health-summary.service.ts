@@ -10,6 +10,8 @@ import {
   DatabaseHealthIndicator,
   RedisHealthIndicator,
 } from './indicators';
+import { PrometheusService } from '../monitoring/metrics/prometheus.service';
+import { recordHealthCheck } from '../monitoring/metrics/custom-metrics';
 
 export interface ServiceHealthSummary {
   overall: 'up' | 'down' | 'degraded';
@@ -52,6 +54,7 @@ export class HealthSummaryService {
     private sorobanHealth: SorobanHealthIndicator,
     private databaseHealth: DatabaseHealthIndicator,
     private redisHealth: RedisHealthIndicator,
+    private prometheus: PrometheusService,
   ) {}
 
   /**
@@ -87,11 +90,10 @@ export class HealthSummaryService {
     const start = Date.now();
     try {
       const result = await this.databaseHealth.isHealthy('database');
-      return {
-        ...result,
-        responseTime: Date.now() - start,
-      };
+      recordHealthCheck(this.prometheus, 'database', true);
+      return { ...result, responseTime: Date.now() - start };
     } catch (error) {
+      recordHealthCheck(this.prometheus, 'database', false);
       return {
         database: {
           status: 'down',
@@ -106,11 +108,10 @@ export class HealthSummaryService {
     const start = Date.now();
     try {
       const result = await this.redisHealth.isHealthy('cache');
-      return {
-        ...result,
-        responseTime: Date.now() - start,
-      };
+      recordHealthCheck(this.prometheus, 'cache', true);
+      return { ...result, responseTime: Date.now() - start };
     } catch (error) {
+      recordHealthCheck(this.prometheus, 'cache', false);
       return {
         cache: {
           status: 'down',
@@ -125,11 +126,10 @@ export class HealthSummaryService {
     const start = Date.now();
     try {
       const result = await this.stellarHealth.isHealthy('stellar');
-      return {
-        ...result,
-        responseTime: Date.now() - start,
-      };
+      recordHealthCheck(this.prometheus, 'stellar', true);
+      return { ...result, responseTime: Date.now() - start };
     } catch (error) {
+      recordHealthCheck(this.prometheus, 'stellar', false);
       return {
         stellar: {
           status: 'down',
@@ -144,11 +144,10 @@ export class HealthSummaryService {
     const start = Date.now();
     try {
       const result = await this.sorobanHealth.isHealthy('soroban');
-      return {
-        ...result,
-        responseTime: Date.now() - start,
-      };
+      recordHealthCheck(this.prometheus, 'soroban', true);
+      return { ...result, responseTime: Date.now() - start };
     } catch (error) {
+      recordHealthCheck(this.prometheus, 'soroban', false);
       return {
         soroban: {
           status: 'down',

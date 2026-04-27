@@ -31,6 +31,7 @@ import { TradeReportExporterService } from './exporters/trade-report-exporter.se
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
+import { SecurityModule } from '../security/security.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
     ScheduleModule.forRoot(),
     TypeOrmModule.forFeature([ComplianceLog, SuspiciousActivity, Trade, User, Signal, AuditLog]),
     BullModule.registerQueue({ name: AML_QUEUE }),
+    SecurityModule,
   ],
   providers: [
     GeoBlockService,
