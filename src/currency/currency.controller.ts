@@ -10,13 +10,17 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrencyConverterService } from './currency-converter.service';
 import { ConvertCurrencyDto } from './dto/convert-currency.dto';
 import { CurrencyPreferenceDto } from './dto/currency-preference.dto';
 import { CacheResponse } from '../cache/response-cache.service';
+import { ExternalIntegrationThrottlerGuard } from '../common/guards/external-integration-throttler.guard';
 
 @Controller('currency')
+@UseGuards(ExternalIntegrationThrottlerGuard)
+@Throttle({ default: { limit: 60, ttl: 60000 } })
 export class CurrencyController {
   constructor(private readonly currencyService: CurrencyConverterService) {}
 

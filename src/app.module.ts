@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
+import { ThrottlerModule } from '@nestjs/throttler';
 // import { CacheModule } from '@nestjs/cache-manager';
 import { stellarConfig } from './config/stellar.config';
 import { databaseConfig, redisConfig } from './config/database.config';
@@ -132,6 +133,19 @@ import { HttpRetryModule } from './http/http.module';
     }),
 
     EventEmitterModule.forRoot(),
+
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: configService.get<number>('EXTERNAL_RATE_LIMIT_TTL') ?? 60000,
+            limit: configService.get<number>('EXTERNAL_RATE_LIMIT_MAX') ?? 30,
+          },
+        ],
+      }),
+    }),
 
     LoggerModule,
     SentryModule,
