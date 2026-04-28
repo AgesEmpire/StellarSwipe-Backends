@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventEmitterService } from './event-emitter.service';
 import { EventReplayService } from './event-replay.service';
+import { EventSerializerService } from './event-serializer';
 import { TradeEventListener } from './listeners/trade-event.listener';
 import { SignalEventListener } from './listeners/signal-event.listener';
 import { PortfolioEventListener } from './listeners/portfolio-event.listener';
@@ -29,11 +30,12 @@ import { AuditLog } from '../audit-log/entities/audit-log.entity';
   providers: [
     EventEmitterService,
     EventReplayService,
+    EventSerializerService,
     TradeEventListener,
     SignalEventListener,
     PortfolioEventListener,
     ReferralEventListener,
   ],
-  exports: [EventEmitterService, EventReplayService],
+  exports: [EventEmitterService, EventReplayService, EventSerializerService],
 })
 export class EventsModule {}
