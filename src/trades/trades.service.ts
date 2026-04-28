@@ -13,6 +13,7 @@ import {
 import { RiskManagerService, UserBalance } from './services/risk-manager.service';
 import { TradeExecutorService } from './services/trade-executor.service';
 import { RiskManagerService as VelocityRiskManager } from '../risk/risk-manager.service';
+import { ComplianceService } from '../compliance/compliance.service';
 
 interface SignalData {
   id: string;
@@ -35,6 +36,7 @@ export class TradesService {
     private readonly riskManager: RiskManagerService,
     private readonly tradeExecutor: TradeExecutorService,
     private readonly velocityRiskManager: VelocityRiskManager,
+    private readonly complianceService: ComplianceService,
   ) {}
 
   async executeTrade(dto: ExecuteTradeDto): Promise<TradeResultDto> {
@@ -51,6 +53,9 @@ export class TradesService {
 
     // Get user balance (in production, fetch from UserService/WalletService)
     const userBalance = await this.getUserBalance(dto.userId);
+
+    // Compliance Check
+    await this.complianceService.validateTransaction(dto.userId, dto.amount, signalData.baseAsset);
 
     // Validate trade with velocity checks
     const validation = await this.riskManager.validateTrade(dto, signalData, userBalance);

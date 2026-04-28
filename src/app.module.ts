@@ -69,6 +69,7 @@ import { HttpRetryModule } from './http/http.module';
 import { I18nModule } from './i18n/i18n.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { AuditModule } from './audit-log/audit.module';
  main
  main
  main
@@ -201,6 +202,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     I18nModule,
     PortfolioModule,
     NotificationsModule,
+    AuditModule,
  main
  main
  main
