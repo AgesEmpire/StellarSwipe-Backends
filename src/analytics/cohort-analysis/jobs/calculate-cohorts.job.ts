@@ -1,20 +1,28 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { CohortAnalyzerService } from '../cohort-analyzer.service';
+import { JobSchedulerService } from '../../../jobs/job-scheduler.service';
 
 @Injectable()
-export class CalculateCohortsJob {
-  private readonly logger = new Logger(CalculateCohortsJob.name);
+export class CalculateCohortsJob implements OnModuleInit {
+  constructor(
+    private readonly cohortAnalyzerService: CohortAnalyzerService,
+    private readonly scheduler: JobSchedulerService,
+  ) {}
 
-  constructor(private readonly cohortAnalyzerService: CohortAnalyzerService) {}
+  onModuleInit(): void {
+    this.scheduler.register({
+      name: 'analytics.cohorts',
+      cronEnvKey: 'CRON_ANALYTICS_COHORTS',
+      defaultCron: '0 1 * * *', // daily at 1 AM
+      handler: () => this.run(),
+    });
+  }
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async run(): Promise<void> {
     await this.cohortAnalyzerService.analyze({
       cohortType: 'signup_period',
       period: 'month',
       retentionPeriods: 6,
     });
-    this.logger.log('Cohort snapshots recalculated');
   }
 }
