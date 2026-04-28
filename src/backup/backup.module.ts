@@ -5,10 +5,11 @@ import { BackupService } from './backup.service';
 import { VerificationService } from './verification.service';
 import { DatabaseBackupJob } from './jobs/database-backup.job';
 import { BackupCleanupJob } from './jobs/backup-cleanup.job';
+import { BackupMonitoringService } from './backup-monitoring.service';
 
 @Module({
   imports: [ConfigModule, ScheduleModule.forRoot()],
-  providers: [BackupService, VerificationService, DatabaseBackupJob, BackupCleanupJob],
-  exports: [BackupService, VerificationService],
+  providers: [BackupMonitoringService, BackupService, VerificationService, DatabaseBackupJob, BackupCleanupJob],
+  exports: [BackupService, VerificationService, BackupMonitoringService],
 })
 export class BackupModule {}
