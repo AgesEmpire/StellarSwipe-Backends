@@ -24,6 +24,7 @@ export enum ExportType {
   CONTEST_RESULTS = 'contest_results',
   SIGNALS = 'signals',
   PORTFOLIO = 'portfolio',
+  TAX_REPORT = 'tax_report',
 }
 
 @Entity('bulk_exports')

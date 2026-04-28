@@ -14,8 +14,11 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ExportsService } from './exports.service';
 import { InitiateExportDto } from './dto/initiate-export.dto';
+import { TaxReportDto } from './dto/tax-report.dto';
 import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
+import { ExportType } from './entities/bulk-export.entity';
+import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('exports')
@@ -30,11 +33,34 @@ export class ExportsController {
   @Post()
   @HttpCode(HttpStatus.ACCEPTED)
   @Audit({ action: AuditAction.BULK_EXPORT_INITIATED, resource: 'export' })
+  @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 10, window: 3600 })
   initiate(
     @Request() req: { user: { id: string } },
     @Body() dto: InitiateExportDto,
   ) {
     return this.exportsService.initiate(req.user.id, dto);
+  }
+
+  /**
+   * POST /exports/tax-report
+   * Request a tax report export for the authenticated user.
+   * Supports date range filtering and CSV/JSON formats.
+   * Processing is asynchronous — poll GET /exports/:id for status.
+   */
+  @Post('tax-report')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Audit({ action: AuditAction.BULK_EXPORT_INITIATED, resource: 'tax-report' })
+  @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 5, window: 3600 })
+  initiateTaxReport(
+    @Request() req: { user: { id: string } },
+    @Body() dto: TaxReportDto,
+  ) {
+    return this.exportsService.initiate(req.user.id, {
+      type: ExportType.TAX_REPORT,
+      format: dto.format,
+      startDate: dto.startDate,
+      endDate: dto.endDate,
+    });
   }
 
   /**
