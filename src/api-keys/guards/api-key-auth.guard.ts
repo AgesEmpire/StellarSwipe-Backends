@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   UnauthorizedException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ApiKeysService } from '../api-keys.service';
@@ -12,6 +13,8 @@ export const API_KEY_SCOPES = 'api_key_scopes';
 
 @Injectable()
 export class ApiKeyAuthGuard implements CanActivate {
+  private readonly logger = new Logger(ApiKeyAuthGuard.name);
+
   constructor(
     private readonly apiKeysService: ApiKeysService,
     private readonly reflector: Reflector,
@@ -34,6 +37,7 @@ export class ApiKeyAuthGuard implements CanActivate {
     );
 
     if (!allowed) {
+      this.logger.warn(`Rate limit exceeded for API key ${apiKey.id}`);
       throw new ForbiddenException('Rate limit exceeded');
     }
 
@@ -56,6 +60,8 @@ export class ApiKeyAuthGuard implements CanActivate {
 
     const endpoint = `${request.method}:${request.path}`;
     await this.apiKeysService.trackUsage(apiKey.id, endpoint, false);
+
+    this.logger.debug(`API key ${apiKey.id} authenticated for ${endpoint}`);
 
     return true;
   }

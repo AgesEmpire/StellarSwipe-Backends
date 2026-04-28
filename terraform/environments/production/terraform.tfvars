@@ -1,0 +1,13 @@
+environment           = "production"
+aws_region            = "us-east-1"
+vpc_cidr              = "10.1.0.0/16"
+db_instance_class     = "db.r6g.large"
+db_allocated_storage  = 100
+db_engine_version     = "15.3"
+db_name               = "stellarswipe"
+redis_node_type       = "cache.r6g.large"
+redis_num_cache_nodes = 2
+eks_node_desired_size = 3
+eks_node_min_size     = 2
+eks_node_max_size     = 10
+eks_instance_types    = ["t3.large"]

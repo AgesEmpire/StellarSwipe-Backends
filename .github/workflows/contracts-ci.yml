@@ -1,0 +1,63 @@
+name: Soroban Contracts CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contracts-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contracts-ci.yml'
+
+jobs:
+  contracts:
+    name: Build, Test & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust wasm32 target
+        run: |
+          rustup update stable
+          rustup target add wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install stellar-cli
+        run: cargo install stellar-cli --version 21.0.1 --locked
+
+      - name: Build (native)
+        working-directory: contracts
+        run: cargo build --workspace
+
+      - name: Test
+        working-directory: contracts
+        run: cargo test --workspace
+
+      - name: Clippy
+        working-directory: contracts
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Build wasm artifacts
+        working-directory: contracts
+        run: cargo build --workspace --target wasm32-unknown-unknown --release
+
+      - name: Upload wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-contracts
+          path: contracts/target/wasm32-unknown-unknown/release/*.wasm
+          retention-days: 7

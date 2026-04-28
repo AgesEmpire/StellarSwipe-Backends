@@ -40,8 +40,8 @@ export class RbacController {
 
   @Put('roles/:id')
   @RequirePermissions('roles:update')
-  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-    return this.rbacService.updateRole(id, dto);
+  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto, @Request() req: any) {
+    return this.rbacService.updateRole(id, dto, req.user?.id);
   }
 
   @Delete('roles/:id')
@@ -69,8 +69,8 @@ export class RbacController {
   // Permission Management Endpoints
   @Post('permissions/assign')
   @RequirePermissions('permissions:assign')
-  async assignPermissionsToRole(@Body() dto: AssignPermissionDto) {
-    return this.rbacService.assignPermissionsToRole(dto);
+  async assignPermissionsToRole(@Body() dto: AssignPermissionDto, @Request() req: any) {
+    return this.rbacService.assignPermissionsToRole(dto, req.user?.id);
   }
 
   @Get('permissions')
@@ -94,8 +94,12 @@ export class RbacController {
 
   @Delete('users/:userId/roles/:roleId')
   @RequirePermissions('user-roles:revoke')
-  async revokeRoleFromUser(@Param('userId') userId: string, @Param('roleId') roleId: string) {
-    await this.rbacService.revokeRoleFromUser(userId, roleId);
+  async revokeRoleFromUser(
+    @Param('userId') userId: string,
+    @Param('roleId') roleId: string,
+    @Request() req: any,
+  ) {
+    await this.rbacService.revokeRoleFromUser(userId, roleId, req.user?.id);
     return { message: 'Role revoked successfully' };
   }
 
