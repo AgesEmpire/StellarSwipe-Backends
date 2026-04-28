@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { AuthChallengeDto } from './dto/auth-challenge.dto';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
 @ApiTags('auth')
@@ -18,6 +19,23 @@ export class AuthController {
     @ApiResponse({ status: 400, description: 'Bad Request' })
     async register(@Body() dto: RegisterDto) {
         return this.authService.register(dto);
+    }
+
+    @Post('forgot-password')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Request password reset link' })
+    @ApiResponse({ status: 200, description: 'Reset link sent if user exists' })
+    async forgotPassword(@Body() dto: ForgotPasswordDto) {
+        return this.authService.forgotPassword(dto);
+    }
+
+    @Post('reset-password')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Reset password using token' })
+    @ApiResponse({ status: 200, description: 'Password successfully reset' })
+    @ApiResponse({ status: 401, description: 'Invalid or expired token' })
+    async resetPassword(@Body() dto: ResetPasswordDto) {
+        return this.authService.resetPassword(dto);
     }
 
     @Post('challenge')
