@@ -18,6 +18,8 @@ import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
 import { AuthAuditService } from './auth-audit.service';
 import { AuditModule } from '../audit-log/audit.module';
+import { SessionManagerService } from './session/session-manager.service';
+import { SessionCleanupService } from './session/session-cleanup.service';
 
 @Module({
   imports: [
@@ -45,7 +47,16 @@ import { AuditModule } from '../audit-log/audit.module';
     TwitterOauthService,
     TwoFactorService,
     AuthAuditService,
+    SessionManagerService,
+    SessionCleanupService,
   ],
-  exports: [AuthService, JwtAuthGuard, TwitterOauthService, TwoFactorService, AuthAuditService],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+    TwitterOauthService,
+    TwoFactorService,
+    AuthAuditService,
+    SessionManagerService,
+  ],
 })
 export class AuthModule {}
