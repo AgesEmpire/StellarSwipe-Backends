@@ -1,6 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User, UserTier, KycStatus } from '../users/entities/user.entity';
+import { ComplianceLog } from './entities/compliance-log.entity';
 import { UserDataExporterService } from './exporters/user-data-exporter.service';
 import { TradeReportExporterService } from './exporters/trade-report-exporter.service';
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
@@ -24,6 +28,10 @@ export class ComplianceService {
     private auditExporter: AuditTrailExporterService,
     private gdprGenerator: GdprReportGenerator,
     private financialGenerator: FinancialReportGenerator,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(ComplianceLog)
+    private complianceLogRepository: Repository<ComplianceLog>,
   ) {
     this.exportDir = this.configService.get('EXPORT_DIR', '/tmp/exports');
     this.ensureExportDir();
@@ -71,6 +79,69 @@ export class ComplianceService {
         return this.auditExporter.generateAuditReport(startDate, endDate, true);
       default:
         throw new Error(`Unknown report type: ${type}`);
+    }
+  }
+
+  async validateTransaction(userId: string, amount: number, asset: string): Promise<void> {
+    this.logger.log(`Performing compliance check for user ${userId}, amount ${amount} ${asset}`);
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // 1. Check KYC Status
+    if (user.kycStatus !== KycStatus.VERIFIED) {
+      await this.logCompliance(userId, 'transaction_blocked', `KYC status is ${user.kycStatus}`, { amount, asset });
+      throw new ForbiddenException(`Transaction blocked: KYC status is ${user.kycStatus}. Please complete your verification.`);
+    }
+
+    // 2. AML Screening (Mocked)
+    const isAmlFlagged = await this.mockAmlScreening(userId, amount);
+    if (isAmlFlagged) {
+      await this.logCompliance(userId, 'transaction_blocked', 'AML screening flagged this transaction', { amount, asset });
+      throw new ForbiddenException('Transaction blocked due to AML screening. Our compliance team will review it.');
+    }
+
+    // 3. Transaction Limits based on User Tier
+    const limit = this.getTransactionLimit(user.tier);
+    if (amount > limit) {
+      await this.logCompliance(userId, 'transaction_blocked', `Transaction amount ${amount} exceeds limit ${limit} for tier ${user.tier}`, { amount, asset });
+      throw new ForbiddenException(`Transaction blocked: Amount exceeds your daily limit of ${limit} for ${user.tier} tier.`);
+    }
+
+    // 4. Log successful compliance check
+    await this.logCompliance(userId, 'transaction_allowed', 'Compliance checks passed', { amount, asset });
+  }
+
+  private async logCompliance(userId: string, type: any, reason: string, metadata: any): Promise<void> {
+    const log = this.complianceLogRepository.create({
+      userId,
+      type,
+      reason,
+      metadata,
+      ipAddress: '0.0.0.0', // In production, get from request
+    });
+    await this.complianceLogRepository.save(log);
+  }
+
+  private async mockAmlScreening(_userId: string, amount: number): Promise<boolean> {
+    // Mock AML logic: flag extremely large transactions
+    return amount > 1000000;
+  }
+
+  private getTransactionLimit(tier: UserTier): number {
+    switch (tier) {
+      case UserTier.BASIC:
+        return 1000;
+      case UserTier.SILVER:
+        return 5000;
+      case UserTier.GOLD:
+        return 20000;
+      case UserTier.PLATINUM:
+        return 100000;
+      default:
+        return 0;
     }
   }
 

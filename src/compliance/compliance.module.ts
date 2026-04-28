@@ -10,14 +10,6 @@ import { ComplianceReportingService } from './compliance-reporting.service';
 import { ComplianceService } from './compliance.service';
 import { ComplianceController } from './compliance.controller';
 import { ComplianceLog } from './entities/compliance-log.entity';
- Management
-import { RegulatoryReportingModule } from './regulatory-reporting/regulatory-reporting.module';
-
-@Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([ComplianceLog]), RegulatoryReportingModule],
-  providers: [GeoBlockService, SanctionsScreeningService, ComplianceReportingService],
-  controllers: [ComplianceController],
-  exports: [GeoBlockService, SanctionsScreeningService, ComplianceReportingService, RegulatoryReportingModule],
 import { SuspiciousActivity } from './aml/entities/suspicious-activity.entity';
 import { AmlMonitoringService } from './aml/aml-monitoring.service';
 import { PatternDetectionService } from './aml/pattern-detection.service';
@@ -31,6 +23,7 @@ import { TradeReportExporterService } from './exporters/trade-report-exporter.se
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
+import { RegulatoryReportingModule } from './regulatory-reporting/regulatory-reporting.module';
 
 @Module({
   imports: [
@@ -38,6 +31,7 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
     ScheduleModule.forRoot(),
     TypeOrmModule.forFeature([ComplianceLog, SuspiciousActivity, Trade, User, Signal, AuditLog]),
     BullModule.registerQueue({ name: AML_QUEUE }),
+    RegulatoryReportingModule,
   ],
   providers: [
     GeoBlockService,
@@ -60,8 +54,8 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
     ComplianceReportingService,
     ComplianceService,
     AmlMonitoringService,
+    RegulatoryReportingModule,
   ],
-main
 })
 export class ComplianceModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

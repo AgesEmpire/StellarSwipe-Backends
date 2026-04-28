@@ -14,6 +14,20 @@ import { Trade } from '../../trades/entities/trade.entity';
 import { UserPreference } from './user-preference.entity';
 import { Session } from './session.entity';
 
+export enum UserTier {
+  BASIC = 'basic',
+  SILVER = 'silver',
+  GOLD = 'gold',
+  PLATINUM = 'platinum',
+}
+
+export enum KycStatus {
+  NONE = 'none',
+  PENDING = 'pending',
+  VERIFIED = 'verified',
+  REJECTED = 'rejected',
+}
+
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
@@ -39,6 +53,20 @@ export class User {
 
   @Column({ default: true })
   isActive!: boolean;
+
+  @Column({
+    type: 'enum',
+    enum: UserTier,
+    default: UserTier.BASIC,
+  })
+  tier!: UserTier;
+
+  @Column({
+    type: 'enum',
+    enum: KycStatus,
+    default: KycStatus.NONE,
+  })
+  kycStatus!: KycStatus;
 
   @Column({ default: 0 })
   reputationScore!: number;
