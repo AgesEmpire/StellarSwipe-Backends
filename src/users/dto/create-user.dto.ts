@@ -5,6 +5,7 @@ import {
     IsEmail,
     Length,
     Matches,
+    MinLength,
 } from 'class-validator';
 
 export class CreateUserDto {
@@ -24,6 +25,11 @@ export class CreateUserDto {
     @IsOptional()
     @IsEmail()
     email?: string;
+
+    @IsOptional()
+    @IsString()
+    @MinLength(8)
+    password?: string;
 
     @IsOptional()
     @IsString()

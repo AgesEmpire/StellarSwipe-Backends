@@ -4,12 +4,16 @@ import { AuthService } from './auth.service';
 import { JwtService } from '@nestjs/jwt';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Keypair } from '@stellar/stellar-sdk';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { UsersService } from '../users/users.service';
+import { EmailService } from '../email/email.service';
 
 describe('AuthService', () => {
     let service: AuthService;
     let cacheManagerSpec: any;
     let jwtServiceSpec: any;
+    let usersServiceSpec: any;
+    let emailServiceSpec: any;
 
     const mockCacheStore = new Map();
 
@@ -26,6 +30,21 @@ describe('AuthService', () => {
             sign: jest.fn().mockReturnValue('mock-jwt-token'),
         };
 
+        usersServiceSpec = {
+            findOrCreateByWalletAddress: jest.fn().mockResolvedValue({ id: 'user-uuid' }),
+            findByEmail: jest.fn(),
+            createUser: jest.fn().mockResolvedValue({
+                id: 'user-uuid',
+                email: 'test@example.com',
+                username: 'testuser',
+                displayName: 'Test User',
+            }),
+        };
+
+        emailServiceSpec = {
+            sendEmail: jest.fn().mockResolvedValue(undefined),
+        };
+
         const module: TestingModule = await Test.createTestingModule({
             providers: [
                 AuthService,
@@ -37,6 +56,14 @@ describe('AuthService', () => {
                     provide: CACHE_MANAGER,
                     useValue: cacheManagerSpec,
                 },
+                {
+                    provide: UsersService,
+                    useValue: usersServiceSpec,
+                },
+                {
+                    provide: EmailService,
+                    useValue: emailServiceSpec,
+                },
             ],
         }).compile();
 
@@ -45,6 +72,41 @@ describe('AuthService', () => {
 
     it('should be defined', () => {
         expect(service).toBeDefined();
+    });
+
+    describe('register', () => {
+        it('should successfully register a user', async () => {
+            usersServiceSpec.findByEmail.mockRejectedValue(new NotFoundException());
+            
+            const dto = {
+                email: 'test@example.com',
+                password: 'password123',
+                displayName: 'Test User',
+                username: 'testuser',
+            };
+
+            const result = await service.register(dto);
+
+            expect(result.user.email).toBe(dto.email);
+            expect(result.accessToken).toBe('mock-jwt-token');
+            expect(usersServiceSpec.createUser).toHaveBeenCalled();
+            expect(emailServiceSpec.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+                to: dto.email,
+                subject: 'Welcome to StellarSwipe',
+                template: 'welcome',
+            }));
+        });
+
+        it('should throw if user already exists', async () => {
+            usersServiceSpec.findByEmail.mockResolvedValue({ id: 'existing' });
+
+            const dto = {
+                email: 'test@example.com',
+                password: 'password123',
+            };
+
+            await expect(service.register(dto)).rejects.toThrow(UnauthorizedException);
+        });
     });
 
     describe('generateChallenge', () => {
@@ -72,7 +134,7 @@ describe('AuthService', () => {
             });
 
             expect(result.accessToken).toBe('mock-jwt-token');
-            expect(jwtServiceSpec.sign).toHaveBeenCalledWith({ sub: kp.publicKey() });
+            expect(jwtServiceSpec.sign).toHaveBeenCalledWith({ sub: 'user-uuid' });
             expect(cacheManagerSpec.del).toHaveBeenCalledWith(`auth_challenge:${kp.publicKey()}`);
         });
 
