@@ -20,6 +20,23 @@ export class AuthController {
         return this.authService.register(dto);
     }
 
+    @Post('forgot-password')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Request password reset link' })
+    @ApiResponse({ status: 200, description: 'Reset link sent if user exists' })
+    async forgotPassword(@Body() dto: ForgotPasswordDto) {
+        return this.authService.forgotPassword(dto);
+    }
+
+    @Post('reset-password')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Reset password using token' })
+    @ApiResponse({ status: 200, description: 'Password successfully reset' })
+    @ApiResponse({ status: 401, description: 'Invalid or expired token' })
+    async resetPassword(@Body() dto: ResetPasswordDto) {
+        return this.authService.resetPassword(dto);
+    }
+
     @Post('challenge')
     @HttpCode(HttpStatus.OK)
     async getChallenge(@Body() dto: AuthChallengeDto) {

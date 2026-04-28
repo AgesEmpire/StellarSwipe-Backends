@@ -207,4 +207,8 @@ export class UsersService {
         user.walletAddress = walletAddress;
         return this.userRepository.save(user);
     }
+
+    async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+        await this.userRepository.update(userId, { password: hashedPassword });
+    }
 }

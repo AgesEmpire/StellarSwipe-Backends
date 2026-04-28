@@ -39,6 +39,7 @@ describe('AuthService', () => {
                 username: 'testuser',
                 displayName: 'Test User',
             }),
+            updatePassword: jest.fn().mockResolvedValue(undefined),
         };
 
         emailServiceSpec = {
@@ -106,6 +107,53 @@ describe('AuthService', () => {
             };
 
             await expect(service.register(dto)).rejects.toThrow(UnauthorizedException);
+        });
+    });
+
+    describe('forgotPassword', () => {
+        it('should send a reset email if user exists', async () => {
+            const user = { id: 'user-uuid', email: 'test@example.com', username: 'testuser' };
+            usersServiceSpec.findByEmail.mockResolvedValue(user);
+
+            const result = await service.forgotPassword({ email: 'test@example.com' });
+
+            expect(result.message).toContain('password reset link has been sent');
+            expect(cacheManagerSpec.set).toHaveBeenCalled();
+            expect(emailServiceSpec.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+                template: 'password-reset',
+            }));
+        });
+
+        it('should not throw if user does not exist', async () => {
+            usersServiceSpec.findByEmail.mockRejectedValue(new NotFoundException());
+
+            const result = await service.forgotPassword({ email: 'nonexistent@example.com' });
+
+            expect(result.message).toContain('password reset link has been sent');
+            expect(emailServiceSpec.sendEmail).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('resetPassword', () => {
+        it('should successfully reset password with valid token', async () => {
+            const token = 'valid-token';
+            mockCacheStore.set(`pwd_reset:${token}`, 'user-uuid');
+
+            const result = await service.resetPassword({
+                token,
+                newPassword: 'newPassword123',
+            });
+
+            expect(result.message).toContain('successfully reset');
+            expect(usersServiceSpec.updatePassword).toHaveBeenCalledWith('user-uuid', expect.any(String));
+            expect(mockCacheStore.has(`pwd_reset:${token}`)).toBeFalsy();
+        });
+
+        it('should throw if token is invalid/expired', async () => {
+            await expect(service.resetPassword({
+                token: 'invalid',
+                newPassword: 'newPassword123',
+            })).rejects.toThrow(UnauthorizedException);
         });
     });
 

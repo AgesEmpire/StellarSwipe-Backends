@@ -43,3 +43,16 @@ export const weeklySummaryTemplate: EmailTemplate = {
   `,
   variables: ['name', 'totalTrades', 'totalVolume', 'profitLoss', 'activeSignals', 'link'],
 };
+
+export const passwordResetTemplate: EmailTemplate = {
+  subject: 'Password Reset Request',
+  html: `
+    <h1>Password Reset Request</h1>
+    <p>Hi {{name}},</p>
+    <p>You requested to reset your password. Please click the link below to set a new password:</p>
+    <a href="{{link}}">Reset Password</a>
+    <p>This link will expire in 1 hour.</p>
+    <p>If you didn't request this, you can safely ignore this email.</p>
+  `,
+  variables: ['name', 'link'],
+};
