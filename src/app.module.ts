@@ -66,6 +66,7 @@ import { CurrencyModule } from './currency/currency.module';
 import { ImportModule } from './import/import.module';
 import { ExportsModule } from './exports/exports.module';
 import { HttpRetryModule } from './http/http.module';
+import { AuditModule } from './audit-log/audit.module';
  main
  main
  main
@@ -195,6 +196,7 @@ import { HttpRetryModule } from './http/http.module';
     ImportModule,
     ExportsModule,
     HttpRetryModule,
+    AuditModule,
  main
  main
  main
