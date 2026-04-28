@@ -43,6 +43,9 @@ export class UserPreference {
     })
     riskLevel!: RiskLevel;
 
+    @Column({ name: 'analytics_opt_in', default: true })
+    analyticsOptIn!: boolean;
+
     @Column({ default: 'en', length: 10 })
     language!: string;
 

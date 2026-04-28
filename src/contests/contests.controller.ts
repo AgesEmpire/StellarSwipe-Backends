@@ -1,11 +1,16 @@
-import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus, Sse, MessageEvent } from '@nestjs/common';
+import { Observable, interval, switchMap, map } from 'rxjs';
 import { ContestsService } from './contests.service';
 import { CreateContestDto, ContestQueryDto } from './dto/contest.dto';
 import { Contest, ContestStatus } from './entities/contest.entity';
+import { SocketManagerService } from '../websocket/services/socket-manager.service';
 
 @Controller('contests')
 export class ContestsController {
-  constructor(private readonly contestsService: ContestsService) {}
+  constructor(
+    private readonly contestsService: ContestsService,
+    private readonly socketManager: SocketManagerService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -35,9 +40,34 @@ export class ContestsController {
     return this.contestsService.getContestLeaderboard(id);
   }
 
+  /**
+   * SSE endpoint for real-time leaderboard updates.
+   * Clients connect once and receive pushed updates every 10 seconds.
+   * Falls back to polling via GET :id/leaderboard for clients that don't support SSE.
+   */
+  @Sse(':id/leaderboard/live')
+  liveLeaderboard(@Param('id') id: string): Observable<MessageEvent> {
+    return interval(10_000).pipe(
+      switchMap(() => this.contestsService.getContestLeaderboard(id)),
+      map((data) => ({ data: JSON.stringify(data) } as MessageEvent)),
+    );
+  }
+
+  @Post(':id/leaderboard/refresh')
+  @HttpCode(HttpStatus.OK)
+  async refreshLeaderboard(@Param('id') id: string) {
+    const leaderboard = await this.contestsService.getContestLeaderboard(id);
+    // Push update to all WebSocket subscribers of this contest room
+    this.socketManager.emitContestLeaderboard(id, leaderboard);
+    return leaderboard;
+  }
+
   @Post(':id/finalize')
   @HttpCode(HttpStatus.OK)
   async finalizeContest(@Param('id') id: string) {
-    return this.contestsService.finalizeContest(id);
+    const result = await this.contestsService.finalizeContest(id);
+    // Notify WebSocket subscribers that contest is finalized
+    this.socketManager.emitContestLeaderboard(id, { ...result, status: 'FINALIZED' });
+    return result;
   }
 }
