@@ -39,6 +39,9 @@ export class PrometheusService implements OnModuleInit {
   readonly dbPoolWaiting: Gauge;
   readonly dbPoolUtilizationRatio: Gauge;
 
+  // Health check status gauges (1 = up, 0 = down)
+  readonly serviceHealthStatus: Gauge;
+
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {
     this.registry = new Registry();
     this.registry.setDefaultLabels({ app: 'stellarswipe' });
@@ -148,6 +151,13 @@ export class PrometheusService implements OnModuleInit {
     this.dbPoolUtilizationRatio = new Gauge({
       name: 'db_pool_utilization_ratio',
       help: 'Ratio of total pool connections to configured maximum (0–1)',
+      registers: [this.registry],
+    });
+
+    this.serviceHealthStatus = new Gauge({
+      name: 'service_health_status',
+      help: 'Health status of a service dependency (1 = up, 0 = down)',
+      labelNames: ['service'],
       registers: [this.registry],
     });
   }

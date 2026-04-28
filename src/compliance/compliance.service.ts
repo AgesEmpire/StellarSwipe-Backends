@@ -1,5 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserDataExporterService } from './exporters/user-data-exporter.service';
 import { TradeReportExporterService } from './exporters/trade-report-exporter.service';
@@ -9,8 +8,9 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
 import { ExportFormat } from './dto/export-request.dto';
 import { writeFile, unlink, mkdir } from 'fs/promises';
 import { join } from 'path';
-import * as crypto from 'crypto';
 import { existsSync } from 'fs';
+import { JobSchedulerService } from '../jobs/job-scheduler.service';
+import { EncryptionService } from '../security/encryption.service';
 
 @Injectable()
 export class ComplianceService {
@@ -24,6 +24,7 @@ export class ComplianceService {
     private auditExporter: AuditTrailExporterService,
     private gdprGenerator: GdprReportGenerator,
     private financialGenerator: FinancialReportGenerator,
+    private encryptionService: EncryptionService,
   ) {
     this.exportDir = this.configService.get('EXPORT_DIR', '/tmp/exports');
     this.ensureExportDir();
@@ -98,18 +99,7 @@ export class ComplianceService {
   }
 
   private encryptFile(content: string): string {
-    const algorithm = 'aes-256-cbc';
-    const key = crypto.scryptSync(this.configService.get('ENCRYPTION_KEY', 'default-key'), 'salt', 32);
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(algorithm, key, iv);
-
-    let encrypted = cipher.update(content, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    return JSON.stringify({
-      iv: iv.toString('hex'),
-      data: encrypted,
-    });
+    return this.encryptionService.encrypt(content);
   }
 
   private convertToCSV(data: any): string {

@@ -10,6 +10,7 @@ import {
   LoggingInterceptor,
   TransformInterceptor,
   TimeoutInterceptor,
+  SensitiveDataInterceptor,
 } from './common/interceptors';
 import { LoggerService } from './common/logger';
 import { SentryService } from './common/sentry';
@@ -115,6 +116,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new LoggingInterceptor(logger));
   app.useGlobalInterceptors(new TransformInterceptor());
+  app.useGlobalInterceptors(new SensitiveDataInterceptor());
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
 
   // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
