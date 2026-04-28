@@ -1,0 +1,19 @@
+{
+    "TRADE_EXECUTED": "Votre transaction a été exécutée avec succès",
+    "TRADE_PENDING": "Votre transaction est en cours de traitement",
+    "TRADE_CANCELLED": "Votre transaction a été annulée",
+    "SIGNAL_CREATED": "Un nouveau signal a été créé",
+    "SIGNAL_UPDATED": "Le signal a été mis à jour",
+    "SIGNAL_CLOSED": "Le signal a été fermé",
+    "PORTFOLIO_UPDATED": "Votre portefeuille a été mis à jour",
+    "RISK_ALERT": "Alerte de risque : Votre position dépasse le seuil de risque",
+    "PRICE_ALERT": "Alerte de prix déclenchée pour {asset}",
+    "WELCOME": "Bienvenue sur StellarSwipe !",
+    "SESSION_STARTED": "Vous vous êtes connecté avec succès",
+    "SESSION_ENDED": "Vous avez été déconnecté",
+    "PREFERENCE_UPDATED": "Vos préférences ont été mises à jour",
+    "PAYMENT_SCHEDULED": "Votre paiement a été programmé pour le {date}",
+    "PAYMENT_EXECUTED": "Votre paiement programmé a été exécuté",
+    "PAYMENT_CANCELLED": "Votre paiement programmé a été annulé",
+    "PAYMENT_REMINDER": "Rappel : Vous avez un paiement programmé pour le {date}"
+}
