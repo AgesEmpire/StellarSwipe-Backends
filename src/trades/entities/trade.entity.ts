@@ -25,6 +25,12 @@ export enum TradeSide {
   SELL = 'sell',
 }
 
+// Composite index for paginated trade history queries (most common access pattern)
+@Index('idx_trades_user_created_at', ['userId', 'createdAt'])
+// Composite index for open-positions queries (user_id + status + closed_at IS NULL)
+@Index('idx_trades_user_status_closed', ['userId', 'status', 'closedAt'])
+// Index for signal-based lookups
+@Index('idx_trades_signal_id', ['signalId'])
 @Entity('trades')
 export class Trade {
   @PrimaryGeneratedColumn('uuid')

@@ -1,0 +1,124 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stellarswipe-staging
+
+resources:
+  - ../base
+
+# Tag images with the staging build SHA at deploy time:
+#   kustomize edit set image stellarswipe-api=stellarswipe-api:$(git rev-parse --short HEAD)
+images:
+  - name: stellarswipe-api
+    newTag: staging-latest
+
+# Override non-sensitive config for staging
+configMapGenerator:
+  - name: stellarswipe-config
+    namespace: stellarswipe-staging
+    behavior: merge
+    literals:
+      - NODE_ENV=staging
+      - STELLAR_NETWORK=testnet
+      - STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+      - STELLAR_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org:443
+      - STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+      - DATABASE_HOST=postgres-svc
+      - DATABASE_NAME=stellarswipe_staging
+      - TRACING_ENABLED=true
+
+patches:
+  # ── Replicas: lower floor for staging ──────────────────────────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: stellarswipe-api
+        namespace: stellarswipe-staging
+      spec:
+        replicas: 1
+    target:
+      kind: Deployment
+      name: stellarswipe-api
+
+  # ── Resources: smaller footprint in staging ────────────────────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: stellarswipe-api
+        namespace: stellarswipe-staging
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api
+                resources:
+                  requests:
+                    memory: "128Mi"
+                    cpu: "100m"
+                  limits:
+                    memory: "256Mi"
+                    cpu: "250m"
+    target:
+      kind: Deployment
+      name: stellarswipe-api
+
+  # ── HPA: smaller range in staging ─────────────────────────────────────────
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: stellarswipe-api-hpa
+        namespace: stellarswipe-staging
+      spec:
+        minReplicas: 1
+        maxReplicas: 3
+    target:
+      kind: HorizontalPodAutoscaler
+      name: stellarswipe-api-hpa
+
+  # ── PDB: allow all pods to be disrupted in staging ────────────────────────
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: stellarswipe-api-pdb
+        namespace: stellarswipe-staging
+      spec:
+        minAvailable: 0
+    target:
+      kind: PodDisruptionBudget
+      name: stellarswipe-api-pdb
+
+  # ── Ingress: staging hostname ──────────────────────────────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: stellarswipe-api-ingress
+        namespace: stellarswipe-staging
+        annotations:
+          cert-manager.io/cluster-issuer: "letsencrypt-staging"
+      spec:
+        tls:
+          - hosts:
+              - api-staging.stellarswipe.com
+            secretName: stellarswipe-api-staging-tls
+        rules:
+          - host: api-staging.stellarswipe.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: stellarswipe-api-svc
+                      port:
+                        name: http
+    target:
+      kind: Ingress
+      name: stellarswipe-api-ingress
+
+namePrefix: ""
+nameSuffix: ""

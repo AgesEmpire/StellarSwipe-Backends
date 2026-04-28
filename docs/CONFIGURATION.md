@@ -362,3 +362,239 @@ This allows you to:
 - [Joi Validation](https://joi.dev/api/)
 - [Stellar Networks](https://developers.stellar.org/docs/networks)
 - [AWS Secrets Manager](https://aws.amazon.com/secrets-manager/)
+
+## Audit Logging
+
+StellarSwipe records immutable audit logs for all admin-level and sensitive account operations.
+
+### What is logged
+
+| Operation | Action enum | Controller |
+|---|---|---|
+| Wallet signature login | `LOGIN` | `AuthController.verify` |
+| User suspended | `USER_SUSPENDED` | `AdminController.suspendUser` |
+| User reinstated | `USER_REINSTATED` | `AdminController.unsuspendUser` |
+| Signal removed by admin | `SIGNAL_DELETED` | `AdminController.removeSignal` |
+| KYC flow started | `KYC_SUBMITTED` | `KycController.startKyc` |
+| KYC manual review | `KYC_MANUAL_REVIEW` | `KycController.manualReview` |
+| API key created | `API_KEY_CREATED` | `ApiKeysController.create` |
+| API key rotated | `API_KEY_ROTATED` | `ApiKeysController.rotate` |
+| API key revoked | `API_KEY_REVOKED` | `ApiKeysController.revoke` |
+
+### How it works
+
+The `@Audit()` method decorator (from `src/audit-log/interceptors/audit-logging.interceptor.ts`) is applied to controller handlers. The `AuditLoggingInterceptor` fires after the handler resolves (or rejects) and writes an entry via `AuditService.log()`. Failures in audit logging never propagate to the caller.
+
+Each log entry captures: `userId`, `action`, `resource`, `resourceId`, `ipAddress`, `userAgent`, `status` (`SUCCESS`/`FAILURE`), and optional `metadata`. Sensitive fields (passwords, keys, tokens) are automatically redacted before persistence.
+
+### Querying logs
+
+```
+GET /api/v1/audit                          # paginated list with filters
+GET /api/v1/audit/:id                      # single entry
+GET /api/v1/audit/users/:userId            # trail for a user
+GET /api/v1/audit/resources/:resource/:id  # trail for a resource
+GET /api/v1/audit/compliance/export/:userId?startDate=&endDate=
+```
+
+### Retention
+
+Audit logs are retained for **2 years** (730 days). A scheduled job runs nightly at 02:00 to purge older entries using a raw query that bypasses the immutability hook.
+
+### Adding new audited operations
+
+1. Add the action to the `AuditAction` enum in `src/audit-log/entities/audit-log.entity.ts`.
+2. Apply `@Audit({ action: AuditAction.YOUR_ACTION, resource: 'resource-name' })` to the controller method.
+3. Ensure the controller's module imports `AuditModule` (or the module already exports `AuditLoggingInterceptor`).
+
+## Worker Tracing
+
+`WorkerTracingService` (`src/tracing/worker-tracing.service.ts`) extends the HTTP-layer tracing to asynchronous Bull worker jobs.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRACING_ENABLED` | `false` | Set to `true` to activate tracing for both HTTP and worker paths |
+| `TRACING_SERVICE_NAME` | `stellarswipe-backend` | Service name embedded in outbound trace headers |
+
+### How it works
+
+When a Bull job is processed, the worker calls `WorkerTracingService.start(job)` which:
+
+1. Reads `job.data.traceId` (or the legacy `x-trace-id` key) to continue an existing trace started by an HTTP request.
+2. Generates a fresh UUID v4 when no trace ID is present, so every job execution is always identifiable.
+3. Logs `worker:start`, `worker:finish`, and `worker:error` events tagged with the trace ID, queue name, and job ID.
+
+### Propagating a trace ID from HTTP to a worker
+
+```typescript
+// In a controller or service that enqueues a job:
+const traceId = this.tracingService.fromRequest(req);
+const jobData = traceId
+  ? this.workerTracing.injectTraceId(payload, traceId)
+  : payload;
+await this.queue.add('my-job', jobData);
+```
+
+### Using in a Bull @Processor
+
+```typescript
+@Process('my-job')
+async handle(job: Job): Promise<void> {
+  const traceId = this.workerTracing.start(job);
+  try {
+    // ... do work ...
+    this.workerTracing.finish(traceId, job);
+  } catch (err) {
+    this.workerTracing.error(traceId, job, err as Error);
+    throw err;
+  }
+}
+```
+
+Inject `WorkerTracingService` by importing `TracingModule` into the feature module that owns the processor.
+
+## Nested Payload Validation
+
+`NestedPayloadValidator` (`src/common/validators/nested-payload.validator.ts`) closes the gap where the global `CustomValidationPipe` only validates top-level DTO fields — nested objects decorated with `@ValidateNested()` are now fully traversed.
+
+### Validation options applied
+
+| Option | Value | Effect |
+|---|---|---|
+| `whitelist` | `true` | Strips undeclared properties at every nesting level |
+| `forbidNonWhitelisted` | `true` | Rejects requests that contain extra properties (prevents mass-assignment) |
+| `enableImplicitConversion` | `true` | Coerces primitive types (e.g. `"3"` → `3`) via `class-transformer` |
+| `stopAtFirstError` | `false` | Collects all errors before throwing so callers receive a complete error map |
+
+### Error format
+
+Errors are returned as a flat object keyed by dot-notation path:
+
+```json
+{
+  "message": "Validation failed",
+  "errors": {
+    "address.street": ["street should not be empty"],
+    "items.0.quantity": ["quantity must not be less than 1"]
+  }
+}
+```
+
+### Usage in a service or controller
+
+```typescript
+// Inject via constructor (requires ValidationModule or manual provider registration)
+constructor(private readonly nestedValidator: NestedPayloadValidator) {}
+
+async createOrder(body: unknown) {
+  const dto = await this.nestedValidator.validate(CreateOrderDto, body);
+  // dto is a fully validated CreateOrderDto instance
+}
+```
+
+### DTO requirements
+
+Nested objects must use `@ValidateNested()` + `@Type(() => NestedClass)` from `class-transformer`:
+
+```typescript
+import { ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class CreateOrderDto {
+  @ValidateNested()
+  @Type(() => AddressDto)
+  address: AddressDto;
+}
+```
+
+### Security
+
+- Extra properties at any nesting depth are rejected (not silently dropped), preventing mass-assignment attacks on nested objects.
+- No authentication or authorization logic is modified.
+
+## Dynamic Secrets Rotation
+
+`RotationService` (`src/secrets/rotation.service.ts`) provides in-memory dynamic rotation of backend credentials and service keys without requiring a process restart.
+
+### How it works
+
+1. At startup, register each secret with its current value (read from env):
+   ```typescript
+   this.rotationService.register('jwt-secret', process.env.JWT_SECRET, 0);
+   this.rotationService.register('api-key', process.env.API_KEY, 3_600_000); // auto-rotate every hour
+   ```
+2. On rotation (manual or scheduled), a cryptographically-random 32-byte hex value is generated and stored in-memory.
+3. A `secret.rotated` event is emitted so consumers can reload without restart:
+   ```typescript
+   @OnEvent('secret.rotated')
+   onSecretRotated(payload: SecretRotatedPayload) {
+     if (payload.name === 'jwt-secret') {
+       this.reloadJwtModule(this.rotationService.get('jwt-secret'));
+     }
+   }
+   ```
+4. Callers always read the current value via `rotationService.get(name)`.
+
+### Security properties
+
+- Secret values are **never logged** — only the secret name appears in logs.
+- The `secret.rotated` event payload contains only `{ name, rotatedAt }` — no value.
+- `getRecord()` exposes metadata (name, lastRotatedAt, intervalMs) but **not** the value.
+- Auto-rotation timers are cleared on module destroy to prevent resource leaks.
+
+### Importing
+
+Add `SecretsModule` to any feature module that needs rotation:
+
+```typescript
+import { SecretsModule } from '../secrets/secrets.module';
+
+@Module({ imports: [SecretsModule] })
+export class AuthModule {}
+```
+
+## Backup Verification
+
+`VerificationService` (`src/backup/verification.service.ts`) closes the gap in `BackupService.verifyBackup()` which only checked file size > 0. It runs four checks on every snapshot file:
+
+| Check | Condition | Purpose |
+|---|---|---|
+| `exists` | File present on disk | Catches missing/deleted snapshots |
+| `minSize` | ≥ 1 KB | Rejects truncated or empty files |
+| `notStale` | Age ≤ `maxAgeMs` (default 25 h) | Flags missed backup runs |
+| `checksumMatch` | SHA-256 matches expected digest | Detects corruption or tampering |
+
+`checksumMatch` is `null` (skipped) when no expected digest is provided.
+
+### Usage
+
+```typescript
+// Inject via BackupModule
+const result = await this.verificationService.verify(
+  '/var/backups/stellarswipe/backup.sql.gz.gpg',
+  storedSha256Digest,   // optional — omit to skip checksum check
+  25 * 60 * 60 * 1000, // optional — override max age (ms)
+);
+
+if (!result.passed) {
+  // result.checks shows which check(s) failed
+  // result.error contains the message for existence failures
+}
+```
+
+### Storing checksums at backup creation time
+
+After `BackupService.createBackup()` returns the encrypted path, compute and store the digest:
+
+```typescript
+const digest = await this.verificationService.sha256(encryptedPath);
+// persist `digest` alongside the backup record
+```
+
+### Security
+
+- No credentials, passphrases, or secret values are read or logged.
+- Only the file path and check results appear in log output.
+- Existing `BackupService` access-control semantics are unchanged.

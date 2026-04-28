@@ -1,0 +1,13 @@
+environment           = "staging"
+aws_region            = "us-east-1"
+vpc_cidr              = "10.0.0.0/16"
+db_instance_class     = "db.t3.medium"
+db_allocated_storage  = 50
+db_engine_version     = "15.3"
+db_name               = "stellarswipe"
+redis_node_type       = "cache.t3.medium"
+redis_num_cache_nodes = 1
+eks_node_desired_size = 2
+eks_node_min_size     = 1
+eks_node_max_size     = 5
+eks_instance_types    = ["t3.large"]

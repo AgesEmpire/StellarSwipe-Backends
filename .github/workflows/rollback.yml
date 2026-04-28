@@ -1,0 +1,38 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: 'Image tag to roll back to (e.g. v1.2.3)'
+        required: true
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Execute rollback
+        run: ./scripts/rollback.sh ${{ inputs.environment }} ${{ inputs.image_tag }}
+        env:
+          KUBECONFIG_DATA: ${{ inputs.environment == 'production' && secrets.PRODUCTION_KUBECONFIG || secrets.STAGING_KUBECONFIG }}
+
+      - name: Verify rollback
+        run: npm run test:smoke || true
+        env:
+          SMOKE_TEST_URL: ${{ inputs.environment == 'production' && secrets.PRODUCTION_URL || secrets.STAGING_URL }}
+
+      - name: Notify team
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: '{"text":"⏪ Rollback to ${{ inputs.image_tag }} on ${{ inputs.environment }} by ${{ github.actor }}"}'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stellarswipe-api-ingress
+  namespace: stellarswipe
+  labels:
+    app.kubernetes.io/name: stellarswipe-api
+    app.kubernetes.io/component: ingress
+  annotations:
+    # nginx ingress controller
+    kubernetes.io/ingress.class: "nginx"
+
+    # TLS — cert-manager issues and renews the certificate automatically
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # Force HTTPS redirect
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: camera=(), microphone=(), geolocation=()";
+
+    # WebSocket support (for socket.io)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # Rate limiting at the ingress level (belt-and-suspenders on top of app-level)
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+
+    # Enable CORS for API consumers
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.stellarswipe.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, X-Requested-With"
+    nginx.ingress.kubernetes.io/cors-max-age: "86400"
+spec:
+  tls:
+    - hosts:
+        - api.stellarswipe.com
+      # cert-manager creates this Secret automatically
+      secretName: stellarswipe-api-tls
+  rules:
+    - host: api.stellarswipe.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stellarswipe-api-svc
+                port:
+                  name: http

@@ -1,0 +1,54 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: stellarswipe-api-hpa
+  namespace: stellarswipe
+  labels:
+    app.kubernetes.io/name: stellarswipe-api
+    app.kubernetes.io/component: autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: stellarswipe-api
+  minReplicas: 2
+  maxReplicas: 10
+
+  metrics:
+    # Scale out when average CPU hits 70 %
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Scale out when average memory hits 80 %
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    # Scale up: respond quickly to traffic spikes
+    scaleUp:
+      stabilizationWindowSeconds: 60      # wait 60 s before scaling up again
+      policies:
+        - type: Pods
+          value: 2                        # add at most 2 pods per window
+          periodSeconds: 60
+        - type: Percent
+          value: 50                       # or 50 % of current replicas, whichever is larger
+          periodSeconds: 60
+      selectPolicy: Max
+
+    # Scale down: be conservative to avoid thrashing
+    scaleDown:
+      stabilizationWindowSeconds: 300     # wait 5 min before scaling down
+      policies:
+        - type: Pods
+          value: 1                        # remove at most 1 pod per window
+          periodSeconds: 120
+      selectPolicy: Min

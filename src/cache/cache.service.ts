@@ -3,9 +3,6 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 
-/**
- * Cache key prefixes for namespacing
- */
 export enum CachePrefix {
     SESSION = 'stellarswipe:session:',
     SIGNAL = 'stellarswipe:signal:',
@@ -13,9 +10,6 @@ export enum CachePrefix {
     SDEX = 'stellarswipe:sdex:',
 }
 
-/**
- * Cache TTL types matching the configuration
- */
 export type CacheTTLType = 'session' | 'signal' | 'portfolio' | 'default';
 
 @Injectable()
@@ -140,8 +134,54 @@ export class CacheService {
     }
 
     /**
-     * Get TTL configuration for a specific type
+     * Cache-aside: return cached value or fetch, cache, and return.
+     * Prevents duplicate DB reads for repeated identical requests.
      */
+    async getOrSet<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType = 'default',
+    ): Promise<T> {
+        const cached = await this.get<T>(key);
+        if (cached !== undefined && cached !== null) {
+            return cached;
+        }
+        const value = await fetchFn();
+        await this.set(key, value, ttlType);
+        return value;
+    }
+
+    /**
+     * Stampede-safe getOrSet: coalesces concurrent fetches for the same key
+     * into a single DB/upstream call.
+     */
+    private readonly inflightRequests = new Map<string, Promise<any>>();
+
+    async getOrSetWithLock<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType = 'default',
+    ): Promise<T> {
+        const cached = await this.get<T>(key);
+        if (cached !== undefined && cached !== null) {
+            return cached;
+        }
+
+        if (this.inflightRequests.has(key)) {
+            return this.inflightRequests.get(key) as Promise<T>;
+        }
+
+        const promise = fetchFn().then(async (value) => {
+            await this.set(key, value, ttlType);
+            return value;
+        }).finally(() => {
+            this.inflightRequests.delete(key);
+        });
+
+        this.inflightRequests.set(key, promise);
+        return promise;
+    }
+
     getTTL(ttlType: CacheTTLType): number {
         return this.ttlConfig[ttlType];
     }

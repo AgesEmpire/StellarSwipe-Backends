@@ -1,0 +1,121 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stellarswipe
+
+resources:
+  - ../base
+
+# Pin to a versioned image — never use :latest in production.
+# Update this at deploy time:
+#   kustomize edit set image stellarswipe-api=stellarswipe-api:1.2.3
+images:
+  - name: stellarswipe-api
+    newTag: "1.0.0"   # replace with the release tag
+
+configMapGenerator:
+  - name: stellarswipe-config
+    namespace: stellarswipe
+    behavior: merge
+    literals:
+      - NODE_ENV=production
+      - DATABASE_POOL_MIN=10
+      - DATABASE_POOL_MAX=30
+      - THROTTLE_LIMIT=100
+
+patches:
+  # ── Replicas: production floor ──────────────────────────────────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: stellarswipe-api
+        namespace: stellarswipe
+      spec:
+        replicas: 3
+    target:
+      kind: Deployment
+      name: stellarswipe-api
+
+  # ── Resources: production sizing ──────────────────────────────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: stellarswipe-api
+        namespace: stellarswipe
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api
+                resources:
+                  requests:
+                    memory: "256Mi"
+                    cpu: "250m"
+                  limits:
+                    memory: "512Mi"
+                    cpu: "500m"
+    target:
+      kind: Deployment
+      name: stellarswipe-api
+
+  # ── HPA: production range ──────────────────────────────────────────────────
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: stellarswipe-api-hpa
+        namespace: stellarswipe
+      spec:
+        minReplicas: 3
+        maxReplicas: 10
+    target:
+      kind: HorizontalPodAutoscaler
+      name: stellarswipe-api-hpa
+
+  # ── PDB: production guarantee ──────────────────────────────────────────────
+  # With minReplicas: 3, keeping minAvailable: 2 means the cluster can still
+  # drain one node without user impact.
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: stellarswipe-api-pdb
+        namespace: stellarswipe
+      spec:
+        minAvailable: 2
+    target:
+      kind: PodDisruptionBudget
+      name: stellarswipe-api-pdb
+
+  # ── Ingress: production hostname + stricter rate limiting ─────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: stellarswipe-api-ingress
+        namespace: stellarswipe
+        annotations:
+          cert-manager.io/cluster-issuer: "letsencrypt-prod"
+          nginx.ingress.kubernetes.io/limit-rps: "30"
+          nginx.ingress.kubernetes.io/limit-connections: "10"
+      spec:
+        tls:
+          - hosts:
+              - api.stellarswipe.com
+            secretName: stellarswipe-api-tls
+        rules:
+          - host: api.stellarswipe.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: stellarswipe-api-svc
+                      port:
+                        name: http
+    target:
+      kind: Ingress
+      name: stellarswipe-api-ingress

@@ -207,6 +207,29 @@ const signals = await Promise.all(
 
 ### Pagination
 
+The backend provides standardized pagination controls for large API responses. When making requests to list endpoints, use the following query parameters:
+
+- `page`: Page number (default: 1)
+- `limit`: Items per page (default: 20, max: 100)
+
+The response will include pagination metadata:
+
+```json
+{
+  "data": [...],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 150,
+    "totalPages": 8,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}
+```
+
+For cursor-based pagination (used in signal feeds), use `cursor` and `limit` parameters.
+
 ```typescript
 async function getAllSignals(params: SignalListParams) {
   const allSignals: Signal[] = [];

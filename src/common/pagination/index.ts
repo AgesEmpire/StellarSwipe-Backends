@@ -1,0 +1,1 @@
+export { PaginationInterceptor, PaginatedResponse } from './pagination.interceptor';

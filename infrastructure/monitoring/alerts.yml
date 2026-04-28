@@ -1,85 +1,8 @@
 groups:
-  - name: stellarswipe.api
+  - name: stellarswipe.health
+    interval: 30s
     rules:
-      - alert: HighErrorRate
-        expr: |
-          rate(http_requests_errors_total[5m])
-          / rate(http_requests_total[5m]) > 0.05
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Error rate above 5%"
-          description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.route }}"
-
-      - alert: SlowAPIResponse
-        expr: |
-          histogram_quantile(0.95,
-            rate(http_request_duration_seconds_bucket[5m])
-          ) > 2
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "95th percentile response time > 2s"
-          description: "p95 latency is {{ $value }}s on {{ $labels.route }}"
-
-      - alert: HighRequestRate
-        expr: rate(http_requests_total[1m]) > 1000
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Request rate above 1000 RPM"
-
-  - name: stellarswipe.business
-    rules:
-      - alert: NoTradesExecuted
-        expr: rate(trades_executed_total[30m]) == 0
-        for: 30m
-        labels:
-          severity: warning
-        annotations:
-          summary: "No trades executed in 30 minutes"
-
-      - alert: LowCacheHitRate
-        expr: |
-          rate(cache_hits_total[5m])
-          / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m])) < 0.5
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Cache hit rate below 50%"
-
-  - name: stellarswipe.infrastructure
-    rules:
-      - alert: HighMemoryUsage
-        expr: nodejs_heap_size_used_bytes / nodejs_heap_size_total_bytes > 0.9
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Node.js heap usage above 90%"
-
-      - alert: DatabaseSlowQueries
-        expr: |
-          histogram_quantile(0.95,
-            rate(db_query_duration_seconds_bucket[5m])
-          ) > 1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "DB p95 query time > 1s"
-
-      - alert: HighDBConnections
-        expr: postgresql_connections_active > 80
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "PostgreSQL active connections above 80"
+      # ── Service availability ──────────────────────────────────────────────
 
       - alert: AppDown
         expr: up{job="stellarswipe-backend"} == 0
@@ -87,4 +10,125 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "StellarSwipe backend is down"
+          summary: "StellarSwipe backend is unreachable"
+          description: "Prometheus cannot scrape {{ $labels.instance }}. The app may be crashed or the network is down."
+
+      - alert: HealthCheckFailing
+        expr: |
+          sum(rate(http_requests_total{job="stellarswipe-backend", route=~"/api/v1/health.*", status_code=~"5.."}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check endpoint returning 5xx errors"
+          description: "{{ $labels.route }} has returned HTTP 5xx responses for more than 2 minutes."
+
+      # ── Database ──────────────────────────────────────────────────────────
+
+      - alert: DatabaseDown
+        expr: |
+          sum(rate(http_requests_total{job="stellarswipe-backend", route="/api/v1/health/db", status_code=~"5.."}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "Database health check failing"
+          description: "The /health/db endpoint has been returning errors for more than 1 minute. PostgreSQL may be unavailable."
+
+      - alert: DatabaseConnectionsHigh
+        expr: postgresql_connections_active{job="stellarswipe-backend"} > 25
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "High number of active database connections"
+          description: "Active PostgreSQL connections ({{ $value }}) are above 25 for more than 5 minutes."
+
+      - alert: DatabaseQueryLatencyHigh
+        expr: |
+          histogram_quantile(0.95, rate(db_query_duration_seconds_bucket{job="stellarswipe-backend"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Database query p95 latency is high"
+          description: "95th-percentile DB query duration is {{ $value | humanizeDuration }} (threshold: 1 s)."
+
+      # ── Redis / Cache ─────────────────────────────────────────────────────
+
+      - alert: RedisDown
+        expr: |
+          sum(rate(http_requests_total{job="stellarswipe-backend", route="/api/v1/health/cache", status_code=~"5.."}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis health check failing"
+          description: "The /health/cache endpoint has been returning errors for more than 1 minute. Redis may be unavailable."
+
+      - alert: CacheHitRateLow
+        expr: |
+          rate(cache_hits_total{job="stellarswipe-backend"}[10m])
+          /
+          (rate(cache_hits_total{job="stellarswipe-backend"}[10m]) + rate(cache_misses_total{job="stellarswipe-backend"}[10m]))
+          < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: redis
+        annotations:
+          summary: "Cache hit rate is below 50%"
+          description: "Cache hit ratio is {{ $value | humanizePercentage }} over the last 10 minutes."
+
+      # ── Stellar / Soroban ─────────────────────────────────────────────────
+
+      - alert: StellarHorizonDown
+        expr: |
+          sum(rate(http_requests_total{job="stellarswipe-backend", route="/api/v1/health/stellar", status_code=~"5.."}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: stellar
+        annotations:
+          summary: "Stellar Horizon health check failing"
+          description: "The /health/stellar endpoint has been returning errors for more than 2 minutes."
+
+      - alert: SorobanRpcDown
+        expr: |
+          sum(rate(http_requests_total{job="stellarswipe-backend", route="/api/v1/health/soroban", status_code=~"5.."}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: soroban
+        annotations:
+          summary: "Soroban RPC health check failing"
+          description: "The /health/soroban endpoint has been returning errors for more than 2 minutes."
+
+      # ── HTTP error rate ───────────────────────────────────────────────────
+
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_errors_total{job="stellarswipe-backend"}[5m])
+          /
+          rate(http_requests_total{job="stellarswipe-backend"}[5m])
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP error rate above 5%"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes on {{ $labels.route }}."
+
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="stellarswipe-backend"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP p95 latency above 2 s"
+          description: "95th-percentile request duration is {{ $value | humanizeDuration }} on {{ $labels.route }}."

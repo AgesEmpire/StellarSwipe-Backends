@@ -4,8 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { CacheModule } from '@nestjs/cache-manager';
 import { LeaderboardService } from './leaderboard.service';
 import { LeaderboardController } from './leaderboard.controller';
-
-// Replace these with the actual entity classes used in your project
+import { LeaderboardRepository } from './leaderboard.repository';
 import { Signal } from '../signals/signal.entity';
 import { Provider } from '../providers/provider.entity';
 
@@ -16,7 +15,7 @@ import { Provider } from '../providers/provider.entity';
     CacheModule.register(),
   ],
   controllers: [LeaderboardController],
-  providers: [LeaderboardService],
-  exports: [LeaderboardService],
+  providers: [LeaderboardService, LeaderboardRepository],
+  exports: [LeaderboardService, LeaderboardRepository],
 })
 export class LeaderboardModule {}

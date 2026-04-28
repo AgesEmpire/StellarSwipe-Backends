@@ -1,3 +1,6 @@
+// Nested Payload Validator
+export * from './nested-payload.validator';
+
 // Stellar Address Validators
 export * from './stellar-address.validator';
 

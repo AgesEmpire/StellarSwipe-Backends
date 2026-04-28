@@ -8,6 +8,10 @@ import { PriceCacheStrategy } from './strategies/price-cache.strategy';
 import { CacheInvalidatorService } from './invalidation/cache-invalidator.service';
 import { CacheMetricsService } from './monitoring/cache-metrics.service';
 import { CacheController } from './cache.controller';
+import { CacheService } from './cache.service';
+import { CacheInvalidationService } from './cache-invalidation.service';
+import { ResponseCacheService, ResponseCacheInterceptor } from './response-cache.service';
+import { TradingCacheService } from './trading-cache.service';
 
 @Global()
 @Module({
@@ -33,19 +37,29 @@ import { CacheController } from './cache.controller';
     }),
   ],
   providers: [
+    CacheService,
     FeedCacheStrategy,
     ProviderCacheStrategy,
     PriceCacheStrategy,
     CacheInvalidatorService,
     CacheMetricsService,
+    CacheInvalidationService,
+    ResponseCacheService,
+    ResponseCacheInterceptor,
+    TradingCacheService,
   ],
   controllers: [CacheController],
   exports: [
+    CacheService,
     FeedCacheStrategy,
     ProviderCacheStrategy,
     PriceCacheStrategy,
     CacheInvalidatorService,
     CacheMetricsService,
+    CacheInvalidationService,
+    ResponseCacheService,
+    ResponseCacheInterceptor,
+    TradingCacheService,
   ],
 })
 export class CacheModule { }
