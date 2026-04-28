@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stellarswipe-api-pdb
+  namespace: stellarswipe
+  labels:
+    app.kubernetes.io/name: stellarswipe-api
+    app.kubernetes.io/component: pdb
+spec:
+  # Keep at least 2 pods available during voluntary disruptions
+  # (node drain, rolling upgrades, cluster autoscaler scale-down).
+  # With minReplicas: 2 in the HPA, this guarantees zero-downtime drains.
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: stellarswipe-api

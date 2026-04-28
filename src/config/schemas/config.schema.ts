@@ -60,4 +60,7 @@ export const configSchema = Joi.object({
   SENTRY_DSN: Joi.string().uri().optional().allow(''),
   SENTRY_ENVIRONMENT: Joi.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: Joi.number().min(0).max(1).default(0.1),
+
+  // Encryption (at-rest field encryption)
+  ENCRYPTION_KEY: Joi.string().min(32).required(),
 });

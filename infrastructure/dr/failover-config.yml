@@ -1,0 +1,120 @@
+# StellarSwipe — Failover Configuration
+# Consumed by FailoverCoordinatorService and infrastructure automation scripts.
+# Environment-specific values must be set as Kubernetes Secrets or SSM parameters.
+
+regions:
+  primary:
+    name: us-east-1
+    label: "US East (N. Virginia)"
+    api_endpoint: "https://api-primary.stellarswipe.com"
+    db_host: "${DR_PRIMARY_DB_HOST}"
+    db_port: 5432
+    redis_host: "${DR_PRIMARY_REDIS_HOST}"
+    redis_port: 6379
+
+  secondary:
+    name: eu-west-1
+    label: "EU West (Ireland)"
+    api_endpoint: "https://api-secondary.stellarswipe.com"
+    db_host: "${DR_SECONDARY_DB_HOST}"
+    db_port: 5432
+    redis_host: "${DR_SECONDARY_REDIS_HOST}"
+    redis_port: 6379
+
+dns:
+  provider: route53
+  hosted_zone_id: "${DR_ROUTE53_HOSTED_ZONE_ID}"
+  api_domain: "api.stellarswipe.com"
+  ttl: 60    # seconds — low TTL allows fast propagation during failover
+
+health_monitor:
+  # Interval between system-wide health polls (seconds)
+  poll_interval_seconds: 120
+  # Number of failing components that triggers a failover evaluation
+  failure_threshold: 2
+  # Number of consecutive failing polls before automatic failover fires
+  consecutive_failure_limit: 3
+  # Individual check timeouts (milliseconds)
+  check_timeout_ms:
+    database: 3000
+    redis: 3000
+    stellar_network: 5000
+    api_response: 2000
+    backup_status: 5000
+
+failover:
+  # Maximum time to wait for new primary to accept connections (seconds)
+  promotion_timeout_seconds: 150
+  # Notify this Slack webhook on every failover event
+  alert_webhook_url: "${DR_ALERT_WEBHOOK_URL}"
+  # Require explicit confirmation before production failover (manual mode only)
+  require_confirmation: true
+  # PagerDuty integration key for P1 alerts
+  pagerduty_integration_key: "${DR_PAGERDUTY_KEY}"
+
+backup:
+  # Local directory for backup staging
+  backup_dir: "/var/backups/stellarswipe/dr"
+  # S3 bucket (primary region)
+  s3_bucket: "stellarswipe-dr-backups-us-east-1"
+  # S3 bucket (cross-region replica)
+  s3_bucket_dr: "stellarswipe-dr-backups-eu-west-1"
+  # AWS region for S3 uploads
+  s3_region: "${DR_S3_REGION}"
+
+  tiers:
+    wal:
+      type: "continuous"
+      description: "PostgreSQL WAL archiving to S3"
+      retention_days: 7
+      rpo_minutes: 5
+
+    incremental:
+      type: "pg_basebackup"
+      description: "Hourly binary base backup"
+      schedule: "0 0-1,3-23 * * *"   # every hour except 02:00 (full backup window)
+      retention_days: 1
+      rpo_minutes: 60
+
+    full:
+      type: "pg_dump"
+      description: "Daily compressed + encrypted SQL dump"
+      schedule: "0 2 * * *"
+      retention_days: 30
+      rpo_hours: 24
+
+    snapshot:
+      type: "ebs_snapshot"
+      description: "Weekly EBS volume snapshot via AWS Backup"
+      schedule: "0 3 * * 0"
+      retention_days: 90
+      rpo_days: 7
+
+  verification:
+    schedule: "0 4 * * *"   # daily at 04:00 UTC, 2 hours after full backup
+    # Tables to probe during integrity check
+    integrity_checks:
+      - "SELECT COUNT(*) FROM users"
+      - "SELECT COUNT(*) FROM signals"
+      - "SELECT COUNT(*) FROM trades"
+      - "SELECT COUNT(*) FROM webhooks"
+
+rto_targets:
+  critical_services_minutes: 15      # API, DB, Auth
+  important_services_minutes: 60     # Analytics, reporting, jobs
+  non_critical_services_hours: 4     # Historical data, archived logs
+
+rpo_targets:
+  transactional_data_minutes: 5      # Streaming replication
+  user_data_minutes: 60              # Hourly backups
+  analytics_data_hours: 24           # Daily backups
+
+dr_drills:
+  # Quarterly schedule — executed by FailoverTestJob
+  schedule:
+    q1: "0 2 1-7 3 1"    # First Monday of March
+    q2: "0 2 1-7 6 1"    # First Monday of June
+    q3: "0 2 1-7 9 1"    # First Monday of September
+    q4: "0 2 1-7 12 1"   # First Monday of December
+  drill_mode: true        # Never touches real infrastructure
+  max_drill_history: 8    # Retain last 8 drill results (2 years)

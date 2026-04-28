@@ -1,0 +1,218 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stellarswipe-api
+  namespace: stellarswipe
+  labels:
+    app.kubernetes.io/name: stellarswipe-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/version: latest
+  annotations:
+    # Trigger rolling restart on ConfigMap / Secret change:
+    #   kubectl rollout restart deployment/stellarswipe-api -n stellarswipe
+    deployment.kubernetes.io/revision: "1"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: stellarswipe-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Allow one extra pod during rollout so traffic is never dropped
+      maxSurge: 1
+      # Never take more than one pod offline at a time
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: stellarswipe-api
+        app.kubernetes.io/name: stellarswipe-api
+        app.kubernetes.io/version: latest
+      annotations:
+        # Force pod restart when ConfigMap / Secret content changes
+        checksum/config: ""   # set by kustomize / Helm at deploy time
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/v1/metrics"
+    spec:
+      serviceAccountName: stellarswipe-api
+      terminationGracePeriodSeconds: 60
+
+      # Spread pods across nodes and availability zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: stellarswipe-api
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: stellarswipe-api
+
+      # Prefer nodes that already have the image pulled
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - stellarswipe-api
+                topologyKey: kubernetes.io/hostname
+
+      # Security hardening at the pod level
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: api
+          image: stellarswipe-api:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          # Security hardening at the container level
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Mount a writable /tmp for the read-only root filesystem
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: app-logs
+              mountPath: /app/logs
+
+          # Non-sensitive config from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: stellarswipe-config
+
+          # Sensitive values injected one-by-one from the Secret
+          env:
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: DATABASE_USER
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: DATABASE_PASSWORD
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: DATABASE_URL
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: REDIS_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: JWT_SECRET
+            - name: JWT_EXPIRES_IN
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: JWT_EXPIRES_IN
+            - name: SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: SENTRY_DSN
+            - name: XAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: stellarswipe-secrets
+                  key: XAI_API_KEY
+            # Expose pod identity for structured logging
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+          # ── Resource budgets ──────────────────────────────────────────────
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          # ── Health probes ─────────────────────────────────────────────────
+          # Startup probe: allow up to 90 s for NestJS DI + DB migration
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            failureThreshold: 18   # 18 × 5s = 90s max startup window
+            periodSeconds: 5
+
+          # Liveness: restart the pod if the event loop is stuck
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/liveness
+              port: http
+            initialDelaySeconds: 0   # startupProbe guards the initial window
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Readiness: remove from Service endpoints until warm
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/readiness
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: app-logs
+          emptyDir: {}
+
+      # Pull from a private registry if needed
+      # imagePullSecrets:
+      #   - name: registry-credentials

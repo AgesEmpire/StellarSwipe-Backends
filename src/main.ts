@@ -1,6 +1,7 @@
-import { NestFactory } from "@nestjs/core";
+import { NestFactory, Reflector } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
+import { VersioningType } from '@nestjs/common';
 import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
 import * as compression from 'compression';
 import { AppModule } from "./app.module";
@@ -8,6 +9,8 @@ import { GlobalExceptionFilter } from "./common/filters";
 import {
   LoggingInterceptor,
   TransformInterceptor,
+  TimeoutInterceptor,
+  SensitiveDataInterceptor,
 } from './common/interceptors';
 import { LoggerService } from './common/logger';
 import { SentryService } from './common/sentry';
@@ -16,7 +19,11 @@ import { RedisIoAdapter } from './websocket/adapters/redis-io.adapter';
 import { InstanceCoordinatorService } from './scaling/instance-coordinator.service';
 import { compressionConfig } from './common/config/compression.config';
 import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
+import { DeadlockRetryInterceptor } from './database/deadlock-retry.interceptor';
 import { initTracing } from './monitoring/tracing/jaeger.config';
+import { DocGeneratorService } from './documentation/doc-generator.service';
+import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
+import { DeprecationInterceptor } from './versioning/interceptors/deprecation.interceptor';
 
 initTracing();
 
@@ -49,6 +56,13 @@ async function bootstrap() {
   // Set global prefix
   app.setGlobalPrefix(globalPrefix);
 
+  // Enable URI-based API versioning (e.g. /api/v1/..., /api/v2/...)
+  app.enableVersioning({ type: VersioningType.URI });
+
+  // Register deprecation interceptor globally so @Deprecated() headers are
+  // emitted on any handler decorated with it, without touching auth logic.
+  app.useGlobalInterceptors(new DeprecationInterceptor(app.get(Reflector)));
+
   // Enable CORS
   app.enableCors({
     origin: corsOrigin,
@@ -57,6 +71,17 @@ async function bootstrap() {
 
   // Enable compression
   app.use((compression as any)(compressionConfig));
+
+  // Track in-flight requests for graceful drain
+  let inFlightRequests = 0;
+  app.use((_req: any, _res: any, next: () => void) => {
+    inFlightRequests++;
+    _res.on('finish', () => { inFlightRequests--; });
+    _res.on('close', () => { inFlightRequests--; });
+    next();
+  });
+
+  app.enableShutdownHooks();
 
   // Global pipes
   app.useGlobalPipes(
@@ -87,20 +112,21 @@ async function bootstrap() {
   );
 
   // Global interceptors
+  app.useGlobalInterceptors(new DeadlockRetryInterceptor());
+  app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new LoggingInterceptor(logger));
   app.useGlobalInterceptors(new TransformInterceptor());
+  app.useGlobalInterceptors(new SensitiveDataInterceptor());
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
 
-  // Swagger Setup
-  const config = new DocumentBuilder()
-    .setTitle('StellarSwipe API')
-    .setDescription('Copy trading DApp on Stellar')
-    .setVersion('2.0')
-    .addBearerAuth()
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
+  // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
+  const { document, json, yaml } = generateOpenApiDocument(app);
   SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
+
+  // Feed the live document into the doc generator and trigger initial generation
+  const docGenerator = app.get(DocGeneratorService);
+  docGenerator.setDocument(document);
+  docGenerator.generateAll().catch((err) => logger.error('Initial doc generation failed', err));
 
   // V1 Swagger (Deprecated)
   const configV1 = new DocumentBuilder()
@@ -134,9 +160,27 @@ async function bootstrap() {
   });
 
   process.on('SIGTERM', async () => {
-    logger.info('SIGTERM signal received: closing HTTP server');
-    await sentryService.flush();
+    logger.info('SIGTERM received: starting graceful shutdown');
+
+    // Stop accepting new connections
     await app.close();
+
+    // Drain in-flight requests (max 30 s)
+    const drainTimeout = 30_000;
+    const drainStart = Date.now();
+    while (inFlightRequests > 0 && Date.now() - drainStart < drainTimeout) {
+      logger.info(`Draining ${inFlightRequests} in-flight request(s)…`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    if (inFlightRequests > 0) {
+      logger.warn(`Shutdown forced with ${inFlightRequests} request(s) still in-flight`);
+    } else {
+      logger.info('All in-flight requests drained. Shutdown complete.');
+    }
+
+    await sentryService.flush();
+    process.exit(0);
   });
 }
 

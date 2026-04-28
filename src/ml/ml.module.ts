@@ -24,6 +24,15 @@ import { SignalPredictorService } from './signal-prediction/signal-predictor.ser
 import { RetrainModelsJob } from './signal-prediction/jobs/retrain-models.job';
 import { ValidatePredictionsJob } from './signal-prediction/jobs/validate-predictions.job';
 import { UpdateFeaturesJob } from './signal-prediction/jobs/update-features.job';
+// Churn prediction
+import { ChurnPrediction } from './churn-prediction/entities/churn-prediction.entity';
+import { RetentionCampaign } from './churn-prediction/entities/retention-campaign.entity';
+import { ChurnPredictorService } from './churn-prediction/churn-predictor.service';
+import { ChurnController } from './churn-prediction/churn.controller';
+import { ChurnClassifierModel } from './churn-prediction/models/churn-classifier.model';
+import { RiskScorerModel } from './churn-prediction/models/risk-scorer.model';
+import { PredictChurnJob } from './churn-prediction/jobs/predict-churn.job';
+import { TriggerRetentionJob } from './churn-prediction/jobs/trigger-retention.job';
 // Pattern recognition
 import { DetectedPattern } from './pattern-recognition/entities/detected-pattern.entity';
 import { PatternHistory } from './pattern-recognition/entities/pattern-history.entity';
@@ -42,6 +51,9 @@ import { PatternDetectorService } from './pattern-recognition/pattern-detector.s
       Prediction,
       TrainingData,
       ModelVersion,
+      // Churn prediction
+      ChurnPrediction,
+      RetentionCampaign,
       // Pattern recognition
       DetectedPattern,
       PatternHistory,
@@ -53,8 +65,14 @@ import { PatternDetectorService } from './pattern-recognition/pattern-detector.s
     PriceOracleModule,
     AnalyticsModule,
   ],
-  controllers: [SignalForecastingController],
+  controllers: [SignalForecastingController, ChurnController],
   providers: [
+    // Churn prediction
+    ChurnPredictorService,
+    ChurnClassifierModel,
+    RiskScorerModel,
+    PredictChurnJob,
+    TriggerRetentionJob,
     // Legacy forecasting
     FeatureEngineeringService,
     ModelTrainingService,
@@ -76,6 +94,7 @@ import { PatternDetectorService } from './pattern-recognition/pattern-detector.s
     PatternDetectorService,
   ],
   exports: [
+    ChurnPredictorService,
     SignalForecastingService,
     SignalPredictorService,
     ModelTrainerService,

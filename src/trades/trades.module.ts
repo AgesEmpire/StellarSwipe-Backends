@@ -17,6 +17,7 @@ import { WebsocketModule } from '../websocket/websocket.module';
 import { TxMonitorService } from './services/tx-monitor.service';
 import { MonitorTransactionsJob } from './jobs/monitor-transactions.job';
 import { PartialCloseService } from './partial-close/partial-close.service';
+import { TradeHistoryService } from './trade-history.service';
 
 @Module({
   imports: [
@@ -39,8 +40,9 @@ import { PartialCloseService } from './partial-close/partial-close.service';
     OcoOrderService,
     IcebergOrderService,
     PartialCloseService,
+    TradeHistoryService,
   ],
-  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService],
+  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService, TradeHistoryService],
 })
 export class TradesModule { }
 

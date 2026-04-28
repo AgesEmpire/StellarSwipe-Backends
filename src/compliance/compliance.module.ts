@@ -23,7 +23,7 @@ import { TradeReportExporterService } from './exporters/trade-report-exporter.se
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
-import { RegulatoryReportingModule } from './regulatory-reporting/regulatory-reporting.module';
+import { TransactionLimitsModule } from './transaction-limits/transaction-limits.module';
 
 @Module({
   imports: [
@@ -31,7 +31,7 @@ import { RegulatoryReportingModule } from './regulatory-reporting/regulatory-rep
     ScheduleModule.forRoot(),
     TypeOrmModule.forFeature([ComplianceLog, SuspiciousActivity, Trade, User, Signal, AuditLog]),
     BullModule.registerQueue({ name: AML_QUEUE }),
-    RegulatoryReportingModule,
+    TransactionLimitsModule,
   ],
   providers: [
     GeoBlockService,
@@ -54,7 +54,7 @@ import { RegulatoryReportingModule } from './regulatory-reporting/regulatory-rep
     ComplianceReportingService,
     ComplianceService,
     AmlMonitoringService,
-    RegulatoryReportingModule,
+    TransactionLimitsModule,
   ],
 })
 export class ComplianceModule implements NestModule {

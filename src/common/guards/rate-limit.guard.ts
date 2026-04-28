@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -18,6 +19,7 @@ interface RateLimitInfo {
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
+  private readonly logger = new Logger(RateLimitGuard.name);
   private readonly limits = {
     [RateLimitTier.PUBLIC]: { limit: 100, window: 15 * 60 },
     [RateLimitTier.AUTHENTICATED]: { limit: 1000, window: 15 * 60 },
@@ -141,12 +143,9 @@ export class RateLimitGuard implements CanActivate {
   }
 
   private logViolation(identifier: string, tier: RateLimitTier, limit: number): void {
-    console.warn({
-      type: 'rate_limit_violation',
-      identifier,
-      tier,
-      limit,
-      timestamp: new Date().toISOString(),
-    });
+    this.logger.warn(
+      `Rate limit exceeded: identifier=${identifier} tier=${tier} limit=${limit}`,
+      { type: 'rate_limit_violation', identifier, tier, limit, timestamp: new Date().toISOString() },
+    );
   }
 }

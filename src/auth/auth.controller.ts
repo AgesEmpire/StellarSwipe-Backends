@@ -3,9 +3,8 @@ import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AuthChallengeDto } from './dto/auth-challenge.dto';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
-import { RegisterDto } from './dto/register.dto';
-import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
+import { AuditAction } from '../audit-log/entities/audit-log.entity';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -48,6 +47,7 @@ export class AuthController {
     }
 
     @Post('verify')
+    @Audit({ action: AuditAction.LOGIN, resource: 'auth' })
     @HttpCode(HttpStatus.OK)
     async verify(@Body() dto: VerifySignatureDto) {
         return this.authService.verifySignature(dto);

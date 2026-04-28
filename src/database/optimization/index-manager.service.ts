@@ -85,6 +85,23 @@ export class IndexManagerService implements OnModuleInit {
       tableName: 'trades',
       columns: [{ name: 'user_id' }, { name: 'created_at', order: 'DESC' }],
     },
+    // Partial index for open-positions queries – only indexes rows where
+    // closed_at IS NULL, keeping the index small and highly selective.
+    {
+      name: 'idx_trades_open_positions',
+      tableName: 'trades',
+      columns: [{ name: 'user_id' }, { name: 'status' }],
+      isPartial: true,
+      partialCondition: 'closed_at IS NULL',
+      isConcurrently: true,
+    },
+    // Index for signal-based trade lookups
+    {
+      name: 'idx_trades_signal_id',
+      tableName: 'trades',
+      columns: [{ name: 'signal_id' }],
+      isConcurrently: true,
+    },
   ];
 
   constructor(private readonly dataSource: DataSource) {}

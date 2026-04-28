@@ -18,5 +18,13 @@
     "INTERNAL_ERROR": "An internal server error occurred",
     "VALIDATION_FAILED": "Validation failed",
     "RATE_LIMIT_EXCEEDED": "Too many requests, please try again later",
-    "FORBIDDEN": "You do not have permission to perform this action"
+    "FORBIDDEN": "You do not have permission to perform this action",
+    "TRANSACTION_LIMIT_EXCEEDED": "Transaction limit exceeded for your account tier",
+    "DAILY_LIMIT_REACHED": "Daily transaction limit of {limit} {currency} has been reached",
+    "WITHDRAWAL_LIMIT_EXCEEDED": "Withdrawal limit exceeded. Maximum allowed: {limit} {currency}",
+    "PAYMENT_FAILED": "Payment processing failed. Please try again",
+    "PAYMENT_GATEWAY_ERROR": "Payment gateway error: {message}",
+    "INVALID_PAYMENT_METHOD": "Invalid payment method",
+    "PAYMENT_DECLINED": "Payment was declined by the payment provider",
+    "INSUFFICIENT_FUNDS": "Insufficient funds for this transaction"
 }

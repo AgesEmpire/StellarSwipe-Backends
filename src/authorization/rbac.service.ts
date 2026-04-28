@@ -12,6 +12,7 @@ import { AssignPermissionDto, CheckPermissionDto } from './dto/assign-permission
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow-config.dto';
 import { CreateAccessRequestDto, ApproveRequestDto, RejectRequestDto } from './dto/access-request.dto';
 import { IPermissionContext } from './interfaces/permission.interface';
+import { PermissionAuditService, AuditAction } from '../auth/permission-audit.service';
 
 @Injectable()
 export class RbacService {
@@ -31,6 +32,7 @@ export class RbacService {
     private permissionChecker: PermissionChecker,
     private policyEvaluator: PolicyEvaluator,
     private dataSource: DataSource,
+    private permissionAuditService: PermissionAuditService,
   ) {}
 
   // Role Management
@@ -45,10 +47,17 @@ export class RbacService {
       role.permissions = permissions;
     }
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    await this.permissionAuditService.log({
+      actorId: createdBy,
+      action: AuditAction.ROLE_CREATED,
+      resourceName: saved.name,
+      metadata: { roleId: saved.id, permissionIds: dto.permissionIds },
+    });
+    return saved;
   }
 
-  async updateRole(id: string, dto: UpdateRoleDto): Promise<Role> {
+  async updateRole(id: string, dto: UpdateRoleDto, updatedBy?: string): Promise<Role> {
     const role = await this.roleRepository.findOne({
       where: { id },
       relations: ['permissions'],
@@ -65,7 +74,16 @@ export class RbacService {
       role.permissions = permissions;
     }
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    if (updatedBy) {
+      await this.permissionAuditService.log({
+        actorId: updatedBy,
+        action: AuditAction.ROLE_UPDATED,
+        resourceName: saved.name,
+        metadata: { roleId: id, changes: dto },
+      });
+    }
+    return saved;
   }
 
   async deleteRole(id: string): Promise<void> {
@@ -83,6 +101,12 @@ export class RbacService {
     }
 
     await this.roleRepository.remove(role);
+    await this.permissionAuditService.log({
+      actorId: 'system',
+      action: AuditAction.ROLE_DELETED,
+      resourceName: role.name,
+      metadata: { roleId: id },
+    });
   }
 
   async getRole(id: string): Promise<Role> {
@@ -127,7 +151,7 @@ export class RbacService {
     return this.permissionRepository.save(permission);
   }
 
-  async assignPermissionsToRole(dto: AssignPermissionDto): Promise<Role> {
+  async assignPermissionsToRole(dto: AssignPermissionDto, actorId?: string): Promise<Role> {
     const role = await this.roleRepository.findOne({
       where: { id: dto.roleId },
       relations: ['permissions'],
@@ -140,7 +164,16 @@ export class RbacService {
     const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
     role.permissions = permissions;
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    if (actorId) {
+      await this.permissionAuditService.log({
+        actorId,
+        action: AuditAction.PERMISSION_GRANTED,
+        resourceName: role.name,
+        metadata: { roleId: dto.roleId, permissionIds: dto.permissionIds },
+      });
+    }
+    return saved;
   }
 
   async getPermissions(): Promise<Permission[]> {
@@ -175,10 +208,18 @@ export class RbacService {
       expiresAt: options?.expiresAt,
     });
 
-    return this.userRoleRepository.save(userRole);
+    const saved = await this.userRoleRepository.save(userRole);
+    await this.permissionAuditService.log({
+      actorId: assignedBy,
+      targetUserId: userId,
+      action: AuditAction.ROLE_ASSIGNED,
+      resourceName: role.name,
+      metadata: { roleId, teamId: options?.teamId, organizationId: options?.organizationId },
+    });
+    return saved;
   }
 
-  async revokeRoleFromUser(userId: string, roleId: string): Promise<void> {
+  async revokeRoleFromUser(userId: string, roleId: string, revokedBy?: string): Promise<void> {
     const userRole = await this.userRoleRepository.findOne({
       where: { userId, roleId },
     });
@@ -189,6 +230,15 @@ export class RbacService {
 
     userRole.status = 'revoked' as any;
     await this.userRoleRepository.save(userRole);
+
+    const role = await this.roleRepository.findOne({ where: { id: roleId } });
+    await this.permissionAuditService.log({
+      actorId: revokedBy ?? 'system',
+      targetUserId: userId,
+      action: AuditAction.ROLE_REVOKED,
+      resourceName: role?.name ?? roleId,
+      metadata: { roleId },
+    });
   }
 
   async getUserRoles(userId: string): Promise<UserRole[]> {

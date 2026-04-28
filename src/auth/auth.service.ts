@@ -11,14 +11,15 @@ import { RegisterDto } from './dto/register.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { UsersService } from '../users/users.service';
-import { EmailService } from '../email/email.service';
+import { AuthAuditService } from './auth-audit.service';
+import { Request } from 'express';
 
 @Injectable()
 export class AuthService {
     constructor(
         private jwtService: JwtService,
         private usersService: UsersService,
-        private emailService: EmailService,
+        private authAuditService: AuthAuditService,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
     ) { }
 
@@ -32,17 +33,19 @@ export class AuthService {
         return { message };
     }
 
-    async verifySignature(dto: VerifySignatureDto): Promise<{ accessToken: string }> {
+    async verifySignature(dto: VerifySignatureDto, req?: Request): Promise<{ accessToken: string }> {
         const { publicKey, signature, message } = dto;
 
         // 1. Retrieve challenge from Redis
         const storedMessage = await this.cacheManager.get<string>(`auth_challenge:${publicKey}`);
 
         if (!storedMessage) {
+            if (req) await this.authAuditService.logLoginFailed(req, 'Challenge expired or not found');
             throw new UnauthorizedException('Challenge expired or not found. Please request a new challenge.');
         }
 
         if (storedMessage !== message) {
+            if (req) await this.authAuditService.logLoginFailed(req, 'Message mismatch');
             throw new UnauthorizedException('Message mismatch. Please sign the correct challenge.');
         }
 
@@ -52,9 +55,11 @@ export class AuthService {
             const isValid = keypair.verify(Buffer.from(message), Buffer.from(signature, 'base64'));
 
             if (!isValid) {
+                if (req) await this.authAuditService.logLoginFailed(req, 'Invalid signature');
                 throw new UnauthorizedException('Invalid signature');
             }
         } catch (error) {
+            if (req) await this.authAuditService.logLoginFailed(req, 'Signature verification failed');
             throw new UnauthorizedException('Signature verification failed');
         }
 
@@ -67,6 +72,8 @@ export class AuthService {
         // 5. Generate JWT using Internal User ID
         const payload: JwtPayload = { sub: user.id };
         const accessToken = this.jwtService.sign(payload);
+
+        if (req) await this.authAuditService.logLogin(user.id, req);
 
         return { accessToken };
     }

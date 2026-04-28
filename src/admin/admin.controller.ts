@@ -5,6 +5,8 @@ import { UserManagementQueryDto, SuspendUserDto } from './dto/user-management.dt
 import { SignalModerationQueryDto, RemoveSignalDto } from './dto/signal-moderation.dto';
 import { AdminAnalyticsService } from './analytics/admin-analytics.service';
 import { AnalyticsQueryDto } from './analytics/dto/analytics-query.dto';
+import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
+import { AuditAction } from '../audit-log/entities/audit-log.entity';
 
 // import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 // import { RolesGuard } from '../common/guards/roles.guard';
@@ -39,6 +41,7 @@ export class AdminController {
     }
 
     @Put('users/:id/suspend')
+    @Audit({ action: AuditAction.USER_SUSPENDED, resource: 'User', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Suspend a user account' })
     @ApiParam({ name: 'id', description: 'User ID' })
     async suspendUser(
@@ -52,6 +55,7 @@ export class AdminController {
     }
 
     @Put('users/:id/unsuspend')
+    @Audit({ action: AuditAction.USER_REINSTATED, resource: 'User', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Unsuspend a user account' })
     @ApiParam({ name: 'id', description: 'User ID' })
     async unsuspendUser(
@@ -71,6 +75,7 @@ export class AdminController {
     }
 
     @Delete('signals/:id')
+    @Audit({ action: AuditAction.SIGNAL_DELETED, resource: 'Signal', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Remove a malicious or inappropriate signal' })
     @ApiParam({ name: 'id', description: 'Signal ID' })
     async removeSignal(

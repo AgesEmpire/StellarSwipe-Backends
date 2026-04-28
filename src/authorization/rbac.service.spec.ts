@@ -8,6 +8,7 @@ import { UserRole } from './entities/user-role.entity';
 import { ApprovalWorkflow, ApprovalRequest, ApprovalAction } from './entities/approval-workflow.entity';
 import { PermissionChecker } from './utils/permission-checker';
 import { PolicyEvaluator } from './utils/policy-evaluator';
+import { PermissionAuditService } from '../auth/permission-audit.service';
 
 describe('RbacService', () => {
   let service: RbacService;
@@ -78,6 +79,10 @@ describe('RbacService', () => {
     evaluateAccessRequest: jest.fn(),
   };
 
+  const mockPermissionAuditService = {
+    log: jest.fn().mockResolvedValue({}),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -113,6 +118,14 @@ describe('RbacService', () => {
         {
           provide: PolicyEvaluator,
           useValue: mockPolicyEvaluator,
+        },
+        {
+          provide: PermissionAuditService,
+          useValue: mockPermissionAuditService,
+        },
+        {
+          provide: 'DataSource',
+          useValue: {},
         },
       ],
     }).compile();
