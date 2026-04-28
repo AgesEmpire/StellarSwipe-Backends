@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
-import { Trade, TradeStatus } from '../../../trades/entities/trade.entity';
-import { SuspiciousActivityReason } from '../entities/suspicious-activity.entity';
+import { Trade, TradeStatus } from '../../trades/entities/trade.entity';
+import { SuspiciousActivityReason } from './entities/suspicious-activity.entity';
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
