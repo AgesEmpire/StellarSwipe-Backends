@@ -1,19 +1,23 @@
 
-import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Keypair } from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
+import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { UsersService } from '../users/users.service';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class AuthService {
     constructor(
         private jwtService: JwtService,
         private usersService: UsersService,
+        private emailService: EmailService,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
     ) { }
 
@@ -64,5 +68,62 @@ export class AuthService {
         const accessToken = this.jwtService.sign(payload);
 
         return { accessToken };
+    }
+
+    async register(dto: RegisterDto): Promise<{ user: any; accessToken: string }> {
+        const { email, password, displayName, username } = dto;
+
+        // Check if user already exists
+        try {
+            const existingUser = await this.usersService.findByEmail(email);
+            if (existingUser) {
+                throw new UnauthorizedException('User with this email already exists');
+            }
+        } catch (error) {
+            if (!(error instanceof NotFoundException)) {
+                throw error;
+            }
+        }
+
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Create user
+        const user = await this.usersService.createUser({
+            email,
+            password: hashedPassword,
+            displayName: displayName || email.split('@')[0],
+            username: username || email.split('@')[0],
+        });
+
+        // Send welcome email
+        try {
+            await this.emailService.sendEmail({
+                to: email,
+                subject: 'Welcome to StellarSwipe',
+                template: 'welcome',
+                variables: {
+                    name: user.displayName || user.username,
+                    link: 'https://stellarswipe.com/dashboard',
+                },
+            });
+        } catch (emailError) {
+            // Log email error but don't fail registration
+            console.error('Failed to send welcome email:', emailError);
+        }
+
+        // Generate JWT
+        const payload: JwtPayload = { sub: user.id };
+        const accessToken = this.jwtService.sign(payload);
+
+        return {
+            user: {
+                id: user.id,
+                email: user.email,
+                username: user.username,
+                displayName: user.displayName,
+            },
+            accessToken,
+        };
     }
 }

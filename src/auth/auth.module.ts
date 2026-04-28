@@ -16,6 +16,7 @@ import { UsersModule } from '../users/users.module';
 import { TwoFactor } from './two-factor/entities/two-factor.entity';
 import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { TwoFactorController } from './two-factor/two-factor.controller';
     CacheModule,
     TypeOrmModule.forFeature([User, SocialConnection, TwoFactor]),
     UsersModule,
+    EmailModule,
   ],
   controllers: [AuthController, SocialAuthController, TwoFactorController],
   providers: [

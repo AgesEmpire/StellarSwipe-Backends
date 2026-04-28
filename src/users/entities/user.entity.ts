@@ -25,6 +25,9 @@ export class User {
   @Column({ unique: true, nullable: true })
   email?: string;
 
+  @Column({ nullable: true, select: false })
+  password?: string;
+
   @Column({ unique: true, nullable: true, length: 56 })
   walletAddress?: string;
 
