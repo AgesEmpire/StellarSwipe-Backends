@@ -9,6 +9,7 @@ import {
 import * as path from 'path';
 import { I18nAppService } from './i18n.service';
 import { I18nResponseInterceptor } from './interceptors/i18n-response.interceptor';
+import { I18nController } from './i18n.controller';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { I18nResponseInterceptor } from './interceptors/i18n-response.intercepto
       inject: [ConfigService],
     }),
   ],
+  controllers: [I18nController],
   providers: [I18nAppService, I18nResponseInterceptor],
   exports: [I18nAppService, I18nResponseInterceptor],
 })

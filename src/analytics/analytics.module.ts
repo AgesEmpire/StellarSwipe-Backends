@@ -16,6 +16,7 @@ import { CorrelationService } from './services/correlation.service';
 import { PriceHistory } from '../prices/entities/price-history.entity';
 import { AssetPair } from '../assets/entities/asset-pair.entity';
 import { TradePatternsModule } from './trade-patterns/trade-patterns.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { FunnelTrackerService } from './funnels/funnel-tracker.service';
 import { FunnelController } from './funnels/funnel.controller';
 import { AnalyzeFunnelsJob } from './funnels/jobs/analyze-funnels.job';
@@ -65,6 +66,7 @@ import { UserPreference } from '../users/entities/user-preference.entity';
     ]),
     ScheduleModule.forRoot(),
     TradePatternsModule,
+    JobsModule,
   ],
   controllers: [
     AnalyticsController,

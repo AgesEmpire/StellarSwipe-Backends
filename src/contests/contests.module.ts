@@ -4,10 +4,13 @@ import { ContestsController } from './contests.controller';
 import { ContestsService } from './contests.service';
 import { Contest } from './entities/contest.entity';
 import { Signal } from '../signals/entities/signal.entity';
-import { WebsocketModule } from '../websocket/websocket.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Contest, Signal]), WebsocketModule],
+  imports: [
+    TypeOrmModule.forFeature([Contest, Signal]),
+    AuthorizationModule,
+  ],
   controllers: [ContestsController],
   providers: [ContestsService],
   exports: [ContestsService],

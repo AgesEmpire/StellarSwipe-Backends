@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User, UserTier, KycStatus } from '../users/entities/user.entity';
+import { ComplianceLog } from './entities/compliance-log.entity';
 import { UserDataExporterService } from './exporters/user-data-exporter.service';
 import { TradeReportExporterService } from './exporters/trade-report-exporter.service';
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
@@ -9,8 +12,9 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
 import { ExportFormat } from './dto/export-request.dto';
 import { writeFile, unlink, mkdir } from 'fs/promises';
 import { join } from 'path';
-import * as crypto from 'crypto';
 import { existsSync } from 'fs';
+import { JobSchedulerService } from '../jobs/job-scheduler.service';
+import { EncryptionService } from '../security/encryption.service';
 
 @Injectable()
 export class ComplianceService {
@@ -24,6 +28,7 @@ export class ComplianceService {
     private auditExporter: AuditTrailExporterService,
     private gdprGenerator: GdprReportGenerator,
     private financialGenerator: FinancialReportGenerator,
+    private encryptionService: EncryptionService,
   ) {
     this.exportDir = this.configService.get('EXPORT_DIR', '/tmp/exports');
     this.ensureExportDir();
@@ -74,6 +79,69 @@ export class ComplianceService {
     }
   }
 
+  async validateTransaction(userId: string, amount: number, asset: string): Promise<void> {
+    this.logger.log(`Performing compliance check for user ${userId}, amount ${amount} ${asset}`);
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // 1. Check KYC Status
+    if (user.kycStatus !== KycStatus.VERIFIED) {
+      await this.logCompliance(userId, 'transaction_blocked', `KYC status is ${user.kycStatus}`, { amount, asset });
+      throw new ForbiddenException(`Transaction blocked: KYC status is ${user.kycStatus}. Please complete your verification.`);
+    }
+
+    // 2. AML Screening (Mocked)
+    const isAmlFlagged = await this.mockAmlScreening(userId, amount);
+    if (isAmlFlagged) {
+      await this.logCompliance(userId, 'transaction_blocked', 'AML screening flagged this transaction', { amount, asset });
+      throw new ForbiddenException('Transaction blocked due to AML screening. Our compliance team will review it.');
+    }
+
+    // 3. Transaction Limits based on User Tier
+    const limit = this.getTransactionLimit(user.tier);
+    if (amount > limit) {
+      await this.logCompliance(userId, 'transaction_blocked', `Transaction amount ${amount} exceeds limit ${limit} for tier ${user.tier}`, { amount, asset });
+      throw new ForbiddenException(`Transaction blocked: Amount exceeds your daily limit of ${limit} for ${user.tier} tier.`);
+    }
+
+    // 4. Log successful compliance check
+    await this.logCompliance(userId, 'transaction_allowed', 'Compliance checks passed', { amount, asset });
+  }
+
+  private async logCompliance(userId: string, type: any, reason: string, metadata: any): Promise<void> {
+    const log = this.complianceLogRepository.create({
+      userId,
+      type,
+      reason,
+      metadata,
+      ipAddress: '0.0.0.0', // In production, get from request
+    });
+    await this.complianceLogRepository.save(log);
+  }
+
+  private async mockAmlScreening(_userId: string, amount: number): Promise<boolean> {
+    // Mock AML logic: flag extremely large transactions
+    return amount > 1000000;
+  }
+
+  private getTransactionLimit(tier: UserTier): number {
+    switch (tier) {
+      case UserTier.BASIC:
+        return 1000;
+      case UserTier.SILVER:
+        return 5000;
+      case UserTier.GOLD:
+        return 20000;
+      case UserTier.PLATINUM:
+        return 100000;
+      default:
+        return 0;
+    }
+  }
+
   @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT)
   async generateMonthlyReports(): Promise<void> {
     const now = new Date();
@@ -98,18 +166,7 @@ export class ComplianceService {
   }
 
   private encryptFile(content: string): string {
-    const algorithm = 'aes-256-cbc';
-    const key = crypto.scryptSync(this.configService.get('ENCRYPTION_KEY', 'default-key'), 'salt', 32);
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(algorithm, key, iv);
-
-    let encrypted = cipher.update(content, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    return JSON.stringify({
-      iv: iv.toString('hex'),
-      data: encrypted,
-    });
+    return this.encryptionService.encrypt(content);
   }
 
   private convertToCSV(data: any): string {

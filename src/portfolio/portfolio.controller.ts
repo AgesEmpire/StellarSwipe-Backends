@@ -21,6 +21,7 @@ import { ApiOperation, ApiResponse, ApiTags, ApiBearerAuth } from '@nestjs/swagg
 import { ExportQueryDto } from './dto/export-query.dto';
 import { ExportService } from './services/export.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AddTransactionDto } from './dto/add-transaction.dto';
 
 @ApiTags('portfolio')
 @ApiBearerAuth()
@@ -72,6 +73,26 @@ export class PortfolioController {
   @ApiResponse({ status: 200, description: 'Export initiated or completed' })
   async exportHistory(@Request() req: any, @Query() query: ExportQueryDto) {
     return this.exportService.exportTrades(req.user.id, query);
+  }
+
+  @Post('add-transaction')
+  @ApiOperation({ summary: 'Record a new portfolio transaction' })
+  @ApiResponse({ status: 201, description: 'Transaction recorded', type: Trade })
+  async addTransaction(
+    @Request() req: any,
+    @Body() dto: AddTransactionDto,
+  ): Promise<Trade> {
+    return this.portfolioService.addTransaction(req.user.id, dto);
+  }
+
+  @Get('chart')
+  @ApiOperation({ summary: 'Get historical portfolio PnL chart data' })
+  @ApiResponse({ status: 200, description: 'Chart data points' })
+  async getChartData(
+    @Request() req: any,
+    @Query('days', new DefaultValuePipe(30), ParseIntPipe) days: number,
+  ) {
+    return this.portfolioService.getChartData(req.user.id, days);
   }
 
   // ──────────────────────────────────────────────────────────────────────────

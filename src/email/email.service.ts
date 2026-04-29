@@ -9,7 +9,7 @@ import { SendEmailDto } from './dto/send-email.dto';
 import { welcomeTemplate } from './templates/welcome.template';
 import { tradeExecutedTemplate } from './templates/trade-executed.template';
 import { payoutCompletedTemplate } from './templates/payout-completed.template';
-import { securityAlertTemplate, signalPerformanceTemplate, weeklySummaryTemplate } from './templates/additional.templates';
+import { securityAlertTemplate, signalPerformanceTemplate, weeklySummaryTemplate, passwordResetTemplate } from './templates/additional.templates';
 import { EmailLog } from './entities/email-log.entity';
 import { UnsubscribeList } from './entities/unsubscribe-list.entity';
 import { TemplateEngineService } from './template-engine.service';
@@ -25,6 +25,7 @@ export class EmailService {
     'security-alert': securityAlertTemplate,
     'signal-performance': signalPerformanceTemplate,
     'weekly-summary': weeklySummaryTemplate,
+    'password-reset': passwordResetTemplate,
   };
 
   constructor(

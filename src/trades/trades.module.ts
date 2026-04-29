@@ -11,6 +11,7 @@ import { OcoOrderService } from './services/oco-order.service';
 import { IcebergOrderService } from './services/iceberg-order.service';
 import { StellarConfigService } from '../config/stellar.service';
 import { RiskManagerModule } from '../risk/risk-manager.module';
+import { ComplianceModule } from '../compliance/compliance.module';
 import { BullModule } from '@nestjs/bull';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { TxMonitorService } from './services/tx-monitor.service';
@@ -22,6 +23,7 @@ import { TradeHistoryService } from './trade-history.service';
   imports: [
     TypeOrmModule.forFeature([Trade, AdvancedOrder]),
     RiskManagerModule,
+    ComplianceModule,
     BullModule.registerQueue({
       name: 'transactions',
     }),

@@ -9,12 +9,16 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { PnlCalculatorService } from './services/pnl-calculator.service';
+import { AddTransactionDto } from './dto/add-transaction.dto';
+import { PnlHistory } from './entities/pnl-history.entity';
 
 @Injectable()
 export class PortfolioService {
   constructor(
     @InjectRepository(Trade)
     private tradeRepository: Repository<Trade>,
+    @InjectRepository(PnlHistory)
+    private pnlHistoryRepository: Repository<PnlHistory>,
     private priceService: PriceService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private pnlCalculator: PnlCalculatorService,
@@ -155,4 +159,48 @@ export class PortfolioService {
   }
 
   // Unrealized PnL is delegated to PnlCalculatorService for fee inclusion.
+
+  async addTransaction(userId: string, dto: AddTransactionDto): Promise<Trade> {
+    const trade = this.tradeRepository.create({
+      userId,
+      signalId: dto.signalId ?? '00000000-0000-0000-0000-000000000000',
+      side: dto.side,
+      baseAsset: dto.baseAsset,
+      counterAsset: dto.counterAsset,
+      amount: String(dto.amount),
+      entryPrice: String(dto.entryPrice),
+      totalValue: String(dto.amount * dto.entryPrice),
+      feeAmount: String(dto.feeAmount ?? 0),
+      status: TradeStatus.PENDING,
+    });
+
+    const saved = await this.tradeRepository.save(trade);
+    // Invalidate portfolio cache for this user
+    await this.cacheManager.del(`portfolio_performance_${userId}`);
+    return saved;
+  }
+
+  async getChartData(
+    userId: string,
+    days: number = 30,
+  ): Promise<{ date: string; totalPnL: number; realizedPnL: number; unrealizedPnL: number }[]> {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const history = await this.pnlHistoryRepository
+      .createQueryBuilder('h')
+      .where('h.user_id = :userId', { userId })
+      .andWhere('h.snapshot_date >= :since', { since })
+      .orderBy('h.snapshot_date', 'ASC')
+      .getMany();
+
+    return history.map((h) => ({
+      date: h.snapshotDate instanceof Date
+        ? h.snapshotDate.toISOString().split('T')[0]
+        : String(h.snapshotDate),
+      totalPnL: Number(h.totalPnL),
+      realizedPnL: Number(h.realizedPnL),
+      unrealizedPnL: Number(h.unrealizedPnL),
+    }));
+  }
 }

@@ -111,9 +111,59 @@ describe('ContestsService', () => {
 
       await expect(service.getContest('999')).rejects.toThrow(NotFoundException);
     });
-  });
+    });
 
-  describe('finalizeContest', () => {
+    describe('updateContest', () => {
+    it('should update a contest successfully', async () => {
+      const existingContest = {
+        id: '1',
+        name: 'Old Name',
+        status: ContestStatus.ACTIVE,
+        startTime: new Date('2024-01-01T00:00:00Z'),
+        endTime: new Date('2024-01-08T00:00:00Z'),
+      };
+
+      const dto = {
+        name: 'New Name',
+      };
+
+      mockContestRepository.findOne.mockResolvedValue(existingContest);
+      mockContestRepository.save.mockImplementation(c => Promise.resolve(c));
+
+      const result = await service.updateContest('1', dto);
+
+      expect(result.name).toBe('New Name');
+      expect(mockContestRepository.save).toHaveBeenCalled();
+    });
+
+    it('should throw if contest is finalized', async () => {
+      const existingContest = {
+        id: '1',
+        status: ContestStatus.FINALIZED,
+      };
+
+      mockContestRepository.findOne.mockResolvedValue(existingContest);
+
+      await expect(service.updateContest('1', { name: 'New' })).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw if new end time is before start time', async () => {
+      const existingContest = {
+        id: '1',
+        status: ContestStatus.ACTIVE,
+        startTime: new Date('2024-01-01T00:00:00Z'),
+        endTime: new Date('2024-01-08T00:00:00Z'),
+      };
+
+      mockContestRepository.findOne.mockResolvedValue(existingContest);
+
+      await expect(service.updateContest('1', {
+        endTime: '2023-12-31T00:00:00Z',
+      })).rejects.toThrow(BadRequestException);
+    });
+    });
+
+    describe('getActiveContests', () => {
     it('should finalize contest and select winners', async () => {
       const contest = {
         id: '1',

@@ -38,6 +38,7 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     AuditModule,
     TypeOrmModule.forFeature([User, SocialConnection, TwoFactor]),
     UsersModule,
+    EmailModule,
   ],
   controllers: [AuthController, SocialAuthController, TwoFactorController],
   providers: [
