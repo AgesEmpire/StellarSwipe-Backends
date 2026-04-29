@@ -37,6 +37,10 @@ import { CohortAnalyzerService } from './cohort-analysis/cohort-analyzer.service
 import { CalculateCohortsJob } from './cohort-analysis/jobs/calculate-cohorts.job';
 import { Cohort } from './cohort-analysis/entities/cohort.entity';
 import { CohortMetric } from './cohort-analysis/entities/cohort-metric.entity';
+import { BehaviorTrackingService } from './behavior-tracking.service';
+import { BehaviorTrackingController } from './behavior-tracking.controller';
+import { UserSessionAnalytics } from './entities/user-session.entity';
+import { UserPreference } from '../users/entities/user-preference.entity';
 
 @Module({
   imports: [
@@ -57,6 +61,8 @@ import { CohortMetric } from './cohort-analysis/entities/cohort-metric.entity';
       UserFunnelProgress,
       Cohort,
       CohortMetric,
+      UserSessionAnalytics,
+      UserPreference,
     ]),
     ScheduleModule.forRoot(),
     TradePatternsModule,
@@ -68,6 +74,7 @@ import { CohortMetric } from './cohort-analysis/entities/cohort-metric.entity';
     LtvController,
     FunnelController,
     CohortController,
+    BehaviorTrackingController,
   ],
   providers: [
     AnalyticsService,
@@ -83,6 +90,7 @@ import { CohortMetric } from './cohort-analysis/entities/cohort-metric.entity';
     AnalyzeFunnelsJob,
     CohortAnalyzerService,
     CalculateCohortsJob,
+    BehaviorTrackingService,
   ],
   exports: [
     AnalyticsService,
@@ -94,6 +102,7 @@ import { CohortMetric } from './cohort-analysis/entities/cohort-metric.entity';
     LtvCalculatorService,
     FunnelTrackerService,
     CohortAnalyzerService,
+    BehaviorTrackingService,
   ],
 })
 export class AnalyticsModule {}

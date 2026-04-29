@@ -12,6 +12,7 @@ import { payoutCompletedTemplate } from './templates/payout-completed.template';
 import { securityAlertTemplate, signalPerformanceTemplate, weeklySummaryTemplate, passwordResetTemplate } from './templates/additional.templates';
 import { EmailLog } from './entities/email-log.entity';
 import { UnsubscribeList } from './entities/unsubscribe-list.entity';
+import { TemplateEngineService } from './template-engine.service';
 
 @Injectable()
 export class EmailService {
@@ -35,6 +36,7 @@ export class EmailService {
     private emailLogRepository: Repository<EmailLog>,
     @InjectRepository(UnsubscribeList)
     private unsubscribeRepository: Repository<UnsubscribeList>,
+    private readonly templateEngine: TemplateEngineService,
   ) {
     const emailProvider = this.configService.get<string>('EMAIL_PROVIDER', 'sendgrid');
     this.provider = emailProvider === 'ses' ? this.sesProvider : this.sendGridProvider;
@@ -43,6 +45,7 @@ export class EmailService {
   @Throttle({ default: { limit: 100, ttl: 60000 } }) // 100 emails per minute
   async sendEmail(dto: SendEmailDto): Promise<void> {
     const { to, template, variables } = dto;
+    const locale: string = (variables as any)?.locale ?? 'en';
 
     // Check unsubscribe list
     const isUnsubscribed = await this.unsubscribeRepository.findOne({ where: { email: to } });
@@ -56,22 +59,23 @@ export class EmailService {
       throw new BadRequestException('Invalid email address');
     }
 
-    // Get template
-    const emailTemplate = this.templates[template];
-    if (!emailTemplate) {
-      throw new BadRequestException(`Template '${template}' not found`);
+    let subject: string;
+    let html: string;
+
+    // Prefer Handlebars engine if template is registered there; fall back to legacy templates
+    if (this.templateEngine.hasTemplate(template, locale)) {
+      ({ subject, html } = this.templateEngine.render(template, variables, locale));
+    } else {
+      const emailTemplate = this.templates[template];
+      if (!emailTemplate) {
+        throw new BadRequestException(`Template '${template}' not found`);
+      }
+      ({ subject, html } = this.renderTemplate(emailTemplate, variables));
     }
 
-    // Render template
-    const { subject, html } = this.renderTemplate(emailTemplate, variables);
-
     try {
-      // Send email
       const result = await this.provider.sendEmail(to, subject, html);
-
-      // Log delivery
       await this.logEmail(to, subject, template, result.messageId, 'sent');
-
       this.logger.log(`Email sent successfully to ${to}`);
     } catch (error) {
       await this.logEmail(to, subject, template, null, 'failed', error.message);
