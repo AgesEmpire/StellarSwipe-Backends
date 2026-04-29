@@ -12,6 +12,7 @@ import { CacheService } from './cache.service';
 import { CacheInvalidationService } from './cache-invalidation.service';
 import { ResponseCacheService, ResponseCacheInterceptor } from './response-cache.service';
 import { TradingCacheService } from './trading-cache.service';
+import { CacheWarmupService } from './cache-warmup.service';
 
 @Global()
 @Module({
@@ -47,6 +48,7 @@ import { TradingCacheService } from './trading-cache.service';
     ResponseCacheService,
     ResponseCacheInterceptor,
     TradingCacheService,
+    CacheWarmupService,
   ],
   controllers: [CacheController],
   exports: [
@@ -60,6 +62,7 @@ import { TradingCacheService } from './trading-cache.service';
     ResponseCacheService,
     ResponseCacheInterceptor,
     TradingCacheService,
+    CacheWarmupService,
   ],
 })
 export class CacheModule { }

@@ -66,6 +66,9 @@ import { CurrencyModule } from './currency/currency.module';
 import { ImportModule } from './import/import.module';
 import { ExportsModule } from './exports/exports.module';
 import { HttpRetryModule } from './http/http.module';
+import { I18nModule } from './i18n/i18n.module';
+import { PortfolioModule } from './portfolio/portfolio.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit-log/audit.module';
  main
  main
@@ -196,6 +199,9 @@ import { AuditModule } from './audit-log/audit.module';
     ImportModule,
     ExportsModule,
     HttpRetryModule,
+    I18nModule,
+    PortfolioModule,
+    NotificationsModule,
     AuditModule,
  main
  main
