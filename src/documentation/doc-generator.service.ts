@@ -48,6 +48,11 @@ export class DocGeneratorService implements OnModuleInit {
     this.cachedDocument = document;
   }
 
+  /** Returns the cached OpenAPI document, or null if not yet generated. */
+  getCachedDocument(): OpenAPIObject | null {
+    return this.cachedDocument;
+  }
+
   async generateAll(): Promise<GeneratedDocs> {
     if (!this.cachedDocument) {
       throw new Error('OpenAPI document not set. Call setDocument() first.');
