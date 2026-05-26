@@ -26,5 +26,9 @@
     "PAYMENT_GATEWAY_ERROR": "Payment gateway error: {message}",
     "INVALID_PAYMENT_METHOD": "Invalid payment method",
     "PAYMENT_DECLINED": "Payment was declined by the payment provider",
-    "INSUFFICIENT_FUNDS": "Insufficient funds for this transaction"
+    "INSUFFICIENT_FUNDS": "Insufficient funds for this transaction",
+    "QUOTA_EXCEEDED": "Signal quota exceeded. Your quota resets at {resetAt}",
+    "WALLET_SYNC_FAILED": "Wallet balance sync failed. Retrying...",
+    "CONTRACT_DEPLOYMENT_FAILED": "Contract deployment failed after {attempts} attempts",
+    "CONTRACT_ALREADY_DEPLOYED": "Contract already deployed with id {contractId}"
 }

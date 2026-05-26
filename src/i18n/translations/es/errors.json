@@ -26,5 +26,9 @@
     "PAYMENT_GATEWAY_ERROR": "Error de pasarela de pago: {message}",
     "INVALID_PAYMENT_METHOD": "Método de pago inválido",
     "PAYMENT_DECLINED": "El pago fue rechazado por el proveedor de pagos",
-    "INSUFFICIENT_FUNDS": "Fondos insuficientes para esta transacción"
+    "INSUFFICIENT_FUNDS": "Fondos insuficientes para esta transacción",
+    "QUOTA_EXCEEDED": "Cuota de señal excedida. Su cuota se restablece en {resetAt}",
+    "WALLET_SYNC_FAILED": "Error al sincronizar el saldo de la billetera. Reintentando...",
+    "CONTRACT_DEPLOYMENT_FAILED": "Falló el despliegue del contrato después de {attempts} intentos",
+    "CONTRACT_ALREADY_DEPLOYED": "El contrato ya está desplegado con id {contractId}"
 }

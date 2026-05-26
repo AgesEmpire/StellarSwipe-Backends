@@ -18,5 +18,9 @@
     "INTERNAL_ERROR": "Enwere njehie nkesa n'ime",
     "VALIDATION_FAILED": "Nkwenye agaghị nke ọma",
     "RATE_LIMIT_EXCEEDED": "Ario otutu aririọ, biiko nwaa ọzọ ma emechaa",
-    "FORBIDDEN": "Iweghị ikike ime omume a"
+    "FORBIDDEN": "Iweghị ikike ime omume a",
+    "QUOTA_EXCEEDED": "Oke mgbaama gafere. Oke gị ga-atọghachị na {resetAt}",
+    "WALLET_SYNC_FAILED": "Nhazi ego akpa agaghị nke ọma. Na-anwa ọzọọ...",
+    "CONTRACT_DEPLOYMENT_FAILED": "Ntinye nkwekọrịta agaghị nke ọma mgbe ọnwa {attempts}",
+    "CONTRACT_ALREADY_DEPLOYED": "Nkwekọrịta etinyerela na id {contractId}"
 }

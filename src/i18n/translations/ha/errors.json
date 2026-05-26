@@ -18,5 +18,9 @@
     "INTERNAL_ERROR": "An sami kuskuren sabar ciki",
     "VALIDATION_FAILED": "Tantancewar ta gaza",
     "RATE_LIMIT_EXCEEDED": "Bukatu da yawa, don Allah a sake gwadawa anjima",
-    "FORBIDDEN": "Ba ku da izinin yin wannan aikin"
+    "FORBIDDEN": "Ba ku da izinin yin wannan aikin",
+    "QUOTA_EXCEEDED": "An wuce iyakar sigina. Iyakar ku za ta sake saita a {resetAt}",
+    "WALLET_SYNC_FAILED": "Daidaita kuɗin walat ya gaza. Ana sake gwadawa...",
+    "CONTRACT_DEPLOYMENT_FAILED": "Turawa kwantiragin ta gaza bayan gwaje-gwaje {attempts}",
+    "CONTRACT_ALREADY_DEPLOYED": "An riga an turawa kwantiragi da id {contractId}"
 }

@@ -18,5 +18,9 @@
     "INTERNAL_ERROR": "Aṣiṣe olupin inu kan waye",
     "VALIDATION_FAILED": "Ifọwọsi kuna",
     "RATE_LIMIT_EXCEEDED": "Awọn ibeere pọju, jọwọ gbiyanju lẹẹkansi nigbamii",
-    "FORBIDDEN": "O ko ni igbanilaaye lati ṣe iṣe yii"
+    "FORBIDDEN": "O ko ni igbanilaaye lati ṣe iṣe yii",
+    "QUOTA_EXCEEDED": "Ipin ami ti kọja. Ipin rẹ yoo tun ṣeto ni {resetAt}",
+    "WALLET_SYNC_FAILED": "Isọdọkan iye awọleti kuna. N gbiyanju lẹẹkansi...",
+    "CONTRACT_DEPLOYMENT_FAILED": "Ifilọlẹ adehun kuna lẹhin awọn igbiyanju {attempts}",
+    "CONTRACT_ALREADY_DEPLOYED": "Adehun ti filọlẹ tẹlẹ pẹlu id {contractId}"
 }

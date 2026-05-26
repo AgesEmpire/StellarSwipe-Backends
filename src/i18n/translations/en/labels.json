@@ -1,0 +1,11 @@
+{
+    "WALLET_BALANCE": "Wallet Balance",
+    "SIGNAL_QUOTA": "Signal Quota",
+    "QUOTA_REMAINING": "Quota Remaining",
+    "QUOTA_RESET": "Quota Reset",
+    "DEPLOYMENT_STATUS": "Deployment Status",
+    "SYNC_STATUS": "Sync Status",
+    "PROVIDER": "Provider",
+    "LOCALE": "Locale",
+    "SUPPORTED_LANGUAGES": "Supported Languages"
+}

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Signal, SignalStatus, SignalType } from './entities/signal.entity';
 import { CacheService, CachePrefix } from '../cache/cache.service';
+import { SignalQuotaService } from './quota/signal-quota.service';
 
 @Injectable()
 export class SignalsService {
@@ -13,13 +14,20 @@ export class SignalsService {
     @InjectRepository(Signal)
     private readonly signalRepository: Repository<Signal>,
     private readonly cacheService: CacheService,
+    private readonly quotaService: SignalQuotaService,
   ) {}
 
   async create(createSignalDto: any): Promise<Signal> {
-    // Validate required fields
     if (!createSignalDto.providerId || !createSignalDto.baseAsset || !createSignalDto.counterAsset) {
       throw new BadRequestException('providerId, baseAsset, and counterAsset are required');
     }
+
+    // Enforce quota — throws ForbiddenException when exceeded
+    await this.quotaService.checkAndConsume(
+      createSignalDto.providerId,
+      createSignalDto.tier ?? 'basic',
+      createSignalDto.isStaked ?? false,
+    );
 
     const signal = this.signalRepository.create({
       providerId: createSignalDto.providerId,
@@ -35,7 +43,7 @@ export class SignalsService {
       closePrice: null,
       copiersCount: 0,
       totalCopiedVolume: '0',
-      expiresAt: createSignalDto.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
+      expiresAt: createSignalDto.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       gracePeriodEndsAt: null,
       closedAt: null,
       rationale: createSignalDto.rationale || null,

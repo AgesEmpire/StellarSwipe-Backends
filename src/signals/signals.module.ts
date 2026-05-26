@@ -19,6 +19,7 @@ import { SdexPriceService } from './services/sdex-price.service';
 import { SignalPerformance } from './entities/signal-performance.entity';
 import { AnalyzeSignalDecayJob } from './decay-analysis/jobs/analyze-signal-decay.job';
 import { CacheModule } from '../cache/cache.module';
+import { SignalQuotaService } from './quota/signal-quota.service';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { CacheModule } from '../cache/cache.module';
     SignalPerformanceService,
     SdexPriceService,
     AnalyzeSignalDecayJob,
+    SignalQuotaService,
   ],
   controllers: [SignalsController, SignalVersionController],
   exports: [
@@ -69,6 +71,7 @@ import { CacheModule } from '../cache/cache.module';
     DecayAnalyzerService,
     SignalPerformanceService,
     SdexPriceService,
+    SignalQuotaService,
     TypeOrmModule,
   ],
 })
