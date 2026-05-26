@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   HttpCode,
@@ -9,16 +10,22 @@ import {
   ParseUUIDPipe,
   NotFoundException,
   BadRequestException,
+  UseGuards,
+  Request,
   Req,
 } from '@nestjs/common';
 import { SignalsService } from './signals.service';
+import { PremiumSignalService } from './premium-signal.service';
+import { SubscribePremiumDto, UpdatePremiumSignalDto } from './dto/premium-signal.dto';
 import { Signal } from './entities/signal.entity';
 import { I18nAppService } from '../i18n/i18n.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('signals')
 export class SignalsController {
   constructor(
     private readonly signalsService: SignalsService,
+    private readonly premiumSignalService: PremiumSignalService,
     private readonly i18n: I18nAppService,
   ) { }
 
@@ -51,11 +58,39 @@ export class SignalsController {
   }
 
   @Get(':id')
-  async getSignal(@Param('id', ParseUUIDPipe) id: string): Promise<Signal> {
-    const signal = await this.signalsService.findOne(id);
-    if (!signal) {
-      throw new NotFoundException(`Signal with ID ${id} not found`);
-    }
+  @UseGuards(JwtAuthGuard)
+  async getSignal(@Param('id', ParseUUIDPipe) id: string, @Request() req: any): Promise<Partial<Signal>> {
+    const signal = await this.premiumSignalService.getSignalForUser(id, req.user.id);
+    if (!signal) throw new NotFoundException(`Signal with ID ${id} not found`);
     return signal;
+  }
+
+  @Get('feed/premium')
+  @UseGuards(JwtAuthGuard)
+  getPremiumFeed(@Request() req: any) {
+    return this.premiumSignalService.getFeedForUser(req.user.id);
+  }
+
+  @Post('premium/subscribe')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  subscribe(@Body() dto: SubscribePremiumDto, @Request() req: any) {
+    return this.premiumSignalService.subscribe(req.user.id, dto);
+  }
+
+  @Get('premium/subscriptions')
+  @UseGuards(JwtAuthGuard)
+  getSubscriptions(@Request() req: any) {
+    return this.premiumSignalService.getSubscriptions(req.user.id);
+  }
+
+  @Patch(':id/premium')
+  @UseGuards(JwtAuthGuard)
+  updatePremium(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdatePremiumSignalDto,
+    @Request() req: any,
+  ) {
+    return this.premiumSignalService.updateSignalPremiumStatus(id, req.user.id, dto);
   }
 }

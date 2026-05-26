@@ -18,5 +18,14 @@
     "INTERNAL_ERROR": "Aṣiṣe olupin inu kan waye",
     "VALIDATION_FAILED": "Ifọwọsi kuna",
     "RATE_LIMIT_EXCEEDED": "Awọn ibeere pọju, jọwọ gbiyanju lẹẹkansi nigbamii",
-    "FORBIDDEN": "O ko ni igbanilaaye lati ṣe iṣe yii"
+    "FORBIDDEN": "O ko ni igbanilaaye lati ṣe iṣe yii",
+    "TRADE_NOT_FOUND": "A ko ri iṣowo",
+    "TRADE_ACCESS_DENIED": "O ko ni wiwọle si iṣowo yii",
+    "PREMIUM_SUBSCRIPTION_REQUIRED": "O nilo ẹbọ aladanla lati wọle si ami yii",
+    "PREMIUM_SUBSCRIPTION_EXPIRED": "Ẹbọ aladanla rẹ ti pari",
+    "SIGNAL_NOT_PREMIUM": "Ami yii kii ṣe ami aladanla",
+    "STALE_PRICE": "Alaye owo ti di atijọ, ko le lo fun iṣowo",
+    "INSUFFICIENT_LIQUIDITY": "Omi ọja ko to fun iṣowo yii. O kere ju: {minimum}",
+    "PRICE_VALIDATION_FAILED": "Ifọwọsi owo kuna: {reason}",
+    "QUOTE_DEPTH_TOO_LOW": "Ijinle iwe aṣẹ ko to fun iwọn iṣowo yii"
 }

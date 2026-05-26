@@ -8,8 +8,13 @@ import {
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  UseGuards,
+  Request,
 } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TradesService } from './trades.service';
+import { TradeOutcomeService } from './trade-outcome.service';
+import { TradeOutcomeQueryDto } from './dto/trade-outcome-query.dto';
 import { TradeHistoryService } from './trade-history.service';
 import { RiskManagerService } from './services/risk-manager.service';
 import { ExecuteTradeDto, CloseTradeDto } from './dto/execute-trade.dto';
@@ -31,6 +36,7 @@ export class TradesController {
     private readonly tradeHistoryService: TradeHistoryService,
     private readonly riskManager: RiskManagerService,
     private readonly partialCloseService: PartialCloseService,
+    private readonly tradeOutcomeService: TradeOutcomeService,
   ) { }
 
   /**
@@ -168,5 +174,28 @@ export class TradesController {
   @Get('risk/parameters')
   getRiskParameters() {
     return this.riskManager.getRiskParameters();
+  }
+
+  /**
+   * Get final outcome for a single trade (polling endpoint)
+   * GET /trades/:tradeId/outcome
+   */
+  @Get(':tradeId/outcome')
+  @UseGuards(JwtAuthGuard)
+  getOutcome(
+    @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Request() req: any,
+  ) {
+    return this.tradeOutcomeService.getOutcome(tradeId, req.user.id);
+  }
+
+  /**
+   * Query trade outcomes by user / transactionId / status
+   * GET /trades/outcomes
+   */
+  @Get('outcomes')
+  @UseGuards(JwtAuthGuard)
+  queryOutcomes(@Query() query: TradeOutcomeQueryDto, @Request() req: any) {
+    return this.tradeOutcomeService.queryOutcomes(query, req.user.id);
   }
 }

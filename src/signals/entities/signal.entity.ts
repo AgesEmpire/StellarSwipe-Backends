@@ -140,6 +140,15 @@ export class Signal {
   @Column({ type: 'int', default: 50 })
   confidenceScore!: number;
 
+  @Column({ name: 'is_premium', default: false })
+  isPremium!: boolean;
+
+  @Column({ name: 'premium_price', type: 'decimal', precision: 10, scale: 2, nullable: true })
+  premiumPrice?: string;
+
+  @Column({ name: 'premium_currency', length: 10, nullable: true })
+  premiumCurrency?: string;
+
   @Column({ type: 'int', default: 0 })
   executedCount!: number;
 
