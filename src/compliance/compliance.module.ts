@@ -24,6 +24,8 @@ import { AuditTrailExporterService } from './exporters/audit-trail-exporter.serv
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
 import { TransactionLimitsModule } from './transaction-limits/transaction-limits.module';
+import { TradeEligibilityService } from './trade-eligibility.service';
+import { TradeEligibilityController } from './trade-eligibility.controller';
 
 @Module({
   imports: [
@@ -46,8 +48,9 @@ import { TransactionLimitsModule } from './transaction-limits/transaction-limits
     AuditTrailExporterService,
     GdprReportGenerator,
     FinancialReportGenerator,
+    TradeEligibilityService,
   ],
-  controllers: [ComplianceController],
+  controllers: [ComplianceController, TradeEligibilityController],
   exports: [
     GeoBlockService,
     SanctionsScreeningService,
@@ -55,6 +58,7 @@ import { TransactionLimitsModule } from './transaction-limits/transaction-limits
     ComplianceService,
     AmlMonitoringService,
     TransactionLimitsModule,
+    TradeEligibilityService,
   ],
 })
 export class ComplianceModule implements NestModule {

@@ -10,6 +10,8 @@ import {
 } from './entities/user-settings.entity';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { SettingsResponseDto } from './dto/settings-response.dto';
+import { AuditService } from '../audit-log/audit.service';
+import { AuditAction } from '../audit-log/entities/audit-log.entity';
 
 @Injectable()
 export class SettingsService {
@@ -46,6 +48,7 @@ export class SettingsService {
     private userSettingsRepository: Repository<UserSettings>,
     @Inject(CACHE_MANAGER)
     private cacheManager: Cache,
+    private readonly auditService: AuditService,
   ) {}
 
   async getSettings(userId: string): Promise<SettingsResponseDto> {
@@ -117,6 +120,14 @@ export class SettingsService {
 
     this.logger.log(`Updated settings for user ${userId}`);
 
+    await this.auditService.log({
+      userId,
+      action: AuditAction.SETTINGS_UPDATED,
+      resource: 'user_settings',
+      resourceId: saved.id,
+      metadata: { updatedFields: Object.keys(updateDto) },
+    });
+
     return {
       userId: saved.userId,
       settings: saved.settings,
@@ -141,6 +152,14 @@ export class SettingsService {
     await this.cacheManager.del(cacheKey);
 
     this.logger.log(`Reset settings to defaults for user ${userId}`);
+
+    await this.auditService.log({
+      userId,
+      action: AuditAction.SETTINGS_UPDATED,
+      resource: 'user_settings',
+      resourceId: saved.id,
+      metadata: { reset: true },
+    });
 
     return {
       userId: saved.userId,

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { ConfigService } from '@nestjs/config';
 import { FeatureFlagsService } from './feature-flags.service';
 import { FeatureFlag } from './entities/feature-flag.entity';
 import { FlagAssignment } from './entities/flag-assignment.entity';
@@ -10,6 +11,8 @@ describe('FeatureFlagsService', () => {
   let mockFlagRepository: any;
   let mockAssignmentRepository: any;
   let mockCacheManager: any;
+
+  let mockConfigService: { get: jest.Mock };
 
   beforeEach(async () => {
     mockFlagRepository = {
@@ -34,6 +37,10 @@ describe('FeatureFlagsService', () => {
       del: jest.fn(),
     };
 
+    mockConfigService = {
+      get: jest.fn().mockReturnValue(''),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FeatureFlagsService,
@@ -49,10 +56,55 @@ describe('FeatureFlagsService', () => {
           provide: CACHE_MANAGER,
           useValue: mockCacheManager,
         },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
+        },
       ],
     }).compile();
 
     service = module.get<FeatureFlagsService>(FeatureFlagsService);
+  });
+
+  describe('env override', () => {
+    it('should return enabled=true when env override is set to true', async () => {
+      mockConfigService.get.mockReturnValue('new_trade_flow=true');
+
+      // Re-create service with override config
+      const module = await Test.createTestingModule({
+        providers: [
+          FeatureFlagsService,
+          { provide: getRepositoryToken(FeatureFlag), useValue: mockFlagRepository },
+          { provide: getRepositoryToken(FlagAssignment), useValue: mockAssignmentRepository },
+          { provide: CACHE_MANAGER, useValue: mockCacheManager },
+          { provide: ConfigService, useValue: mockConfigService },
+        ],
+      }).compile();
+
+      const svc = module.get<FeatureFlagsService>(FeatureFlagsService);
+      const result = await svc.evaluateFlag('new_trade_flow', 'user-1');
+      expect(result.enabled).toBe(true);
+      expect(mockFlagRepository.findOne).not.toHaveBeenCalled();
+    });
+
+    it('should return enabled=false when env override is set to false', async () => {
+      mockConfigService.get.mockReturnValue('new_trade_flow=false');
+
+      const module = await Test.createTestingModule({
+        providers: [
+          FeatureFlagsService,
+          { provide: getRepositoryToken(FeatureFlag), useValue: mockFlagRepository },
+          { provide: getRepositoryToken(FlagAssignment), useValue: mockAssignmentRepository },
+          { provide: CACHE_MANAGER, useValue: mockCacheManager },
+          { provide: ConfigService, useValue: mockConfigService },
+        ],
+      }).compile();
+
+      const svc = module.get<FeatureFlagsService>(FeatureFlagsService);
+      const result = await svc.evaluateFlag('new_trade_flow', 'user-1');
+      expect(result.enabled).toBe(false);
+      expect(mockFlagRepository.findOne).not.toHaveBeenCalled();
+    });
   });
 
   describe('evaluateFlag', () => {
