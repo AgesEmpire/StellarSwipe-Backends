@@ -1,57 +1,22 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, LessThan } from 'typeorm';
-import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
+import { Repository } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { Signal, SignalStatus } from '../signals/entities/signal.entity';
+import { ProviderStats } from '../signals/entities/provider-stats.entity';
 import { SignalFeedQueryDto, SortBy } from './dto/signal-feed-query.dto';
-import { SignalFeedResponseDto, SignalDto } from './dto/signal-feed-response.dto';
+import {
+  SignalFeedResponseDto,
+  SignalFeedItemDto,
+  ProviderSummaryDto,
+} from './dto/signal-feed-response.dto';
+import { FeedRankingService } from './feed-ranking.service';
+import { AssetPairMetadataService } from './asset-pair-metadata.service';
 
-@Entity('signals')
-export class Signal {
-  @PrimaryColumn()
-  id!: string;
-
-  @Column()
-  asset!: string;
-
-  @Column()
-  provider!: string;
-
-  @Column()
-  type!: 'BUY' | 'SELL';
-
-  @Column()
-  entryPrice!: number;
-
-  @Column()
-  targetPrice!: number;
-
-  @Column()
-  stopLoss!: number;
-
-  @Column()
-  status!: string;
-
-  @CreateDateColumn()
-  createdAt!: Date;
-
-  @Column()
-  expiresAt!: Date;
-
-  @Column({ nullable: true })
-  viewCount?: number;
-
-  @Column({ nullable: true })
-  followerCount?: number;
-
-  @Column({ nullable: true })
-  successRate?: number;
-}
-
-interface CursorData {
+interface CursorPayload {
   id: string;
-  timestamp: number;
+  ts: number;
   sortValue?: number;
 }
 
@@ -59,186 +24,215 @@ interface CursorData {
 export class SignalsService {
   constructor(
     @InjectRepository(Signal)
-    private signalRepository: Repository<Signal>,
+    private readonly signalRepo: Repository<Signal>,
+    @InjectRepository(ProviderStats)
+    private readonly statsRepo: Repository<ProviderStats>,
     @Inject(CACHE_MANAGER)
-    private cacheManager: Cache,
+    private readonly cache: Cache,
+    private readonly rankingService: FeedRankingService,
+    private readonly metadataService: AssetPairMetadataService,
   ) {}
 
   async getFeed(query: SignalFeedQueryDto): Promise<SignalFeedResponseDto> {
-    const { cursor, limit = 20, asset, provider, sortBy = SortBy.RECENT } = query;
+    const { cursor, page, limit = 20, asset, provider, sortBy = SortBy.RANKED } = query;
 
-    // Generate cache key
-    const cacheKey = this.generateCacheKey(query);
+    const cacheKey = `feed:${sortBy}:${cursor ?? page ?? 1}:${limit}:${asset ?? '*'}:${provider ?? '*'}`;
+    const cached = await this.cache.get<SignalFeedResponseDto>(cacheKey);
+    if (cached) return cached;
 
-    // Try to get from cache
-    const cached = await this.cacheManager.get<SignalFeedResponseDto>(cacheKey);
-    if (cached) {
-      return cached;
-    }
+    const qb = this.signalRepo
+      .createQueryBuilder('s')
+      .where('s.status = :status', { status: SignalStatus.ACTIVE })
+      .andWhere('s.expires_at > NOW()');
 
-    // Decode cursor if present
-    const cursorData = cursor ? this.decodeCursor(cursor) : null;
-
-    // Build query
-    const queryBuilder = this.signalRepository
-      .createQueryBuilder('signal')
-      .leftJoinAndSelect('signal.provider', 'provider')
-      .leftJoinAndSelect('signal.asset', 'assetEntity')
-      .where('signal.status = :status', { status: 'ACTIVE' })
-      .andWhere('signal.expiresAt > :now', { now: new Date() });
-
-    // Apply filters
     if (asset) {
-      queryBuilder.andWhere('signal.asset = :asset', { asset });
+      const [base, quote] = asset.split('/');
+      if (!base || !quote) throw new BadRequestException('asset must be in BASE/QUOTE format');
+      qb.andWhere('s.base_asset = :base AND s.counter_asset = :quote', { base, quote });
     }
 
     if (provider) {
-      queryBuilder.andWhere('signal.provider = :provider', { provider });
+      qb.andWhere('s.provider_id = :provider', { provider });
     }
 
-    // Apply cursor-based pagination
-    if (cursorData) {
-      this.applyCursorCondition(queryBuilder, cursorData, sortBy);
+    // For RANKED we fetch a larger window, rank in-memory, then paginate
+    if (sortBy === SortBy.RANKED) {
+      return this.getRankedFeed(qb, query, cacheKey);
     }
 
-    // Apply sorting
-    this.applySorting(queryBuilder, sortBy);
+    // Cursor-based pagination for non-ranked sorts
+    const cursorData = cursor ? this.decodeCursor(cursor) : null;
+    this.applyCursorCondition(qb, cursorData, sortBy);
+    this.applySorting(qb, sortBy);
 
-    // Fetch limit + 1 to check if there are more results
-    const signals = await queryBuilder.take(limit + 1).getMany();
+    const rows = await qb.take(limit + 1).getMany();
+    const hasMore = rows.length > limit;
+    const slice = hasMore ? rows.slice(0, limit) : rows;
 
-    // Check if there are more results
-    const hasMore = signals.length > limit;
-    const resultSignals = hasMore ? signals.slice(0, limit) : signals;
+    const nextCursor = hasMore ? this.encodeCursor(slice[slice.length - 1], sortBy) : null;
 
-    // Generate next cursor
-    const nextCursor = hasMore
-      ? this.encodeCursor(resultSignals[resultSignals.length - 1], sortBy)
-      : null;
+    // Page-based metadata
+    let pageNum: number | undefined;
+    let totalPages: number | undefined;
+    if (page) {
+      const total = await qb.getCount();
+      pageNum = page;
+      totalPages = Math.ceil(total / limit);
+    }
 
-    // Transform signals to DTOs with eager loaded data
-    const signalDtos = await Promise.all(
-      resultSignals.map((signal) => this.transformToDto(signal)),
-    );
+    const statsMap = await this.loadStatsMap(slice);
+    const items = await this.toFeedItems(slice, statsMap);
 
-    const response: SignalFeedResponseDto = {
-      signals: signalDtos,
-      nextCursor,
-      hasMore,
-    };
-
-    // Cache the response for 30 seconds
-    await this.cacheManager.set(cacheKey, response, 30000);
-
+    const response: SignalFeedResponseDto = { signals: items, nextCursor, hasMore, page: pageNum, totalPages };
+    await this.cache.set(cacheKey, response, 30_000);
     return response;
   }
 
-  private generateCacheKey(query: SignalFeedQueryDto): string {
-    const { cursor, limit, asset, provider, sortBy } = query;
-    return `feed:${cursor || 'first'}:${limit}:${asset || 'all'}:${provider || 'all'}:${sortBy}`;
-  }
+  private async getRankedFeed(
+    qb: any,
+    query: SignalFeedQueryDto,
+    cacheKey: string,
+  ): Promise<SignalFeedResponseDto> {
+    const { cursor, page, limit = 20 } = query;
 
-  private encodeCursor(signal: Signal, sortBy: SortBy): string {
-    const cursorData: CursorData = {
-      id: signal.id,
-      timestamp: signal.createdAt.getTime(),
-    };
+    // Fetch up to 200 active signals for in-memory ranking
+    const rows = await qb.orderBy('s.created_at', 'DESC').take(200).getMany();
+    const statsMap = await this.loadStatsMap(rows);
+    const ranked = this.rankingService.rank(rows, statsMap);
 
-    // Add sort-specific value for non-timestamp sorts
-    if (sortBy === SortBy.POPULAR) {
-      cursorData.sortValue = (signal.viewCount || 0) + (signal.followerCount || 0);
-    } else if (sortBy === SortBy.PERFORMANCE) {
-      cursorData.sortValue = signal.successRate || 0;
+    // Cursor decode → find offset
+    let offset = 0;
+    if (cursor) {
+      const { id } = this.decodeCursor(cursor);
+      const idx = ranked.findIndex((s) => s.id === id);
+      offset = idx >= 0 ? idx + 1 : 0;
+    } else if (page && page > 1) {
+      offset = (page - 1) * limit;
     }
 
-    return Buffer.from(JSON.stringify(cursorData)).toString('base64');
+    const slice = ranked.slice(offset, offset + limit);
+    const hasMore = offset + limit < ranked.length;
+    const nextCursor = hasMore
+      ? this.encodeCursor(slice[slice.length - 1], SortBy.RANKED)
+      : null;
+
+    const totalPages = Math.ceil(ranked.length / limit);
+    const items = await this.toFeedItems(
+      slice,
+      statsMap,
+      slice.map((s) => s.feedScore),
+    );
+
+    const response: SignalFeedResponseDto = {
+      signals: items,
+      nextCursor,
+      hasMore,
+      page: page ?? 1,
+      totalPages,
+    };
+    await this.cache.set(cacheKey, response, 30_000);
+    return response;
   }
 
-  private decodeCursor(cursor: string): CursorData {
+  private async loadStatsMap(signals: Signal[]): Promise<Map<string, ProviderStats>> {
+    if (!signals.length) return new Map();
+    const ids = [...new Set(signals.map((s) => s.providerId))];
+    const stats = await this.statsRepo.findByIds(ids);
+    return new Map(stats.map((s) => [s.providerId, s]));
+  }
+
+  private async toFeedItems(
+    signals: Signal[],
+    statsMap: Map<string, ProviderStats>,
+    feedScores?: number[],
+  ): Promise<SignalFeedItemDto[]> {
+    const pairs = signals.map((s) => ({ base: s.baseAsset, quote: s.counterAsset }));
+    const metaMap = this.metadataService.getMetadataMap(pairs);
+
+    return signals.map((signal, i) => {
+      const stats = statsMap.get(signal.providerId);
+      const pairKey = `${signal.baseAsset.toUpperCase()}/${signal.counterAsset.toUpperCase()}`;
+
+      const provider: ProviderSummaryDto = {
+        id: signal.providerId,
+        displayName: signal.provider?.username ?? signal.providerId,
+        successRate: stats ? parseFloat(stats.winRate) : 0,
+        totalSignals: stats?.totalSignals ?? 0,
+        reputationScore: stats ? parseFloat(stats.reputationScore) : 50,
+      };
+
+      const item: SignalFeedItemDto = {
+        id: signal.id,
+        pair: pairKey,
+        action: signal.type as 'BUY' | 'SELL',
+        price: signal.entryPrice,
+        rationale: signal.rationale,
+        provider,
+        confidence: signal.confidenceScore,
+        timestamp: signal.createdAt,
+        expiresAt: signal.expiresAt,
+        status: signal.status,
+        targetPrice: signal.targetPrice,
+        stopLossPrice: signal.stopLossPrice,
+        pairMetadata: metaMap.get(pairKey)!,
+      };
+
+      if (feedScores) item.feedScore = feedScores[i];
+      return item;
+    });
+  }
+
+  private encodeCursor(signal: Signal & { feedScore?: number }, sortBy: SortBy): string {
+    const payload: CursorPayload = { id: signal.id, ts: signal.createdAt.getTime() };
+    if (sortBy === SortBy.POPULAR) payload.sortValue = signal.copiersCount;
+    if (sortBy === SortBy.PERFORMANCE) payload.sortValue = signal.successRate;
+    if (sortBy === SortBy.RANKED) payload.sortValue = signal.feedScore;
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+  }
+
+  private decodeCursor(cursor: string): CursorPayload {
     try {
-      return JSON.parse(Buffer.from(cursor, 'base64').toString('utf-8'));
-    } catch (error) {
-      throw new Error('Invalid cursor format');
+      return JSON.parse(Buffer.from(cursor, 'base64url').toString('utf-8'));
+    } catch {
+      throw new BadRequestException('Invalid cursor');
     }
   }
 
-  private applyCursorCondition(
-    queryBuilder: any,
-    cursorData: CursorData,
-    sortBy: SortBy,
-  ): void {
+  private applyCursorCondition(qb: any, cursor: CursorPayload | null, sortBy: SortBy): void {
+    if (!cursor) return;
     switch (sortBy) {
       case SortBy.RECENT:
-        queryBuilder.andWhere(
-          '(signal.createdAt < :timestamp OR (signal.createdAt = :timestamp AND signal.id < :id))',
-          { timestamp: new Date(cursorData.timestamp), id: cursorData.id },
+        qb.andWhere(
+          '(s.created_at < :ts OR (s.created_at = :ts AND s.id < :id))',
+          { ts: new Date(cursor.ts), id: cursor.id },
         );
         break;
-
       case SortBy.POPULAR:
-        queryBuilder.andWhere(
-          '((signal.viewCount + signal.followerCount) < :sortValue OR ((signal.viewCount + signal.followerCount) = :sortValue AND signal.id < :id))',
-          { sortValue: cursorData.sortValue, id: cursorData.id },
+        qb.andWhere(
+          '(s.copiers_count < :sv OR (s.copiers_count = :sv AND s.id < :id))',
+          { sv: cursor.sortValue, id: cursor.id },
         );
         break;
-
       case SortBy.PERFORMANCE:
-        queryBuilder.andWhere(
-          '(signal.successRate < :sortValue OR (signal.successRate = :sortValue AND signal.id < :id))',
-          { sortValue: cursorData.sortValue, id: cursorData.id },
+        qb.andWhere(
+          '(s.success_rate < :sv OR (s.success_rate = :sv AND s.id < :id))',
+          { sv: cursor.sortValue, id: cursor.id },
         );
         break;
     }
   }
 
-  private applySorting(queryBuilder: any, sortBy: SortBy): void {
+  private applySorting(qb: any, sortBy: SortBy): void {
     switch (sortBy) {
       case SortBy.RECENT:
-        queryBuilder
-          .orderBy('signal.createdAt', 'DESC')
-          .addOrderBy('signal.id', 'DESC');
+        qb.orderBy('s.created_at', 'DESC').addOrderBy('s.id', 'DESC');
         break;
-
       case SortBy.POPULAR:
-        queryBuilder
-          .orderBy('signal.viewCount + signal.followerCount', 'DESC')
-          .addOrderBy('signal.id', 'DESC');
+        qb.orderBy('s.copiers_count', 'DESC').addOrderBy('s.id', 'DESC');
         break;
-
       case SortBy.PERFORMANCE:
-        queryBuilder
-          .orderBy('signal.successRate', 'DESC')
-          .addOrderBy('signal.id', 'DESC');
+        qb.orderBy('s.success_rate', 'DESC').addOrderBy('s.id', 'DESC');
         break;
     }
-  }
-
-  private async transformToDto(signal: Signal): Promise<SignalDto> {
-    // In a real implementation, you'd fetch this from related entities
-    // This is a simplified version
-    return {
-      id: signal.id,
-      asset: signal.asset,
-      provider: signal.provider,
-      type: signal.type,
-      entryPrice: signal.entryPrice,
-      targetPrice: signal.targetPrice,
-      stopLoss: signal.stopLoss,
-      status: signal.status,
-      createdAt: signal.createdAt,
-      expiresAt: signal.expiresAt,
-      popularity: (signal.viewCount || 0) + (signal.followerCount || 0),
-      performance: signal.successRate,
-      providerStats: {
-        successRate: signal.successRate || 0,
-        totalSignals: 0, // Fetch from provider stats
-        activeSignals: 0, // Fetch from provider stats
-      },
-      assetInfo: {
-        pair: signal.asset,
-        currentPrice: 0, // Fetch from market data
-        priceChange24h: 0, // Fetch from market data
-      },
-    };
   }
 }

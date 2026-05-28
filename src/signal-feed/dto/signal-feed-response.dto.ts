@@ -1,83 +1,72 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+export class PairMetadataDto {
+  @ApiProperty() base!: string;
+  @ApiProperty() quote!: string;
+  @ApiProperty() displayName!: string;
+  @ApiPropertyOptional() iconUrl?: string;
+  @ApiProperty() liquidityRating!: 'high' | 'medium' | 'low' | 'unknown';
+}
+
+export class ProviderSummaryDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() displayName!: string;
+  @ApiProperty() successRate!: number;
+  @ApiProperty() totalSignals!: number;
+  @ApiProperty() reputationScore!: number;
+}
+
+export class SignalFeedItemDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() pair!: string;
+  @ApiProperty() action!: 'BUY' | 'SELL';
+  @ApiProperty() price!: string;
+  @ApiPropertyOptional() rationale?: string | null;
+  @ApiProperty({ type: ProviderSummaryDto }) provider!: ProviderSummaryDto;
+  @ApiProperty() confidence!: number;
+  @ApiProperty() timestamp!: Date;
+  @ApiProperty() expiresAt!: Date;
+  @ApiProperty() status!: string;
+  @ApiPropertyOptional() targetPrice?: string;
+  @ApiPropertyOptional() stopLossPrice?: string | null;
+  @ApiProperty({ type: PairMetadataDto }) pairMetadata!: PairMetadataDto;
+  @ApiPropertyOptional() feedScore?: number;
+}
+
+export class SignalFeedResponseDto {
+  @ApiProperty({ type: [SignalFeedItemDto] }) signals: SignalFeedItemDto[] = [];
+  @ApiProperty({ nullable: true }) nextCursor: string | null = null;
+  @ApiProperty() hasMore: boolean = false;
+  @ApiPropertyOptional() page?: number;
+  @ApiPropertyOptional() totalPages?: number;
+}
+
+// Keep backward-compat exports used by existing code
 export class ProviderStats {
-  @ApiProperty()
   successRate!: number;
-
-  @ApiProperty()
   totalSignals!: number;
-
-  @ApiProperty()
   activeSignals: number | undefined;
 }
 
 export class AssetInfo {
-  @ApiProperty()
   pair!: string;
-
-  @ApiProperty()
   currentPrice!: number;
-
-  @ApiProperty()
   priceChange24h!: number;
 }
 
 export class SignalDto {
-  @ApiProperty()
   id!: string;
-
-  @ApiProperty()
   asset!: string;
-
-  @ApiProperty()
   provider!: string;
-
-  @ApiProperty()
   type!: 'BUY' | 'SELL';
-
-  @ApiProperty()
   entryPrice!: number;
-
-  @ApiProperty()
   targetPrice!: number;
-
-  @ApiProperty()
   stopLoss!: number;
-
-  @ApiProperty()
   status!: string;
-
-  @ApiProperty()
   createdAt!: Date;
-
-  @ApiProperty()
   expiresAt!: Date;
-
-  @ApiProperty()
-  popularity!: number; // e.g., view count or follower count
-
-  @ApiProperty()
-  performance?: number; // success rate or ROI
-
-  @ApiProperty({ type: ProviderStats })
+  popularity!: number;
+  performance?: number;
   providerStats!: ProviderStats;
-
-  @ApiProperty({ type: AssetInfo })
   assetInfo!: AssetInfo;
-}
-
-export class SignalFeedResponseDto {
-  @ApiProperty({ type: [SignalDto] })
-  signals: SignalDto[] = [];
-
-  @ApiProperty({
-    description: 'Cursor for next page',
-    nullable: true,
-  })
-  nextCursor: string | null = null;
-
-  @ApiProperty({
-    description: 'Whether more results are available',
-  })
-  hasMore: boolean = false;
 }

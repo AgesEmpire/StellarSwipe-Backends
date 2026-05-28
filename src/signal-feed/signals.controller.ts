@@ -19,16 +19,17 @@ export class SignalsController {
   @ApiOperation({ summary: 'Get paginated signal feed' })
   @ApiResponse({ status: 200, type: SignalFeedResponseDto })
   async getFeed(
-    @Query(new ValidationPipe({ transform: true })) query: SignalFeedQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SignalFeedQueryDto,
   ): Promise<SignalFeedResponseDto> {
     return this.signalsService.getFeed(query);
   }
 
   @Post('interactions')
-  @ApiOperation({ summary: 'Track a feed interaction event (swipe, view, card open)' })
+  @ApiOperation({ summary: 'Track a feed interaction event' })
   @ApiResponse({ status: 201, description: 'Event tracked' })
   async trackInteraction(
-    @Body(new ValidationPipe({ transform: true })) dto: FeedInteractionDto,
+    @Body(new ValidationPipe({ transform: true, whitelist: true })) dto: FeedInteractionDto,
     @Req() req: Request,
   ): Promise<{ status: string }> {
     const userId: string | undefined = (req as any).user?.id;
