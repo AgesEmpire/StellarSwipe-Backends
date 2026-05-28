@@ -70,6 +70,7 @@ import { I18nModule } from './i18n/i18n.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit-log/audit.module';
+import { SocialExportModule } from './social-export/social-export.module';
  main
  main
  main
@@ -203,6 +204,7 @@ import { AuditModule } from './audit-log/audit.module';
     PortfolioModule,
     NotificationsModule,
     AuditModule,
+    SocialExportModule,
  main
  main
  main

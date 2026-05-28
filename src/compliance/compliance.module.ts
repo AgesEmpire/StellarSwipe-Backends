@@ -24,14 +24,8 @@ import { AuditTrailExporterService } from './exporters/audit-trail-exporter.serv
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
 import { TransactionLimitsModule } from './transaction-limits/transaction-limits.module';
-// Rule engine
-import { ComplianceRuleEngineService } from './rule-engine/compliance-rule-engine.service';
-import { KycStatusRule } from './rule-engine/rules/kyc-status.rule';
-import { GeographicRestrictionRule } from './rule-engine/rules/geographic-restriction.rule';
-import { AmlStatusRule } from './rule-engine/rules/aml-status.rule';
-import { AssetClassRestrictionRule } from './rule-engine/rules/asset-class-restriction.rule';
-import { TransactionLimitRule } from './rule-engine/rules/transaction-limit.rule';
-import { TradeEligibilityDecision } from './rule-engine/entities/trade-eligibility-decision.entity';
+import { TradeEligibilityService } from './trade-eligibility.service';
+import { TradeEligibilityController } from './trade-eligibility.controller';
 
 @Module({
   imports: [
@@ -62,15 +56,9 @@ import { TradeEligibilityDecision } from './rule-engine/entities/trade-eligibili
     AuditTrailExporterService,
     GdprReportGenerator,
     FinancialReportGenerator,
-    // Rule engine
-    ComplianceRuleEngineService,
-    KycStatusRule,
-    GeographicRestrictionRule,
-    AmlStatusRule,
-    AssetClassRestrictionRule,
-    TransactionLimitRule,
+    TradeEligibilityService,
   ],
-  controllers: [ComplianceController],
+  controllers: [ComplianceController, TradeEligibilityController],
   exports: [
     GeoBlockService,
     SanctionsScreeningService,
@@ -78,7 +66,7 @@ import { TradeEligibilityDecision } from './rule-engine/entities/trade-eligibili
     ComplianceService,
     AmlMonitoringService,
     TransactionLimitsModule,
-    ComplianceRuleEngineService,
+    TradeEligibilityService,
   ],
 })
 export class ComplianceModule implements NestModule {

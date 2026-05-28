@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { FeatureFlag } from './entities/feature-flag.entity';
 import { FlagAssignment } from './entities/flag-assignment.entity';
@@ -11,6 +12,13 @@ import { FlagEvaluationResult } from './dto/evaluate-flag.dto';
 
 @Injectable()
 export class FeatureFlagsService {
+  private readonly logger = new Logger(FeatureFlagsService.name);
+
+  /** Flags that are force-enabled/disabled via environment variables.
+   *  Format: FEATURE_FLAG_<NAME>=true|false  (NAME uppercased, hyphens→underscores)
+   */
+  private readonly envOverrides: Map<string, boolean>;
+
   constructor(
     @InjectRepository(FeatureFlag)
     private flagRepository: Repository<FeatureFlag>,
@@ -18,7 +26,23 @@ export class FeatureFlagsService {
     private assignmentRepository: Repository<FlagAssignment>,
     @Inject(CACHE_MANAGER)
     private cacheManager: Cache,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.envOverrides = this.loadEnvOverrides();
+  }
+
+  private loadEnvOverrides(): Map<string, boolean> {
+    const overrides = new Map<string, boolean>();
+    const raw = this.config.get<string>('FEATURE_FLAGS_OVERRIDES', '');
+    if (!raw) return overrides;
+    for (const pair of raw.split(',')) {
+      const [name, val] = pair.split('=').map((s) => s.trim());
+      if (name && (val === 'true' || val === 'false')) {
+        overrides.set(name, val === 'true');
+      }
+    }
+    return overrides;
+  }
 
   async createFlag(dto: CreateFlagDto): Promise<FeatureFlag> {
     const flag = this.flagRepository.create(dto);
@@ -60,13 +84,23 @@ export class FeatureFlagsService {
   }
 
   async evaluateFlag(flagName: string, userId: string): Promise<FlagEvaluationResult> {
+    // Env override takes precedence — log when it affects the request path
+    if (this.envOverrides.has(flagName)) {
+      const overrideValue = this.envOverrides.get(flagName)!;
+      this.logger.log(
+        `[FeatureFlag] '${flagName}' resolved via env override → ${overrideValue} (userId=${userId})`,
+      );
+      return { enabled: overrideValue };
+    }
+
     const cacheKey = `eval:${flagName}:${userId}`;
     const cached = await this.cacheManager.get<FlagEvaluationResult>(cacheKey);
     if (cached) return cached;
 
     const flag = await this.getFlag(flagName);
-    
+
     if (!flag.enabled) {
+      this.logger.debug(`[FeatureFlag] '${flagName}' is disabled — skipping for userId=${userId}`);
       return { enabled: false };
     }
 
@@ -77,26 +111,34 @@ export class FeatureFlagsService {
         result = { enabled: true };
         break;
 
-      case 'percentage':
+      case 'percentage': {
         const hash = this.hashUser(userId, flagName);
         result = { enabled: hash % 100 < (flag.config.percentage || 0) };
         break;
+      }
 
       case 'userList':
         result = { enabled: flag.config.userList?.includes(userId) || false };
         break;
 
-      case 'abTest':
+      case 'abTest': {
         const variant = this.assignVariant(userId, flag.config.variants || []);
         result = { enabled: true, variant };
         break;
+      }
 
       default:
         result = { enabled: false };
     }
 
+    this.logger.log(
+      `[FeatureFlag] '${flagName}' evaluated → enabled=${result.enabled}${
+        result.variant ? ` variant=${result.variant}` : ''
+      } (userId=${userId})`,
+    );
+
     await this.saveAssignment(userId, flagName, result);
-    await this.cacheManager.set(cacheKey, result, 60000); // 1 min
+    await this.cacheManager.set(cacheKey, result, 60000);
     return result;
   }
 
