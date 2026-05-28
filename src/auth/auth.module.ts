@@ -18,8 +18,11 @@ import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
 import { AuthAuditService } from './auth-audit.service';
 import { AuditModule } from '../audit-log/audit.module';
+import { UserRole } from '../authorization/entities/user-role.entity';
 import { SessionManagerService } from './session/session-manager.service';
 import { SessionCleanupService } from './session/session-cleanup.service';
+import { SessionController } from './session/session.controller';
+import { SessionInvalidationService } from './session/session-invalidation.service';
 
 @Module({
   imports: [
@@ -36,11 +39,16 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     }),
     CacheModule,
     AuditModule,
-    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor]),
+    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, UserRole]),
     UsersModule,
     EmailModule,
   ],
-  controllers: [AuthController, SocialAuthController, TwoFactorController],
+  controllers: [
+    AuthController,
+    SocialAuthController,
+    TwoFactorController,
+    SessionController,
+  ],
   providers: [
     AuthService,
     JwtStrategy,
@@ -50,6 +58,7 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     AuthAuditService,
     SessionManagerService,
     SessionCleanupService,
+    SessionInvalidationService,
   ],
   exports: [
     AuthService,
@@ -58,6 +67,7 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     TwoFactorService,
     AuthAuditService,
     SessionManagerService,
+    SessionInvalidationService,
   ],
 })
 export class AuthModule {}
