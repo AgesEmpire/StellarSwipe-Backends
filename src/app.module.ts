@@ -67,10 +67,12 @@ import { I18nModule } from './i18n/i18n.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit-log/audit.module';
+import { AssetsModule } from './assets/assets.module';
 import { SocialExportModule } from './social-export/social-export.module';
-import { QuotaReportingModule } from './multitenancy/quota-reporting/quota-reporting.module';
-import { MarketDataHistoryModule } from './market-data/history/market-data-history.module';
-import { ContractsModule } from './contracts/contracts.module';
+import { LowBalanceAlertModule } from './alerts/low-balance-alert.module';
+ main
+ main
+ main
 
 @Module({
   imports: [
@@ -201,7 +203,12 @@ import { ContractsModule } from './contracts/contracts.module';
     PortfolioModule,
     NotificationsModule,
     AuditModule,
+    AssetsModule,
     SocialExportModule,
+    LowBalanceAlertModule,
+ main
+ main
+ main
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],

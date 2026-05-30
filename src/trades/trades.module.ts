@@ -19,6 +19,7 @@ import { SorobanModule } from '../soroban/soroban.module';
 import { Signal } from '../signals/entities/signal.entity';
 import { BullModule } from '@nestjs/bull';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { TxMonitorService } from './services/tx-monitor.service';
 import { MonitorTransactionsJob } from './jobs/monitor-transactions.job';
 import { PartialCloseService } from './partial-close/partial-close.service';
@@ -29,6 +30,9 @@ import { TradeAuditController } from './trade-audit.controller';
 import { ConfirmationPollingService } from './services/confirmation-polling.service';
 import { AuditModule } from '../audit-log/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TradeExecutionOrchestratorService } from './services/trade-execution-orchestrator.service';
+import { SwipeController } from './swipe/swipe.controller';
+import { SwipeService } from './swipe/swipe.service';
 
 @Module({
   imports: [
@@ -44,7 +48,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AuditModule,
     NotificationsModule,
   ],
-  controllers: [TradesController, AdvancedOrdersController, LimitOrderController],
+  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController],
   providers: [
     TradesService,
     RiskManagerService,
@@ -58,8 +62,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
     TradeHistoryService,
     TradeOutcomeService,
     LimitOrderService,
+    TradeExecutionOrchestratorService,
+    SwipeService,
   ],
-  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService, TradeHistoryService, TradeOutcomeService, TradeAuditService, ConfirmationPollingService],
+  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService, TradeHistoryService, TradeOutcomeService, TradeAuditService, ConfirmationPollingService, TradeExecutionOrchestratorService],
 })
 export class TradesModule { }
 
