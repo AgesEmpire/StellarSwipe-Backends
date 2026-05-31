@@ -77,6 +77,7 @@ import { SocialExportModule } from './social-export/social-export.module';
 import { LowBalanceAlertModule } from './alerts/low-balance-alert.module';
 import { OrdersModule } from './orders/orders.module';
 import { ComplianceAuditExportModule } from './compliance/audit-export/compliance-audit-export.module';
+import { SwapModule } from './swap/swap.module';
 
 @Module({
   imports: [
@@ -217,6 +218,7 @@ import { ComplianceAuditExportModule } from './compliance/audit-export/complianc
     LowBalanceAlertModule,
     OrdersModule,
     ComplianceAuditExportModule,
+    SwapModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],

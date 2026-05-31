@@ -41,6 +41,9 @@ import { BehaviorTrackingService } from './behavior-tracking.service';
 import { BehaviorTrackingController } from './behavior-tracking.controller';
 import { UserSessionAnalytics } from './entities/user-session.entity';
 import { UserPreference } from '../users/entities/user-preference.entity';
+import { DriftDetectorService } from './drift-detection/drift-detector.service';
+import { DetectDataDriftJob } from './drift-detection/jobs/detect-data-drift.job';
+import { DriftFinding } from './drift-detection/entities/drift-finding.entity';
 
 @Module({
   imports: [
@@ -63,6 +66,7 @@ import { UserPreference } from '../users/entities/user-preference.entity';
       CohortMetric,
       UserSessionAnalytics,
       UserPreference,
+      DriftFinding,
     ]),
     ScheduleModule.forRoot(),
     TradePatternsModule,
@@ -91,6 +95,8 @@ import { UserPreference } from '../users/entities/user-preference.entity';
     CohortAnalyzerService,
     CalculateCohortsJob,
     BehaviorTrackingService,
+    DriftDetectorService,
+    DetectDataDriftJob,
   ],
   exports: [
     AnalyticsService,
@@ -103,6 +109,7 @@ import { UserPreference } from '../users/entities/user-preference.entity';
     FunnelTrackerService,
     CohortAnalyzerService,
     BehaviorTrackingService,
+    DriftDetectorService,
   ],
 })
 export class AnalyticsModule {}
