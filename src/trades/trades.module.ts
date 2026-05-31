@@ -33,6 +33,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { TradeExecutionOrchestratorService } from './services/trade-execution-orchestrator.service';
 import { SwipeController } from './swipe/swipe.controller';
 import { SwipeService } from './swipe/swipe.service';
+import { MarketOrderService } from './services/market-order.service';
+import { MarketOrderController } from './market-order.controller';
 
 @Module({
   imports: [
@@ -48,9 +50,10 @@ import { SwipeService } from './swipe/swipe.service';
     AuditModule,
     NotificationsModule,
   ],
-  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController],
+  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController],
   providers: [
     TradesService,
+    MarketOrderService,
     RiskManagerService,
     TradeExecutorService,
     StellarConfigService,
