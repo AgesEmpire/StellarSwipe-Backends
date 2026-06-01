@@ -78,6 +78,9 @@ import { LowBalanceAlertModule } from './alerts/low-balance-alert.module';
 import { OrdersModule } from './orders/orders.module';
 import { ComplianceAuditExportModule } from './compliance/audit-export/compliance-audit-export.module';
 import { SwapModule } from './swap/swap.module';
+import { RiskControlsModule } from './risk-controls/risk-controls.module';
+import { WalletModule } from './wallet/wallet.module';
+import { FreighterModule } from './freighter/freighter.module';
 
 @Module({
   imports: [
@@ -219,6 +222,9 @@ import { SwapModule } from './swap/swap.module';
     OrdersModule,
     ComplianceAuditExportModule,
     SwapModule,
+    RiskControlsModule,
+    WalletModule,
+    FreighterModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],

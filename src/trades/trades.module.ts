@@ -35,6 +35,8 @@ import { SwipeController } from './swipe/swipe.controller';
 import { SwipeService } from './swipe/swipe.service';
 import { MarketOrderService } from './services/market-order.service';
 import { MarketOrderController } from './market-order.controller';
+import { TradeRetryService } from './services/trade-retry.service';
+import { TradeRetryController } from './trade-retry.controller';
 
 @Module({
   imports: [
@@ -50,7 +52,7 @@ import { MarketOrderController } from './market-order.controller';
     AuditModule,
     NotificationsModule,
   ],
-  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController],
+  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController, TradeRetryController],
   providers: [
     TradesService,
     MarketOrderService,
@@ -67,8 +69,9 @@ import { MarketOrderController } from './market-order.controller';
     LimitOrderService,
     TradeExecutionOrchestratorService,
     SwipeService,
+    TradeRetryService,
   ],
-  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService, TradeHistoryService, TradeOutcomeService, TradeAuditService, ConfirmationPollingService, TradeExecutionOrchestratorService],
+  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService, TradeHistoryService, TradeOutcomeService, TradeAuditService, ConfirmationPollingService, TradeExecutionOrchestratorService, TradeRetryService, TradeExecutorService],
 })
 export class TradesModule { }
 
