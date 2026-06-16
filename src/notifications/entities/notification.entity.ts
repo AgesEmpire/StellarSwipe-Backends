@@ -11,6 +11,7 @@ export enum NotificationChannel {
   EMAIL = 'email',
   IN_APP = 'in_app',
   PUSH = 'push',
+  BOTH = 'both',
 }
 
 export enum NotificationStatus {
@@ -18,6 +19,20 @@ export enum NotificationStatus {
   SENT = 'sent',
   FAILED = 'failed',
   READ = 'read',
+}
+
+export enum NotificationType {
+  TRADE_EXECUTED = 'TRADE_EXECUTED',
+  TRADE_CLOSED = 'TRADE_CLOSED',
+  TRADE_PENDING = 'TRADE_PENDING',
+  TRADE_CANCELLED = 'TRADE_CANCELLED',
+  SIGNAL_CREATED = 'SIGNAL_CREATED',
+  SIGNAL_UPDATED = 'SIGNAL_UPDATED',
+  SIGNAL_CLOSED = 'SIGNAL_CLOSED',
+  RISK_ALERT = 'RISK_ALERT',
+  PRICE_ALERT = 'PRICE_ALERT',
+  LOW_BALANCE = 'LOW_BALANCE',
+  SYSTEM = 'SYSTEM',
 }
 
 @Index('idx_notifications_user_id', ['userId'])
@@ -55,6 +70,12 @@ export class Notification {
     default: NotificationStatus.PENDING,
   })
   status!: NotificationStatus;
+
+  @Column({ name: 'sent_at', type: 'timestamp', nullable: true })
+  sentAt?: Date;
+
+  @Column({ name: 'error_message', type: 'text', nullable: true })
+  errorMessage?: string;
 
   @Column({ name: 'read_at', type: 'timestamp', nullable: true })
   readAt?: Date;

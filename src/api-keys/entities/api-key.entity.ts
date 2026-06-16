@@ -10,12 +10,17 @@ import {
 import { User } from '../../users/entities/user.entity';
 
 @Entity('api_keys')
+@Index(['userId', 'tenantId'])
+@Index(['tenantId'])
 export class ApiKey {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   @Column({ type: 'uuid' })
   userId!: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  tenantId?: string; // Multi-tenant support
 
   @Column({ length: 100 })
   name!: string;
@@ -24,7 +29,7 @@ export class ApiKey {
   keyHash!: string;
 
   @Column('simple-array')
-  scopes!: string[];
+  scopes!: string[]; // e.g., ['tenant:123:read_trades', 'tenant:123:write_signals']
 
   @Column({ type: 'timestamp', nullable: true })
   lastUsed?: Date;
@@ -35,6 +40,9 @@ export class ApiKey {
   @Column({ type: 'int', default: 1000 })
   rateLimit!: number;
 
+  @Column({ type: 'boolean', default: false })
+  isActive!: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 
@@ -42,3 +50,4 @@ export class ApiKey {
   @JoinColumn({ name: 'userId' })
   user!: User;
 }
+
