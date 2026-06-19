@@ -13,11 +13,13 @@ import { NotificationsService } from './notifications.service';
 import { NotificationController } from './notification.controller';
 import { NotificationProcessor } from './notification.processor';
 import { NotificationTemplateService } from './notification-template.service';
+import { JobsModule } from '../jobs/jobs.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate]),
     BullModule.registerQueue({ name: NOTIFICATION_QUEUE }),
+    JobsModule,
   ],
   controllers: [NotificationController, PreferencesController, PreferenceController],
   providers: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationProcessor, NotificationTemplateService],

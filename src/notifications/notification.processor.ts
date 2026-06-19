@@ -1,10 +1,11 @@
-import { Processor, Process } from '@nestjs/bull';
+import { Processor, Process, OnQueueFailed } from '@nestjs/bull';
 import { Job } from 'bull';
 import { Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification, NotificationStatus } from './entities/notification.entity';
 import { NOTIFICATION_QUEUE } from './notification.service';
+import { DeadLetterService } from '../jobs/dead-letter.service';
 
 @Processor(NOTIFICATION_QUEUE)
 export class NotificationProcessor {
@@ -13,6 +14,7 @@ export class NotificationProcessor {
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
+    private readonly deadLetterService: DeadLetterService,
   ) {}
 
   @Process('deliver')
@@ -38,6 +40,14 @@ export class NotificationProcessor {
       notification.status = NotificationStatus.FAILED;
       await this.notificationRepository.save(notification);
       throw error; // triggers Bull retry
+    }
+  }
+
+  @OnQueueFailed()
+  async onFailed(job: Job, error: Error): Promise<void> {
+    const attempts = job.opts.attempts ?? 1;
+    if (job.attemptsMade >= attempts) {
+      await this.deadLetterService.capture(job, error);
     }
   }
 }
