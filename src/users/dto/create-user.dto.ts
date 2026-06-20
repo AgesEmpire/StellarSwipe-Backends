@@ -1,43 +1,44 @@
 import {
-    IsString,
-    IsNotEmpty,
-    IsOptional,
-    IsEmail,
-    Length,
-    Matches,
-    MinLength,
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  Length,
+  MinLength,
 } from 'class-validator';
+import { SanitizeString } from '../../common/sanitizers/input.sanitizer';
+import { IsStellarPublicKey } from '../../common/decorators/validation.decorator';
 
 export class CreateUserDto {
-    @IsString()
-    @IsNotEmpty()
-    @Length(3, 50)
-    username!: string;
+  @IsString()
+  @IsNotEmpty()
+  @Length(3, 50)
+  @SanitizeString()
+  username!: string;
 
-    @IsOptional()
-    @IsString()
-    @Length(56, 56, { message: 'Wallet address must be exactly 56 characters' })
-    @Matches(/^G[A-Z2-7]{55}$/, {
-        message: 'Invalid Stellar wallet address format',
-    })
-    walletAddress?: string;
+  @IsOptional()
+  @IsStellarPublicKey({ message: 'walletAddress must be a valid Stellar public key starting with G' })
+  @SanitizeString()
+  walletAddress?: string;
 
-    @IsOptional()
-    @IsEmail()
-    email?: string;
+  @IsOptional()
+  @IsEmail({}, { message: 'email must be a valid email address' })
+  email?: string;
 
-    @IsOptional()
-    @IsString()
-    @MinLength(8)
-    password?: string;
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  password?: string;
 
-    @IsOptional()
-    @IsString()
-    @Length(1, 100)
-    displayName?: string;
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  @SanitizeString()
+  displayName?: string;
 
-    @IsOptional()
-    @IsString()
-    @Length(1, 500)
-    bio?: string;
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  @SanitizeString()
+  bio?: string;
 }
