@@ -21,6 +21,10 @@ import { AuthAuditService } from './auth-audit.service';
 import { AuditModule } from '../audit-log/audit.module';
 import { SessionManagerService } from './session/session-manager.service';
 import { SessionCleanupService } from './session/session-cleanup.service';
+import { SessionFingerprintService } from './session/session-fingerprint.service';
+import { LoginFingerprint } from './session/entities/login-fingerprint.entity';
+import { EmailModule } from '../email/email.module';
+import { AnomalousLoginListener } from './session/anomalous-login.listener';
 
 @Module({
   imports: [
@@ -37,7 +41,7 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     }),
     CacheModule,
     AuditModule,
-    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor]),
+    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint]),
     UsersModule,
     EmailModule,
   ],
@@ -52,6 +56,8 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     AuthAuditService,
     SessionManagerService,
     SessionCleanupService,
+    SessionFingerprintService,
+    AnomalousLoginListener,
   ],
   exports: [
     AuthService,
@@ -61,6 +67,7 @@ import { SessionCleanupService } from './session/session-cleanup.service';
     TwoFactorService,
     AuthAuditService,
     SessionManagerService,
+    SessionFingerprintService,
   ],
 })
 export class AuthModule {}
