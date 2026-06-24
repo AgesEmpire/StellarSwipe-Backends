@@ -13,6 +13,7 @@ import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { UsersService } from '../users/users.service';
 import { AuthAuditService } from './auth-audit.service';
 import { SessionManagerService } from './session/session-manager.service';
+import { SessionFingerprintService } from './session/session-fingerprint.service';
 import { Request } from 'express';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class AuthService {
         private usersService: UsersService,
         private authAuditService: AuthAuditService,
         private sessionManager: SessionManagerService,
+        private sessionFingerprintService: SessionFingerprintService,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
     ) { }
 
@@ -78,6 +80,14 @@ export class AuthService {
         });
 
         if (req) await this.authAuditService.logLogin(user.id, req);
+
+        // 6. Fingerprint this login (IP + user-agent + accept-language) and
+        // flag/log if it doesn't match the user's recent login history.
+        await this.sessionFingerprintService.checkAndRecord(user.id, {
+            ipAddress: req?.ip,
+            userAgent: req?.headers?.['user-agent'] as string | undefined,
+            acceptLanguage: req?.headers?.['accept-language'] as string | undefined,
+        });
 
         return tokens;
     }
