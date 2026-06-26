@@ -21,7 +21,7 @@ export class SorobanHealthIndicator extends HealthIndicator {
         this.stellarConfig.sorobanRpcUrl,
       );
 
-      const health = await server.getHealth();
+      const health = await this.withTimeout(server.getHealth(), 5000);
 
       const latency = Date.now() - startTime;
 
@@ -47,6 +47,24 @@ export class SorobanHealthIndicator extends HealthIndicator {
           latency: `${latency}ms`,
         }),
       );
+    }
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(`Soroban RPC health check timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 }

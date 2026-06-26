@@ -1,13 +1,14 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, EntityManager } from 'typeorm';
 import { Trade, TradeStatus } from '../trades/entities/trade.entity';
 import { User } from '../users/entities/user.entity';
 import { PriceService } from '../shared/price.service';
+import { OutboxService } from '../events/outbox.service';
+import { PortfolioTransactionCreatedEvent } from '../events/portfolio.events';
 import { PositionDetailDto } from './dto/position-detail.dto';
 import { PortfolioSummaryDto, TradeDetail } from './dto/portfolio-summary.dto';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { PnlCalculatorService } from './services/pnl-calculator.service';
 import { AddTransactionDto } from './dto/add-transaction.dto';
@@ -28,6 +29,7 @@ export class PortfolioService {
     private priceService: PriceService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private pnlCalculator: PnlCalculatorService,
+    private readonly outboxService: OutboxService,
   ) {}
 
   async getPositions(userId: string): Promise<PositionDetailDto[]> {
@@ -167,21 +169,42 @@ export class PortfolioService {
   // Unrealized PnL is delegated to PnlCalculatorService for fee inclusion.
 
   async addTransaction(userId: string, dto: AddTransactionDto): Promise<Trade> {
-    const trade = this.tradeRepository.create({
-      userId,
-      signalId: dto.signalId ?? '00000000-0000-0000-0000-000000000000',
-      side: dto.side,
-      baseAsset: dto.baseAsset,
-      counterAsset: dto.counterAsset,
-      amount: String(dto.amount),
-      entryPrice: String(dto.entryPrice),
-      totalValue: String(dto.amount * dto.entryPrice),
-      feeAmount: String(dto.feeAmount ?? 0),
-      status: TradeStatus.PENDING,
+    const saved = await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
+      const trade = manager.create(Trade, {
+        userId,
+        signalId: dto.signalId ?? '00000000-0000-0000-0000-000000000000',
+        side: dto.side,
+        baseAsset: dto.baseAsset,
+        counterAsset: dto.counterAsset,
+        amount: String(dto.amount),
+        entryPrice: String(dto.entryPrice),
+        totalValue: String(dto.amount * dto.entryPrice),
+        feeAmount: String(dto.feeAmount ?? 0),
+        status: TradeStatus.PENDING,
+      });
+
+      const savedTrade = await manager.save(trade);
+
+      await this.outboxService.enqueue(
+        new PortfolioTransactionCreatedEvent({
+          tradeId: savedTrade.id,
+          userId,
+          signalId: savedTrade.signalId,
+          baseAsset: savedTrade.baseAsset,
+          counterAsset: savedTrade.counterAsset,
+          amount: savedTrade.amount,
+          entryPrice: savedTrade.entryPrice,
+          totalValue: savedTrade.totalValue,
+          feeAmount: savedTrade.feeAmount,
+          status: savedTrade.status,
+          correlationId: savedTrade.id,
+        }),
+        manager,
+      );
+
+      return savedTrade;
     });
 
-    const saved = await this.tradeRepository.save(trade);
-    // Invalidate portfolio cache for this user
     await this.cacheManager.del(`portfolio_performance_${userId}`);
     return saved;
   }

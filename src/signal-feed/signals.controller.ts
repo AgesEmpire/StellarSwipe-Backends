@@ -6,6 +6,7 @@ import { FeedAnalyticsService } from './feed-analytics.service';
 import { SignalFeedQueryDto } from './dto/signal-feed-query.dto';
 import { SignalFeedResponseDto } from './dto/signal-feed-response.dto';
 import { FeedInteractionDto } from './dto/feed-interaction.dto';
+import { applySparseFieldset } from '../common/utils/field-selection.util';
 
 @ApiTags('signals')
 @Controller('signals')
@@ -22,7 +23,8 @@ export class SignalsController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SignalFeedQueryDto,
   ): Promise<SignalFeedResponseDto> {
-    return this.signalsService.getFeed(query);
+    const feed = await this.signalsService.getFeed(query);
+    return applySparseFieldset(feed, query.fields);
   }
 
   @Post('interactions')

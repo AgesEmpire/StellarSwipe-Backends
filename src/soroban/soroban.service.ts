@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   SorobanRpc,
@@ -48,7 +49,7 @@ interface InvokeOptions {
 }
 
 @Injectable()
-export class SorobanService {
+export class SorobanService implements OnModuleInit {
   private readonly logger = new Logger(SorobanService.name);
   private readonly server: SorobanRpc.Server;
 
@@ -58,6 +59,26 @@ export class SorobanService {
     private readonly diagnosticService: SorobanDiagnosticService,
   ) {
     this.server = new SorobanRpc.Server(this.stellarConfig.sorobanRpcUrl);
+  }
+
+  async onModuleInit(): Promise<void> {
+    try {
+      const startTime = Date.now();
+      const health = await this.withTimeout(
+        this.server.getHealth(),
+        'warmup',
+        5000,
+      );
+      const latency = Date.now() - startTime;
+      this.logger.log(
+        `Soroban RPC warmup completed: ${health.status} (${latency}ms)`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown Soroban warmup error';
+      this.logger.warn(
+        `Soroban RPC warmup failed: ${errorMessage}`,
+      );
+    }
   }
 
   async invokeContract(
