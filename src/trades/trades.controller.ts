@@ -9,9 +9,11 @@ import {
   HttpStatus,
   ParseUUIDPipe,
   UseGuards,
+  UseInterceptors,
   Request,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
 import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
 import { TradesService } from './trades.service';
 import { TradeOutcomeService } from './trade-outcome.service';
@@ -31,6 +33,7 @@ import {
 import { PaginatedTradeHistoryDto } from './trade-history.service';
 
 @Controller('trades')
+@UseInterceptors(IdempotencyInterceptor)
 export class TradesController {
   constructor(
     private readonly tradesService: TradesService,
