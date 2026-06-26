@@ -14,6 +14,9 @@ import {
 } from '@nestjs/common';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OwnershipGuard } from '../common/guards/ownership.guard';
+import { CheckOwnership } from '../common/decorators/check-ownership.decorator';
+import { Trade } from './entities/trade.entity';
 import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
 import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
 import {
@@ -100,11 +103,13 @@ export class TradesController {
    * GET /trades/:tradeId
    */
   @Get(':tradeId')
+  @UseGuards(JwtAuthGuard, OwnershipGuard)
+  @CheckOwnership('tradeId', Trade)
   async getTradeById(
     @Param('tradeId', ParseUUIDPipe) tradeId: string,
-    @Query('userId', ParseUUIDPipe) userId: string,
+    @Request() req: any,
   ): Promise<TradeDetailsDto> {
-    return this.queryBus.execute(new GetTradeStatusQuery(tradeId, userId));
+    return this.queryBus.execute(new GetTradeStatusQuery(tradeId, req.user.id));
   }
 
   /**
@@ -197,7 +202,8 @@ export class TradesController {
    * GET /trades/:tradeId/outcome
    */
   @Get(':tradeId/outcome')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OwnershipGuard)
+  @CheckOwnership('tradeId', Trade)
   getOutcome(
     @Param('tradeId', ParseUUIDPipe) tradeId: string,
     @Request() req: any,

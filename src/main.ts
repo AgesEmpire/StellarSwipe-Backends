@@ -1,4 +1,5 @@
 import { NestFactory, Reflector } from "@nestjs/core";
+import { MicroserviceOptions, Transport } from "@nestjs/microservices";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import { VersioningType } from '@nestjs/common';
@@ -155,6 +156,15 @@ async function bootstrap() {
 
   const documentV1 = SwaggerModule.createDocument(app, configV1);
   SwaggerModule.setup('api/v1/docs', app, documentV1);
+
+  // Hybrid app: attach TCP microservice listener so notification @MessagePattern
+  // handlers are reachable from other services (e.g. trade service via ClientProxy).
+  const tcpPort = configService.get<number>('NOTIFICATION_TCP_PORT', 3001);
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.TCP,
+    options: { host: '0.0.0.0', port: tcpPort },
+  });
+  await app.startAllMicroservices();
 
   await app.listen(port, host, () => {
     logger.info(`🚀 StellarSwipe Backend running on http://${host}:${port}`);

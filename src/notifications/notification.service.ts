@@ -6,6 +6,8 @@ import { Queue } from 'bull';
 import { Notification, NotificationChannel, NotificationStatus } from './entities/notification.entity';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { PreferencesService } from './preferences/preferences.service';
+import { ConsentService } from './consent.service';
+import { ConsentCategory } from './entities/user-consent.entity';
 
 export const NOTIFICATION_QUEUE = 'notifications';
 
@@ -19,10 +21,34 @@ export class NotificationService {
     @InjectQueue(NOTIFICATION_QUEUE)
     private readonly notificationQueue: Queue,
     private readonly preferencesService: PreferencesService,
+    private readonly consentService: ConsentService,
   ) {}
 
   async send(dto: SendNotificationDto): Promise<Notification> {
     const channel = dto.channel ?? NotificationChannel.IN_APP;
+
+    // Check marketing consent before sending marketing notifications
+    if (channel !== NotificationChannel.IN_APP) {
+      const consentCategory =
+        channel === NotificationChannel.EMAIL
+          ? ConsentCategory.MARKETING_EMAIL
+          : ConsentCategory.MARKETING_PUSH;
+      const typeKey = this.mapTypeToPreference(dto.type);
+      if (typeKey === 'marketing') {
+        const hasConsent = await this.consentService.hasConsented(dto.userId, consentCategory);
+        if (!hasConsent) {
+          this.logger.log(
+            `Marketing notification suppressed for user ${dto.userId}: no consent for ${consentCategory}`,
+          );
+          const notification = this.notificationRepository.create({
+            ...dto,
+            channel: NotificationChannel.IN_APP,
+            status: NotificationStatus.SENT,
+          });
+          return this.notificationRepository.save(notification);
+        }
+      }
+    }
 
     // Check user preferences before sending
     const channelKey = channel === NotificationChannel.EMAIL ? 'email' : 'push';

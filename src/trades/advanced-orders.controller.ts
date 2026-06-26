@@ -9,8 +9,14 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UseGuards,
+  Request,
 } from '@nestjs/common';
 import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OwnershipGuard } from '../common/guards/ownership.guard';
+import { CheckOwnership } from '../common/decorators/check-ownership.decorator';
+import { AdvancedOrder } from './entities/advanced-order.entity';
 import { OcoOrderService } from './services/oco-order.service';
 import { IcebergOrderService } from './services/iceberg-order.service';
 import {
@@ -61,14 +67,16 @@ export class AdvancedOrdersController {
 
   /**
    * Get a single OCO order.
-   * GET /trades/advanced/oco/:orderId?userId=...
+   * GET /trades/advanced/oco/:orderId
    */
   @Get('oco/:orderId')
+  @UseGuards(JwtAuthGuard, OwnershipGuard)
+  @CheckOwnership('orderId', AdvancedOrder)
   async getOcoOrder(
     @Param('orderId', ParseUUIDPipe) orderId: string,
-    @Query('userId', ParseUUIDPipe) userId: string,
+    @Request() req: any,
   ): Promise<OcoOrderResponseDto> {
-    return this.ocoService.getOrder(orderId, userId);
+    return this.ocoService.getOrder(orderId, req.user.id);
   }
 
   /**

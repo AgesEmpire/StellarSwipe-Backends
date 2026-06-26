@@ -6,6 +6,7 @@ import { PortfolioService } from './portfolio.service';
 import { PortfolioController } from './portfolio.controller';
 import { RebalancingService } from './services/rebalancing.service';
 import { CheckRebalancingJob } from './jobs/check-rebalancing.job';
+import { PositionBalanceUpdaterService } from './services/position-balance-updater.service';
 
 import { Trade } from '../trades/entities/trade.entity';
 import { Position } from './entities/position.entity';
@@ -34,7 +35,8 @@ import { RateLimitService } from '../common/services/rate-limit.service';
     RateLimitService,
     RebalancingService,
     CheckRebalancingJob,
+    PositionBalanceUpdaterService,
   ],
-  exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService],
+  exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService, PositionBalanceUpdaterService],
 })
 export class PortfolioModule {}
