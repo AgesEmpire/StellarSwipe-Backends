@@ -78,6 +78,7 @@ import {
   providers: [
     TradesService,
     MarketOrderService,
+    BatchOrderService,
     RiskManagerService,
     TradeExecutorService,
     StellarConfigService,

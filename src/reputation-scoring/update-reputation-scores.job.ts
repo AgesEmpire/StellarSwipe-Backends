@@ -6,6 +6,10 @@ import {
   ReputationScoringService,
   ProviderMetrics,
 } from '../services/reputation-scoring.service';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
+
+const LOCK_KEY = 'update-reputation-scores';
+const LOCK_TTL_MS = 10 * 60 * 1000; // 10 min — job normally runs in < 5 min
 
 /**
  * Raw row returned by the provider metrics aggregation query.
@@ -31,14 +35,26 @@ export class UpdateReputationScoresJob {
   constructor(
     private readonly reputationScoringService: ReputationScoringService,
     private readonly dataSource: DataSource,
+    private readonly distributedLock: DistributedLockService,
   ) {}
 
   /**
    * Runs every day at 02:00 UTC to refresh all provider reputation scores.
-   * The off-peak time reduces load contention with user-facing traffic.
+   * The distributed lock ensures only one replica executes per scheduled tick.
    */
   @Cron('0 2 * * *', { name: 'update-reputation-scores', timeZone: 'UTC' })
   async handleCron(): Promise<void> {
+    const { ran } = await this.distributedLock.withLock(
+      LOCK_KEY,
+      LOCK_TTL_MS,
+      () => this.run(),
+    );
+    if (!ran) {
+      this.logger.log('Skipping reputation score update — another replica is running it');
+    }
+  }
+
+  private async run(): Promise<void> {
     this.logger.log('Starting daily reputation score update job');
     const startTime = Date.now();
 
