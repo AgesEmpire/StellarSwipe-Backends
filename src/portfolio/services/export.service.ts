@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { Trade } from '../../trades/entities/trade.entity';
+import { ArchivedPosition } from '../entities/archived-position.entity';
 import { ExportFormat, ExportQueryDto } from '../dto/export-query.dto';
 import * as fastcsv from 'fast-csv';
 import * as fs from 'fs';
@@ -11,6 +12,19 @@ import { Queue, Job } from 'bull';
 import { RateLimitService } from '../../common/services/rate-limit.service';
 import { NotificationService } from '../../common/services/notification.service';
 import { User } from '../../users/entities/user.entity';
+import { PositionArchiveService } from './position-archive.service';
+
+interface PositionExportData {
+  date: Date;
+  asset: string;
+  action: string;
+  entryPrice: string;
+  exitPrice: string | null;
+  quantity: string;
+  fees: string;
+  profitLoss: string | null;
+  status: string;
+}
 
 @Injectable()
 @Processor('export-history')
@@ -22,12 +36,15 @@ export class ExportService {
     constructor(
         @InjectRepository(Trade)
         private tradeRepository: Repository<Trade>,
+        @InjectRepository(ArchivedPosition)
+        private archivedPositionRepository: Repository<ArchivedPosition>,
         @InjectRepository(User)
         private userRepository: Repository<User>,
         @InjectQueue('export-history')
         private exportQueue: Queue,
         private rateLimitService: RateLimitService,
         private notificationService: NotificationService,
+        private positionArchiveService: PositionArchiveService,
     ) {
         if (!fs.existsSync(this.EXPORT_DIR)) {
             fs.mkdirSync(this.EXPORT_DIR, { recursive: true });
@@ -38,21 +55,31 @@ export class ExportService {
         await this.rateLimitService.checkRateLimit(userId);
 
         const where: any = { userId };
+        const closedAtWhere: any = { userId };
+
         if (query.startDate && query.endDate) {
             where.createdAt = Between(new Date(query.startDate), new Date(query.endDate));
+            closedAtWhere.closedAt = Between(new Date(query.startDate), new Date(query.endDate));
         } else if (query.startDate) {
             where.createdAt = MoreThanOrEqual(new Date(query.startDate));
+            closedAtWhere.closedAt = MoreThanOrEqual(new Date(query.startDate));
         } else if (query.endDate) {
             where.createdAt = LessThanOrEqual(new Date(query.endDate));
+            closedAtWhere.closedAt = LessThanOrEqual(new Date(query.endDate));
         }
 
-        const count = await this.tradeRepository.count({ where });
+        const [tradeCount, archivedCount] = await Promise.all([
+            this.tradeRepository.count({ where }),
+            this.archivedPositionRepository.count({ where: closedAtWhere }),
+        ]);
 
-        if (count === 0) {
+        const total = tradeCount + archivedCount;
+
+        if (total === 0) {
             return { status: 'empty', message: 'No trades found for the given criteria.' };
         }
 
-        if (count > this.SYNC_THRESHOLD) {
+        if (total > this.SYNC_THRESHOLD) {
             await this.exportQueue.add('generate-export', { userId, query, where });
             return { status: 'processing', message: 'Large export started. You will receive an email with the download link shortly.' };
         }
@@ -60,7 +87,6 @@ export class ExportService {
         const { fileName } = await this.generateFile(userId, query, where);
         await this.rateLimitService.incrementCount(userId);
 
-        // In a real app, this would be a signed URL to a storage bucket
         return { status: 'completed', url: `/exports/${fileName}` };
     }
 
@@ -70,46 +96,30 @@ export class ExportService {
             order: { createdAt: 'DESC' },
         });
 
-        const fileName = `trade_history_${userId}_${Date.now()}.${query.format}`;
+        const archivedPositions = await this.archivedPositionRepository.find({
+            where: { userId },
+            order: { closedAt: 'DESC' },
+        });
+
+        const allPositions = this.mergePositionData(trades, archivedPositions);
+
+        const fileName = `position_history_${userId}_${Date.now()}.${query.format}`;
         const filePath = path.join(this.EXPORT_DIR, fileName);
 
         if (query.format === ExportFormat.CSV) {
-            await this.generateCsv(trades, filePath);
+            await this.generatePositionCsv(allPositions, filePath);
         } else {
-            await this.generateJson(trades, filePath);
+            await this.generatePositionJson(allPositions, filePath);
         }
 
         return { filePath, fileName };
     }
 
-    private async generateCsv(trades: Trade[], filePath: string): Promise<void> {
-        const csvStream = fastcsv.format({ headers: true });
-        const writableStream = fs.createWriteStream(filePath);
-
-        return new Promise((resolve, reject) => {
-            csvStream.pipe(writableStream)
-                .on('finish', resolve)
-                .on('error', reject);
-
-            trades.forEach((trade) => {
-                csvStream.write({
-                    Date: trade.createdAt.toISOString(),
-                    Asset: `${trade.baseAsset}/${trade.counterAsset}`,
-                    Action: trade.side.toUpperCase(),
-                    'Entry Price': trade.entryPrice,
-                    'Exit Price': trade.exitPrice || 'N/A',
-                    Quantity: trade.amount,
-                    Fees: trade.feeAmount,
-                    'P&L': trade.profitLoss || '0.00',
-                    Status: trade.status,
-                });
-            });
-            csvStream.end();
-        });
-    }
-
-    private async generateJson(trades: Trade[], filePath: string): Promise<void> {
-        const data = trades.map((trade) => ({
+    private mergePositionData(
+        trades: Trade[],
+        archivedPositions: ArchivedPosition[],
+    ): PositionExportData[] {
+        const tradeData: PositionExportData[] = trades.map((trade) => ({
             date: trade.createdAt,
             asset: `${trade.baseAsset}/${trade.counterAsset}`,
             action: trade.side,
@@ -121,7 +131,51 @@ export class ExportService {
             status: trade.status,
         }));
 
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+        const archivedData: PositionExportData[] = archivedPositions.map((pos) => ({
+            date: pos.archivedAt,
+            asset: pos.baseAsset && pos.counterAsset ? `${pos.baseAsset}/${pos.counterAsset}` : 'N/A',
+            action: pos.side || 'N/A',
+            entryPrice: pos.entryPrice || '0',
+            exitPrice: pos.exitPrice,
+            quantity: pos.amount || '0',
+            fees: '0',
+            profitLoss: pos.realizedPnL,
+            status: 'closed',
+        }));
+
+        return [...tradeData, ...archivedData].sort(
+            (a, b) => b.date.getTime() - a.date.getTime(),
+        );
+    }
+
+    private async generatePositionCsv(positions: PositionExportData[], filePath: string): Promise<void> {
+        const csvStream = fastcsv.format({ headers: true });
+        const writableStream = fs.createWriteStream(filePath);
+
+        return new Promise((resolve, reject) => {
+            csvStream.pipe(writableStream)
+                .on('finish', resolve)
+                .on('error', reject);
+
+            positions.forEach((pos) => {
+                csvStream.write({
+                    Date: pos.date.toISOString(),
+                    Asset: pos.asset,
+                    Action: pos.action.toUpperCase(),
+                    'Entry Price': pos.entryPrice,
+                    'Exit Price': pos.exitPrice || 'N/A',
+                    Quantity: pos.quantity,
+                    Fees: pos.fees,
+                    'P&L': pos.profitLoss || '0.00',
+                    Status: pos.status,
+                });
+            });
+            csvStream.end();
+        });
+    }
+
+    private async generatePositionJson(positions: PositionExportData[], filePath: string): Promise<void> {
+        fs.writeFileSync(filePath, JSON.stringify(positions, null, 2));
     }
 
     @Process('generate-export')
@@ -135,11 +189,11 @@ export class ExportService {
 
             const user = await this.userRepository.findOne({ where: { id: userId } });
             if (user && user.email) {
-                const downloadLink = `https://api.stellarswipe.com/exports/${fileName}`; // Mock domain
+                const downloadLink = `https://api.stellarswipe.com/exports/${fileName}`;
                 await this.notificationService.sendEmail(
                     user.email,
-                    'Your Trade History Export is Ready',
-                    `Hello ${user.username},\n\nYour trade history export has been generated. You can download it using the link below:\n\n${downloadLink}\n\nThis link will expire in 24 hours.`,
+                    'Your Position History Export is Ready',
+                    `Hello ${user.username},\n\nYour position history export has been generated. You can download it using the link below:\n\n${downloadLink}\n\nThis link will expire in 24 hours.`,
                 );
             }
         } catch (error: any) {
