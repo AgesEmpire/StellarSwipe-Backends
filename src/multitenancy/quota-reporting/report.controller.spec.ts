@@ -32,4 +32,23 @@ describe('ReportController', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it('passes target tenantId and admin identity to the service for admin endpoint', async () => {
+    const service = {
+      generateReport: jest.fn().mockResolvedValue({ ok: true }),
+    } as any;
+    const controller = new ReportController(service);
+
+    await controller.getQuotaReportForTenant(
+      { user: { userId: 'admin-1', tenantId: 'admin-tenant', roles: ['admin'] } },
+      'other-tenant',
+      {},
+    );
+
+    expect(service.generateReport).toHaveBeenCalledWith(
+      { id: 'admin-1', tenantId: 'admin-tenant', roles: ['admin'] },
+      {},
+      'other-tenant',
+    );
+  });
 });
