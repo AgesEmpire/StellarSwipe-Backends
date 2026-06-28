@@ -321,9 +321,25 @@ kill -9 <PID>
 ## Contributing
 
 1. Create feature branch: `git checkout -b feature/new-feature`
-2. Commit changes: `git commit -am 'Add new feature'`
+2. Commit changes using the [Conventional Commits](https://www.conventionalcommits.org/) format, e.g. `git commit -m 'feat(trades): add new feature'`
 3. Push to branch: `git push origin feature/new-feature`
 4. Submit Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full commit message format,
+allowed types, and examples.
+
+### Git hooks (commitlint + Husky)
+
+[Husky](https://typicode.github.io/husky/) git hooks are installed automatically
+when you run `npm install` (via the `prepare` script):
+
+- **`commit-msg`** — runs [commitlint](https://commitlint.js.org/) to reject any
+  commit message that doesn't follow the Conventional Commits format.
+- **`pre-push`** — runs `npm run lint` and `npm run test:smoke` before a push is
+  allowed.
+
+You can bypass hooks in an emergency with `git commit --no-verify` /
+`git push --no-verify`.
 
 ## Releases & Changelog
 

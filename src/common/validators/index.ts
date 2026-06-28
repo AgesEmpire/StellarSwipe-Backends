@@ -4,6 +4,9 @@ export * from './nested-payload.validator';
 // Stellar Address Validators
 export * from './stellar-address.validator';
 
+// Stellar Memo Validator
+export * from './stellar-memo.validator';
+
 // Asset Validators  
 export * from './asset-pair.validator';
 
@@ -22,6 +25,7 @@ export * from './date.validator';
 // Validation Decorators
 export * from '../decorators/validation.decorator';
 export * from '../decorators/is-stellar-address.decorator';
+export * from '../decorators/is-stellar-memo.decorator';
 
 // Sanitizers
 export * from '../sanitizers/input.sanitizer';

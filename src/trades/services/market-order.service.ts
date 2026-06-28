@@ -16,6 +16,7 @@ import { StellarConfigService } from "../../config/stellar.service";
 import { MarketOrderDto } from "../dto/market-order.dto";
 import { MarketOrderResponseDto } from "../dto/order-response.dto";
 import { buildAsset } from "./asset-utils";
+import { HorizonBulkheadService } from "../../stellar/bulkhead/horizon-bulkhead.service";
 
 interface MarketPriceEstimate {
   averagePrice: number;
@@ -30,7 +31,10 @@ export class MarketOrderService {
   private readonly server: Horizon.Server;
   private readonly logger = new Logger(MarketOrderService.name);
 
-  constructor(private readonly stellarConfig: StellarConfigService) {
+  constructor(
+    private readonly stellarConfig: StellarConfigService,
+    private readonly bulkhead: HorizonBulkheadService,
+  ) {
     this.server = new Horizon.Server(this.stellarConfig.horizonUrl, {
       allowHttp: this.stellarConfig.horizonUrl.startsWith("http://"),
     });
@@ -111,7 +115,9 @@ export class MarketOrderService {
         `Submitting market order: ${dto.amount} ${dto.sellingAssetCode} -> ${dto.buyingAssetCode}`,
       );
 
-      const result = await this.server.submitTransaction(transaction);
+      const result = await this.bulkhead.write(() =>
+        this.server.submitTransaction(transaction),
+      );
 
       this.logger.log(`Market order executed successfully: ${result.hash}`);
 
@@ -262,7 +268,7 @@ export class MarketOrderService {
     publicKey: string,
   ): Promise<Horizon.AccountResponse> {
     try {
-      return await this.server.loadAccount(publicKey);
+      return await this.bulkhead.read(() => this.server.loadAccount(publicKey));
     } catch (error) {
       this.logger.error(
         `Failed to load account ${publicKey}: ${(error as Error).message}`,

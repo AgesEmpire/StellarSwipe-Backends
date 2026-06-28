@@ -25,6 +25,16 @@ export interface DatabaseConfig {
   };
 }
 
+export interface HorizonBulkheadCategoryConfig {
+  maxConcurrent: number;
+  maxQueue: number;
+}
+
+export interface HorizonBulkheadConfig {
+  read: HorizonBulkheadCategoryConfig;
+  write: HorizonBulkheadCategoryConfig;
+}
+
 export interface StellarConfig {
   network: 'testnet' | 'public';
   horizonUrl: string;
@@ -34,6 +44,7 @@ export interface StellarConfig {
   maxRetries: number;
   maxCallDepth: number;
   maxCallDepthViolationPolicy: 'reject' | 'warn';
+  horizonBulkhead: HorizonBulkheadConfig;
 }
 
 export interface RedisConfig {

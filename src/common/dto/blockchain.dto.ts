@@ -5,7 +5,9 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   SanitizeAssetCode,
@@ -16,6 +18,8 @@ import {
   IsStellarSecretKey,
   IsValidAmount,
 } from '../decorators/validation.decorator';
+import { IsStellarMemo } from '../decorators/is-stellar-memo.decorator';
+import { StellarMemoDto } from './stellar-memo.dto';
 
 /**
  * Base DTO for operations that require only a Stellar public key.
@@ -140,7 +144,7 @@ export class StellarPaymentBaseDto {
   amount!: string;
 
   @ApiPropertyOptional({
-    description: 'Optional memo for the transaction',
+    description: 'Optional text memo for the transaction (MEMO_TEXT)',
     maxLength: 28,
   })
   @IsOptional()
@@ -148,4 +152,16 @@ export class StellarPaymentBaseDto {
   @MaxLength(28, { message: 'memo must not exceed 28 characters' })
   @SanitizeString()
   memo?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional structured memo (type + value) validated against Stellar ' +
+      'per-type constraints. Use this for non-text memos (id/hash/return).',
+    type: StellarMemoDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StellarMemoDto)
+  @IsStellarMemo()
+  memoDetails?: StellarMemoDto;
 }

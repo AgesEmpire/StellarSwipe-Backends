@@ -7,7 +7,11 @@ import {
   Matches,
   IsOptional,
   IsUUID,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsStellarMemo } from '../common/decorators/is-stellar-memo.decorator';
+import { StellarMemoDto } from '../common/dto/stellar-memo.dto';
 
 export class SubmitSignatureDto {
   @ApiProperty({
@@ -58,6 +62,18 @@ export class CreatePendingTransactionDto {
   @IsOptional()
   @IsString()
   memo?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Structured memo (type + value) validated against Stellar per-type ' +
+      'constraints before the transaction is built.',
+    type: StellarMemoDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StellarMemoDto)
+  @IsStellarMemo()
+  memoDetails?: StellarMemoDto;
 
   @ApiPropertyOptional({
     description: 'Additional metadata to store alongside the transaction',

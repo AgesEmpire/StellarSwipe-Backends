@@ -19,6 +19,7 @@ import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
 import { configSchema } from './config/schemas/config.schema';
 import { StellarConfigService } from './config/stellar.service';
+import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
 
 import { LoggerModule } from './common/logger';
 import { CorrelationModule } from './common/correlation';
@@ -276,6 +277,7 @@ import { FreighterModule } from './freighter/freighter.module';
     RiskControlsModule,
     WalletModule,
     FreighterModule,
+    HorizonBulkheadModule,
   ],
   providers: [StellarConfigService, RateLimitMiddleware],
   exports: [StellarConfigService],

@@ -10,3 +10,7 @@ export {
   MAX_CALL_DEPTH_KEY,
   type MaxCallDepthConfig,
 } from './max-call-depth.decorator';
+export {
+  CurrentWallet,
+  type CurrentWalletOptions,
+} from './current-wallet.decorator';
