@@ -95,4 +95,10 @@ export const configSchema = Joi.object({
 
   // ─── Encryption — required ──────────────────────────────────────────────────
   ENCRYPTION_KEY: Joi.string().min(32).required(),
+
+  // ─── N+1 Detection (development mode only) ────────────────────────────────────
+  // Default: 25 queries
+  NPLUS1_MAX_QUERIES: Joi.number().integer().positive().default(25),
+  // Default: 1000 ms
+  NPLUS1_MAX_QUERY_TIME_MS: Joi.number().integer().positive().default(1000),
 });

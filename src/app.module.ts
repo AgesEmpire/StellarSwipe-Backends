@@ -15,7 +15,8 @@ import { xaiConfig } from './config/xai.config';
 import { appConfig, sentryConfig } from './config/app.config';
 import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
-import configuration from './config/configuration';
+import { configuration } from './config/configuration';
+import { nplus1DetectionConfig } from './config/nplus1.config';
 import { configSchema } from './config/schemas/config.schema';
 import { StellarConfigService } from './config/stellar.service';
 
@@ -104,6 +105,7 @@ import { FreighterModule } from './freighter/freighter.module';
         connectionPoolConfig,
         connectionPoolReplicaConfig,
         configuration,
+        nplus1DetectionConfig,
       ],
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
@@ -141,7 +143,11 @@ import { FreighterModule } from './freighter/freighter.module';
         logging: configService.get<boolean>('database.logging'),
         entities: ['dist/**/*.entity{.ts,.js}'],
         migrations: ['dist/migrations/*{.ts,.js}'],
-        subscribers: ['dist/subscribers/*{.ts,.js}', 'dist/common/subscribers/*{.ts,.js}'],
+        subscribers: [
+          'dist/subscribers/*{.ts,.js}',
+          'dist/common/subscribers/*{.ts,.js}',
+          'dist/database/subscribers/*{.ts,.js}',
+        ],
         ssl: configService.get<boolean>('database.ssl') ?? false,
         extra: {
           min: configService.get<number>('connectionPool.min') ?? 10,
@@ -164,8 +170,7 @@ import { FreighterModule } from './freighter/freighter.module';
       useFactory: (configService: ConfigService) => ({
         type: 'postgres' as const,
         host: configService.get<string>('database.replica.host'),
-        port: configService.get<number>('database.replica.port'),
-        username: configService.get<string>('database.replica.username'),
+        port: configService.get<number>('database.replica.port'),n        username: configService.get<string>('database.replica.username'),
         password: configService.get<string>('database.replica.password'),
         database: configService.get<string>('database.replica.database'),
         synchronize: false,
@@ -234,9 +239,8 @@ import { FreighterModule } from './freighter/freighter.module';
     ProductAnalyticsModule,
     BackupModule,
     AdminAnalyticsModule,
-    MonitoringModule,
-    WebhooksModule,
-    DrModule,
+    MetadataExtractorService,
+    NPlus1DetectionInterceptor,
     MarketIntelligenceModule,
     DocumentationModule,
     CompetitionsModule,

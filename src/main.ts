@@ -25,6 +25,7 @@ import { InstanceCoordinatorService } from './scaling/instance-coordinator.servi
 import { compressionConfig } from './common/config/compression.config';
 import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
 import { DeadlockRetryInterceptor } from './database/deadlock-retry.interceptor';
+import { NPlus1DetectionInterceptor } from './database/nplus1-detection.interceptor';
 import { initTracing } from './monitoring/tracing/jaeger.config';
 import { DocGeneratorService } from './documentation/doc-generator.service';
 import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
@@ -136,6 +137,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TransformInterceptor());
   app.useGlobalInterceptors(new SensitiveDataInterceptor());
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
+  app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));
 
   // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
   const { document, json, yaml } = generateOpenApiDocument(app);
