@@ -22,6 +22,7 @@ import { GraphqlExceptionFilter } from './filters/gql-exception.filter';
 // ─── Plugins ──────────────────────────────────────────────────────────────────
 import { GqlLoggingPlugin } from './plugins/gql-logging.plugin';
 import { GqlDepthLimitPlugin } from './plugins/gql-depth-limit.plugin';
+import { FieldAuthorizationPlugin } from './plugins/field-auth.plugin';
 
 // ─── Resolvers ────────────────────────────────────────────────────────────────
 import { SignalResolver } from './resolvers/signal.resolver';
@@ -38,6 +39,7 @@ import { PortfolioModule } from '../portfolio/portfolio.module';
 import { ProvidersModule } from '../providers/providers.module';
 import { UsersModule } from '../users/users.module';
 import { AssetsModule } from '../assets/assets.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 import { createDataLoader, createGroupedDataLoader } from './utils/dataloader-factory';
@@ -58,6 +60,7 @@ import { AssetsService } from '../assets/assets.service';
     ProvidersModule,
     AssetsModule,
     UsersModule,
+    AuthorizationModule,
 
     NestGraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
@@ -68,10 +71,7 @@ import { AssetsService } from '../assets/assets.service';
         configService: ConfigService,
         assetsService: AssetsService,
       ) => ({
-        /**
-         * Code-first schema — NestJS generates schema.gql automatically.
-         * The file is written to disk so you can inspect or commit it.
-         */
+        /** Code-first schema — NestJS generates schema.gql automatically. */
         autoSchemaFile: join(process.cwd(), 'src/graphql/schema.gql'),
         sortSchema: true,
 
@@ -125,12 +125,12 @@ import { AssetsService } from '../assets/assets.service';
         /** Expose playground in non-production environments */
         playground: configService.get<string>('NODE_ENV') !== 'production',
 
-        /** Subscriptions over WS — enable when needed */
+        /** Subscriptions over WS */
         subscriptions: {
           'graphql-ws': true,
         },
 
-        /** Format errors before returning to client — strip internals in prod */
+        /** Format errors before returning to client */
         formatError: (error) => {
           const isProd = configService.get<string>('NODE_ENV') === 'production';
           return {
@@ -140,13 +140,10 @@ import { AssetsService } from '../assets/assets.service';
           };
         },
 
-        /** Persist introspection in all envs for tooling (Postman, Apollo Studio) */
+        /** Introspection for tooling */
         introspection: true,
 
-        /** Include request in context for guards / decorators */
-        installSubscriptionHandlers: false,
-
-        /** CORS handled at app level — don't double-apply */
+        /** CORS handled at app level */
         cors: false,
       }),
     }),
@@ -157,16 +154,17 @@ import { AssetsService } from '../assets/assets.service';
     DateTimeScalar,
     JsonScalar,
 
-    // Guard (registered globally via APP_GUARD in AppModule — listed here for clarity)
+    // Guard
     GqlAuthGuard,
     Reflector,
 
-    // Exception filter — scoped to GraphQL layer
+    // Exception filter
     { provide: APP_FILTER, useClass: GraphqlExceptionFilter },
 
-    // Apollo plugins (decorated with @Plugin())
+    // Apollo plugins
     GqlLoggingPlugin,
     GqlDepthLimitPlugin,
+    FieldAuthorizationPlugin,
 
     // PubSub for subscriptions
     { provide: PubSub, useValue: new PubSub() },
