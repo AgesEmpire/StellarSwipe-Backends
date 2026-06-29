@@ -58,6 +58,9 @@ export class User {
   @Column({ default: true })
   isActive!: boolean;
 
+  @Column({ name: 'email_verified', default: false })
+  emailVerified!: boolean;
+
   @Column({
     type: 'enum',
     enum: UserTier,
