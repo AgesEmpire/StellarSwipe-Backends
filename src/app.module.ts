@@ -91,6 +91,7 @@ import { RiskControlsModule } from './risk-controls/risk-controls.module';
 import { WalletModule } from './wallet/wallet.module';
 import { FreighterModule } from './freighter/freighter.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
+import { PrivacyModule } from './privacy/privacy.module';
 
 @Module({
   imports: [
@@ -280,6 +281,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     WalletModule,
     FreighterModule,
     HorizonBulkheadModule,
+    PrivacyModule,
   ],
   providers: [StellarConfigService, RateLimitMiddleware],
   exports: [StellarConfigService],
