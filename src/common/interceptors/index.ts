@@ -7,3 +7,4 @@ export { ResponseEnvelopeInterceptor, ApiEnvelope, ApiMeta } from './response-en
 export { ETagInterceptor } from './etag.interceptor';
 export { ConditionalCompressionInterceptor, ConditionalCompressionOptions } from './conditional-compression.interceptor';
 export { TransactionalInterceptor } from './transactional.interceptor';
+export { RetryAfterInterceptor } from './retry-after.interceptor';
