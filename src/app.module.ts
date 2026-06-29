@@ -27,6 +27,7 @@ import { SentryModule } from './common/sentry';
 import { ErrorClassificationModule } from './common/error-classification/error-classification.module';
 import { CacheModule } from './cache/cache.module';
 import { MaxCallDepthModule } from './common/max-call-depth.module';
+import { IdempotentModule } from './common/idempotent.module';
 
 import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -215,6 +216,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     SentryModule,
     ErrorClassificationModule,
     MaxCallDepthModule,
+    IdempotentModule,
     UsersModule,
     SignalsModule,
     TradesModule,

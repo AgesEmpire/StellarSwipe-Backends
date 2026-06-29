@@ -14,3 +14,4 @@ export {
   CurrentWallet,
   type CurrentWalletOptions,
 } from './current-wallet.decorator';
+export { Idempotent, IDEMPOTENT_KEY } from './idempotent.decorator';
