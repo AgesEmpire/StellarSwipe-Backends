@@ -10,10 +10,12 @@ import {
   IsStellarPublicKey,
   IsStellarSecretKey,
 } from '../../common/decorators/validation.decorator';
+import { IsSorobanContractAddress } from '../../common/decorators/is-soroban-contract-address.decorator';
 
 export class SimulateContractDto {
   @ApiProperty({ description: 'Soroban contract ID (StrKey C… address)' })
   @IsString()
+  @IsSorobanContractAddress()
   contractId!: string;
 
   @ApiProperty({ description: 'Contract method / function name to invoke' })

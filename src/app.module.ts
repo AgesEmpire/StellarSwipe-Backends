@@ -90,6 +90,7 @@ import { SwapModule } from './swap/swap.module';
 import { RiskControlsModule } from './risk-controls/risk-controls.module';
 import { WalletModule } from './wallet/wallet.module';
 import { FreighterModule } from './freighter/freighter.module';
+import { WatchlistModule } from './watchlist/watchlist.module';
 
 @Module({
   imports: [
@@ -224,6 +225,7 @@ import { FreighterModule } from './freighter/freighter.module';
     ApiMonetizationModule,
     SlaModule,
     ProvidersModule,
+    WatchlistModule,
     LeaderboardModule,
     MlModule,
     ScalingModule,
