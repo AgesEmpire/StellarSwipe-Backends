@@ -79,6 +79,43 @@ export class UpdateReputationScoresJob {
   }
 
   /**
+   * Weekly full-recompute safeguard against incremental drift.
+   * Runs every Sunday at 03:00 UTC.
+   */
+  @Cron('0 3 * * 0', { name: 'full-recompute-reputation-scores', timeZone: 'UTC' })
+  async handleFullRecompute(): Promise<void> {
+    const { ran } = await this.distributedLock.withLock(
+      `${LOCK_KEY}:full-recompute`,
+      LOCK_TTL_MS,
+      () => this.runFullRecompute(),
+    );
+    if (!ran) {
+      this.logger.log('Skipping full recompute — another replica is running it');
+    }
+  }
+
+  private async runFullRecompute(): Promise<void> {
+    this.logger.log('Starting weekly full reputation recompute (drift safeguard)');
+    const startTime = Date.now();
+    const metrics = await this.fetchAllProviderMetrics();
+
+    if (metrics.length === 0) {
+      this.logger.warn('No provider metrics found — skipping full recompute');
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      metrics.map((m) => this.reputationScoringService.fullRecompute(m)),
+    );
+
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(
+      `Full recompute finished in ${elapsed}s: ${metrics.length - failed} succeeded, ${failed} failed`,
+    );
+  }
+
+  /**
    * Allows manual triggering outside of the cron schedule
    * (e.g. via an admin endpoint or for backfilling).
    */
