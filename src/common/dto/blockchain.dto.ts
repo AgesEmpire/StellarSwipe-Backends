@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { NormalizeStellarKey } from '../decorators/normalize-stellar-key.decorator';
 import {
   SanitizeAssetCode,
   SanitizeString,
@@ -30,6 +31,7 @@ export class StellarPublicKeyDto {
     example: 'GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3AUCR6C24',
   })
   @IsNotEmpty({ message: 'publicKey is required' })
+  @NormalizeStellarKey()
   @IsStellarPublicKey({ message: 'publicKey must be a valid Stellar public key starting with G' })
   @SanitizeString()
   publicKey!: string;
@@ -56,6 +58,7 @@ export class StellarAssetDto {
     example: 'GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3AUCR6C24',
   })
   @IsNotEmpty({ message: 'assetIssuer is required' })
+  @NormalizeStellarKey()
   @IsStellarPublicKey({ message: 'assetIssuer must be a valid Stellar public key starting with G' })
   @SanitizeString()
   assetIssuer!: string;
@@ -71,6 +74,7 @@ export class StellarTrustlineBaseDto {
     example: 'GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3AUCR6C24',
   })
   @IsNotEmpty({ message: 'publicKey is required' })
+  @NormalizeStellarKey()
   @IsStellarPublicKey({ message: 'publicKey must be a valid Stellar public key starting with G' })
   @SanitizeString()
   publicKey!: string;
@@ -100,6 +104,7 @@ export class StellarTrustlineBaseDto {
     example: 'GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3AUCR6C24',
   })
   @IsNotEmpty({ message: 'assetIssuer is required' })
+  @NormalizeStellarKey()
   @IsStellarPublicKey({ message: 'assetIssuer must be a valid Stellar public key starting with G' })
   @SanitizeString()
   assetIssuer!: string;
@@ -122,6 +127,7 @@ export class StellarPaymentBaseDto {
     example: 'GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3AUCR6C24',
   })
   @IsNotEmpty({ message: 'fromPublicKey is required' })
+  @NormalizeStellarKey()
   @IsStellarPublicKey({ message: 'fromPublicKey must be a valid Stellar public key starting with G' })
   @SanitizeString()
   fromPublicKey!: string;
@@ -131,6 +137,7 @@ export class StellarPaymentBaseDto {
     example: 'GBHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3AUCR6C25',
   })
   @IsNotEmpty({ message: 'toPublicKey is required' })
+  @NormalizeStellarKey()
   @IsStellarPublicKey({ message: 'toPublicKey must be a valid Stellar public key starting with G' })
   @SanitizeString()
   toPublicKey!: string;
