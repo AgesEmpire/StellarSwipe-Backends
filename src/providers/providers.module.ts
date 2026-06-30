@@ -20,6 +20,8 @@ import { Signal } from '../signals/entities/signal.entity';
 import { Trade } from '../trades/entities/trade.entity';
 import { ProviderEarning } from '../provider-rewards/provider-earning.entity';
 import { User } from '../users/entities/user.entity';
+import { UserProviderMute } from './entities/user-provider-mute.entity';
+import { ProviderMuteService } from './mute/provider-mute.service';
 
 @Module({
   imports: [
@@ -32,6 +34,7 @@ import { User } from '../users/entities/user.entity';
       Trade,
       ProviderEarning,
       User,
+      UserProviderMute,
     ]),
   ],
   controllers: [ProvidersController, ProviderAnalyticsController, HealthScoreController],

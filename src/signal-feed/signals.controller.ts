@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { Request } from 'express';
 import { SignalsService } from './signals.service';
 import { FeedAnalyticsService } from './feed-analytics.service';
+import { ProviderMuteService } from '../providers/mute/provider-mute.service';
 import { SignalFeedQueryDto } from './dto/signal-feed-query.dto';
 import { SignalFeedResponseDto } from './dto/signal-feed-response.dto';
 import { FeedInteractionDto } from './dto/feed-interaction.dto';
@@ -17,6 +18,7 @@ export class SignalsController {
   constructor(
     private readonly signalsService: SignalsService,
     private readonly feedAnalytics: FeedAnalyticsService,
+    private readonly providerMuteService: ProviderMuteService,
   ) {}
 
   @Get('feed')

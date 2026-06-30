@@ -6,6 +6,8 @@ import {
   Param,
   Query,
   Body,
+  Request,
+  UseGuards,
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
@@ -17,6 +19,8 @@ import {
   ProviderTierLevel,
   BonusType,
 } from './revenue-share/entities/revenue-share-tier.entity';
+import { ProviderMuteService } from './mute/provider-mute.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 // ─── Request types (inline – avoids extra dto files) ───────────────────────
 
@@ -65,6 +69,7 @@ export class ProvidersController {
   constructor(
     private readonly revenueShareService: RevenueShareService,
     private readonly tierManagerService: TierManagerService,
+    private readonly providerMuteService: ProviderMuteService,
   ) {}
 
   // ── Tier information ──────────────────────────────────────────────────────
@@ -309,5 +314,37 @@ export class ProvidersController {
       year ? parseInt(year, 10) : now.getFullYear(),
       month ? parseInt(month, 10) : now.getMonth() + 1,
     );
+  }
+
+  // ── Mute / Unmute ──────────────────────────────────────────────────────────
+
+  @Post(':id/mute')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async muteProvider(
+    @Param('id', ParseUUIDPipe) providerId: string,
+    @Request() req: any,
+  ): Promise<void> {
+    await this.providerMuteService.mute(req.user.userId, providerId);
+  }
+
+  @Post(':id/unmute')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async unmuteProvider(
+    @Param('id', ParseUUIDPipe) providerId: string,
+    @Request() req: any,
+  ): Promise<void> {
+    await this.providerMuteService.unmute(req.user.userId, providerId);
+  }
+
+  @Get(':id/mute-status')
+  @UseGuards(JwtAuthGuard)
+  async getMuteStatus(
+    @Param('id', ParseUUIDPipe) providerId: string,
+    @Request() req: any,
+  ): Promise<{ muted: boolean }> {
+    const muted = await this.providerMuteService.isMuted(req.user.userId, providerId);
+    return { muted };
   }
 }
