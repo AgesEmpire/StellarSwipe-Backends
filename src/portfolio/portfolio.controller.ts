@@ -24,6 +24,7 @@ import { ExportService } from './services/export.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AddTransactionDto } from './dto/add-transaction.dto';
 import { Transactional } from '../common/decorators/transactional.decorator';
+import { PortfolioSnapshotService } from './services/portfolio-snapshot.service';
 
 @ApiTags('portfolio')
 @ApiBearerAuth()
@@ -33,6 +34,7 @@ export class PortfolioController {
   constructor(
     private readonly portfolioService: PortfolioService,
     private readonly exportService: ExportService,
+    private readonly portfolioSnapshotService: PortfolioSnapshotService,
   ) { }
 
   @Get('positions')
@@ -110,6 +112,14 @@ export class PortfolioController {
     @Body() dto: AddTransactionDto,
   ): Promise<Trade> {
     return this.portfolioService.addTransaction(req.user.id, dto);
+  }
+
+  @Get('snapshot/latest')
+  @ApiOperation({ summary: 'Get the latest cached portfolio P&L snapshot' })
+  @ApiResponse({ status: 200, description: 'Latest portfolio snapshot' })
+  async getLatestSnapshot(@Request() req: any, @Query('fields') fields?: string) {
+    const snapshot = await this.portfolioSnapshotService.getLatestSnapshot(req.user.id);
+    return applySparseFieldset(snapshot, fields);
   }
 
   @Get('chart')

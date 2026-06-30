@@ -1,9 +1,9 @@
-import { SetMetadata, CustomDecorator } from '@nestjs/common';
+import { SetMetadata } from '@nestjs/common';
 
 export const TRANSACTIONAL_KEY = 'isTransactional';
 
-export const Transactional = (): CustomDecorator => {
-  return (target: object, key?: string | symbol, descriptor?: any) => {
-    SetMetadata(TRANSACTIONAL_KEY, true)(target, key as string, descriptor);
+export const Transactional = (): MethodDecorator => {
+  return (target: object, key: string | symbol, descriptor: PropertyDescriptor) => {
+    SetMetadata(TRANSACTIONAL_KEY, true)(target, key, descriptor);
   };
 };
