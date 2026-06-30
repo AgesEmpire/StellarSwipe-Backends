@@ -48,6 +48,7 @@ import {
   NOTIFICATION_TCP_CLIENT,
 } from './services/notification-preferences-client.service';
 import { CanaryRoutingModule } from './canary/canary-routing.module';
+import { SlippageGuardService } from './services/slippage-guard.service';
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { CanaryRoutingModule } from './canary/canary-routing.module';
     TradeSagaStepsFactory,
     TradeSagaService,
     NotificationPreferencesClientService,
+    SlippageGuardService,
     ...TRADE_CQRS_HANDLERS,
   ],
   exports: [
@@ -116,6 +118,7 @@ import { CanaryRoutingModule } from './canary/canary-routing.module';
     TradeExecutorService,
     TradeSagaService,
     NotificationPreferencesClientService,
+    SlippageGuardService,
   ],
 })
 export class TradesModule {}

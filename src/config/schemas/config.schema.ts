@@ -25,6 +25,8 @@ export const configSchema = Joi.object({
   API_PREFIX: Joi.string().default('api'),
   // Default: 'v1'
   API_VERSION: Joi.string().default('v1'),
+  // Default: 50 (bps)
+  SLIPPAGE_TOLERANCE_BPS: Joi.number().integer().min(0).default(50),
 
   // ─── Logging ────────────────────────────────────────────────────────────────
   // Default: 'info' | Values: error | warn | info | http | verbose | debug | silly

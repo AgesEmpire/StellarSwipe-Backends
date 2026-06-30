@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   Request,
 } from '@nestjs/common';
+import { ApiResponse } from '@nestjs/swagger';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { buildPaginationLinks } from '../common/pagination/pagination-links.util';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -66,6 +67,8 @@ export class TradesController {
   @RateLimit({ tier: RateLimitTier.TRADE })
   @UseGuards(MaxCallDepthGuard)
   @MaxCallDepth({ maxDepth: 5, endpoint: 'execute-trade', onViolation: 'reject' })
+  @ApiResponse({ status: 201, description: 'Trade execution started' })
+  @ApiResponse({ status: 422, description: 'Slippage tolerance exceeded' })
   async executeTrade(@Body() dto: ExecuteTradeDto): Promise<TradeResultDto> {
     return this.commandBus.execute(new ExecuteTradeCommand(dto));
   }

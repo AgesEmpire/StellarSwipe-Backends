@@ -10,6 +10,7 @@ export interface AppConfig {
   logMaxSize: string;
   corsOrigin: string[];
   corsCredentials: boolean;
+  slippageToleranceBps: number;
 }
 
 export interface DatabaseConfig {
