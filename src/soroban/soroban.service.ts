@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   SorobanRpc,
@@ -21,6 +22,11 @@ import {
   ContractEvent,
   ContractResult,
 } from './interfaces/contract-result.interface';
+import { SorobanDiagnosticService } from './soroban-diagnostic.service';
+import { MaxCallDepthService } from '../common/services/max-call-depth.service';
+import { SorobanFeeTrackerService } from '../common/services/soroban-fee-tracker.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
+import { EntrypointKilledException } from '../feature-flags/exceptions/entrypoint-killed.exception';
 
 // Optional import for monitoring - will be injected if available
 interface SorobanMonitoringService {
@@ -47,15 +53,39 @@ interface InvokeOptions {
 }
 
 @Injectable()
-export class SorobanService {
+export class SorobanService implements OnModuleInit {
   private readonly logger = new Logger(SorobanService.name);
   private readonly server: SorobanRpc.Server;
 
   constructor(
     private readonly stellarConfig: StellarConfigService,
     private readonly sorobanMonitoring?: SorobanMonitoringService,
+    private readonly diagnosticService: SorobanDiagnosticService,
+    private readonly maxCallDepthService?: MaxCallDepthService,
+    private readonly feeTrackerService?: SorobanFeeTrackerService,
+    private readonly featureFlagsService?: FeatureFlagsService,
   ) {
     this.server = new SorobanRpc.Server(this.stellarConfig.sorobanRpcUrl);
+  }
+
+  async onModuleInit(): Promise<void> {
+    try {
+      const startTime = Date.now();
+      const health = await this.withTimeout(
+        this.server.getHealth(),
+        'warmup',
+        5000,
+      );
+      const latency = Date.now() - startTime;
+      this.logger.log(
+        `Soroban RPC warmup completed: ${health.status} (${latency}ms)`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown Soroban warmup error';
+      this.logger.warn(
+        `Soroban RPC warmup failed: ${errorMessage}`,
+      );
+    }
   }
 
   async invokeContract(
@@ -80,6 +110,17 @@ export class SorobanService {
       );
     }
 
+    if (this.featureFlagsService) {
+      const accessCheck = await this.featureFlagsService.checkEntrypointAccess(
+        contractId,
+        method,
+      );
+      if (!accessCheck.allowed) {
+        throw new EntrypointKilledException(contractId, method);
+      }
+    }
+
+    let sendResponse: { status?: string; hash?: string } | undefined;
     try {
       const sourceKeypair = Keypair.fromSecret(options.sourceSecret);
       const sourceAccount =
@@ -104,6 +145,17 @@ export class SorobanService {
         .build();
 
       const simulation = await this.simulateTransaction(transaction);
+
+      if (this.maxCallDepthService) {
+        const depthInfo = this.maxCallDepthService.extractCallDepthFromSimulation(simulation);
+        this.maxCallDepthService.validateDepth(
+          depthInfo.depth,
+          this.stellarConfig.maxCallDepth ?? 5,
+          this.stellarConfig.maxCallDepthViolationPolicy ?? 'reject',
+          `${contractId}.${method}`,
+        );
+      }
+
       const prepared = await this.withTimeout(
         this.server.prepareTransaction(transaction),
         'prepareTransaction',
@@ -112,7 +164,7 @@ export class SorobanService {
 
       prepared.sign(sourceKeypair);
 
-      const sendResponse = await this.withTimeout(
+      sendResponse = await this.withTimeout(
         this.server.sendTransaction(prepared),
         'sendTransaction',
         options.timeoutMs,
@@ -145,6 +197,17 @@ export class SorobanService {
 
       const success = confirmed.status === 'SUCCESS';
 
+      if (this.feeTrackerService && simulation?.minResourceFee && confirmed.feeCharged) {
+        const feeEstimate = this.feeTrackerService.calculateFeeEstimate(
+          simulation.minResourceFee,
+          confirmed.feeCharged.toString(),
+          contractId,
+          method,
+          sendResponse.hash,
+        );
+        this.feeTrackerService.logFeeComparison(feeEstimate);
+      }
+
       return {
         success,
         hash: sendResponse.hash,
@@ -161,6 +224,19 @@ export class SorobanService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown Soroban error';
+
+      // Parse and log diagnostic events if available
+      const txHash = sendResponse?.hash;
+      const diagnosticEvents = this.diagnosticService.parseDiagnosticEvents(
+        (error as Record<string, unknown>)?.events as Array<Record<string, unknown>> || [],
+        txHash,
+      );
+      this.diagnosticService.logDiagnosticEvents(diagnosticEvents, {
+        contractId,
+        method,
+        txHash,
+      });
+      
       this.logger.error(
         `Soroban invocation failed for ${contractId}.${method}: ${errorMessage}`,
       );

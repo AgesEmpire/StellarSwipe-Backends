@@ -42,6 +42,7 @@ const makeService = (overrides: {
     databaseHealth as any,
     redisHealth as any,
     {} as any, // PrometheusService — recordHealthCheck is mocked at module level
+    { get: jest.fn() } as any, // ConfigService
   );
 
   return { service, databaseHealth, redisHealth, stellarHealth, sorobanHealth };

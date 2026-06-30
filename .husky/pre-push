@@ -1,0 +1,4 @@
+# Run lint (and fast unit tests) before allowing a push.
+# Keep this fast: lint first, then a quick smoke test pass.
+npm run lint
+npm run test:smoke

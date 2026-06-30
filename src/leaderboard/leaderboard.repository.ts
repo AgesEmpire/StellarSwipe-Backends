@@ -57,8 +57,11 @@ export class LeaderboardRepository {
   async aggregateProviderLeaderboard(
     period: LeaderboardPeriod,
     limit: number,
+    page: number = 1,
+    minActivity: number = 3,
   ): Promise<ProviderLeaderboardEntry[]> {
     const dateFilter = this.resolveDateFilter(period);
+    const offset = (page - 1) * limit;
 
     const qb = this.signalRepo
       .createQueryBuilder('s')
@@ -75,6 +78,7 @@ export class LeaderboardRepository {
       .addSelect('COALESCE(ROUND(SUM(s.totalProfitLoss)::numeric, 2), 0)', 'totalPnl')
       .where('s.status = :status', { status: SignalStatus.CLOSED })
       .groupBy('s.providerId')
+      .having('COUNT(s.id) >= :minActivity', { minActivity })
       .orderBy(
         `(
            (SUM(CASE WHEN s.outcome = :success THEN 1 ELSE 0 END)::numeric
@@ -85,6 +89,7 @@ export class LeaderboardRepository {
         'DESC',
       )
       .limit(limit)
+      .offset(offset)
       .setParameters({ success: SignalOutcome.TARGET_HIT });
 
     if (dateFilter) {
@@ -123,8 +128,11 @@ export class LeaderboardRepository {
   async aggregateUserLeaderboard(
     period: LeaderboardPeriod,
     limit: number,
+    page: number = 1,
+    minActivity: number = 3,
   ): Promise<UserLeaderboardEntry[]> {
     const dateFilter = this.resolveDateFilter(period);
+    const offset = (page - 1) * limit;
 
     const qb = this.copiedPositionRepo
       .createQueryBuilder('p')
@@ -151,6 +159,7 @@ export class LeaderboardRepository {
       )
       .where('p.status = :status', { status: PositionStatus.CLOSED })
       .groupBy('p.userId')
+      .having('COUNT(p.id) >= :minActivity', { minActivity })
       .orderBy(
         `(
            COALESCE(AVG(COALESCE(p.pnlPercentage::numeric, 0)), 0) * 0.4
@@ -164,7 +173,8 @@ export class LeaderboardRepository {
          )`,
         'DESC',
       )
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
 
     if (dateFilter) {
       qb.andWhere('p.createdAt >= :from', { from: dateFilter });
@@ -264,6 +274,12 @@ export class LeaderboardRepository {
       case LeaderboardPeriod.WEEKLY: {
         const d = new Date(now);
         d.setDate(d.getDate() - 7);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+      case LeaderboardPeriod.MONTHLY: {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 30);
         d.setHours(0, 0, 0, 0);
         return d;
       }

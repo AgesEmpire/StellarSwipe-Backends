@@ -321,9 +321,128 @@ kill -9 <PID>
 ## Contributing
 
 1. Create feature branch: `git checkout -b feature/new-feature`
-2. Commit changes: `git commit -am 'Add new feature'`
+2. Commit changes using the [Conventional Commits](https://www.conventionalcommits.org/) format, e.g. `git commit -m 'feat(trades): add new feature'`
 3. Push to branch: `git push origin feature/new-feature`
 4. Submit Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full commit message format,
+allowed types, and examples.
+
+### Git hooks (commitlint + Husky)
+
+[Husky](https://typicode.github.io/husky/) git hooks are installed automatically
+when you run `npm install` (via the `prepare` script):
+
+- **`commit-msg`** — runs [commitlint](https://commitlint.js.org/) to reject any
+  commit message that doesn't follow the Conventional Commits format.
+- **`pre-push`** — runs `npm run lint` and `npm run test:smoke` before a push is
+  allowed.
+
+You can bypass hooks in an emergency with `git commit --no-verify` /
+`git push --no-verify`.
+
+## Releases & Changelog
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `perf:`, `test:`, `build:`, `ci:`, etc.) for commit messages. `CHANGELOG.md` is generated automatically from this commit history using [`conventional-changelog-cli`](https://github.com/conventional-changelog/conventional-changelog).
+
+### Automated releases (semantic-release)
+
+The `.github/workflows/release.yml` workflow runs **semantic-release** automatically on every push to `main`. It:
+
+1. Analyzes commit messages since the last tag to determine the next semantic version (`patch` / `minor` / `major`).
+2. Bumps `package.json` version and prepends an entry to `CHANGELOG.md`.
+3. Creates a git tag (e.g. `v1.2.0`) and a GitHub Release with generated notes.
+4. Commits the updated `package.json` and `CHANGELOG.md` back to `main`.
+
+Required repository secret: `GITHUB_TOKEN` (provided automatically by GitHub Actions).
+
+#### Dry-run mode
+
+To verify what semantic-release would do **without publishing** anything:
+
+```bash
+npx semantic-release --dry-run
+```
+
+Set `CI=true` in your shell if running outside of a CI environment. The dry-run prints the computed next version and release notes without creating tags, commits, or a GitHub Release.
+
+### Generating the changelog manually
+
+When cutting a release manually:
+
+1. Make sure commit messages since the last release follow the Conventional Commits format. Use a `BREAKING CHANGE:` footer (or a `!` after the type/scope, e.g. `feat!:`) for any breaking change — these are surfaced in their own dedicated section of the changelog.
+2. Run:
+
+   ```bash
+   npm run changelog
+   ```
+
+   This parses commits since the last git tag (or the full history if no tag exists yet) and prepends a categorized entry (Features, Bug Fixes, Breaking Changes, etc.) to the top of `CHANGELOG.md`. If `CHANGELOG.md` does not exist, it will be created.
+3. Review the generated entry, then commit it together with the version bump:
+
+   ```bash
+   git add CHANGELOG.md
+   git commit -m "chore(release): update changelog"
+   ```
+4. Tag the release (e.g. `git tag v1.2.0`) so the next changelog run only picks up commits made after this point.
+
+To regenerate the changelog for the entire commit history from scratch (e.g. to fix formatting), use:
+
+```bash
+npm run changelog:init
+```
+
+This rewrites `CHANGELOG.md` from the very first commit instead of appending only the new entries.
+
+## Dependency Vulnerability Scanning
+
+The `.github/workflows/audit.yml` workflow runs `npm audit --audit-level=high` on every PR and push to `main`, and on a daily schedule. The build **fails** when any high or critical severity vulnerability is introduced.
+
+### Handling findings
+
+- **Fix it** — upgrade the affected package or its parent dependency.
+- **Accept the risk** — if no fix is available (e.g. a transitive dependency you don't control), add the advisory ID to `.auditignore` with a mandatory comment explaining the reason and a review-by date. See `.auditignore` for the required format.
+
+Do **not** use `--force` or blanket-ignore the entire scan. Every suppression must be justified individually.
+
+## Module Dependency Graph
+
+Regenerate the NestJS module dependency graph at any time:
+
+```bash
+npm run docs:module-graph
+```
+
+This scans all `*.module.ts` files under `src/`, extracts `@Module` `imports` arrays, and writes a Mermaid diagram to `docs/module-graph.md`.
+
+The script exits with code `1` and prints the offending cycles if circular module dependencies are detected. Circular nodes are highlighted in red in the generated diagram.
+
+### What to do when circular dependencies are found
+
+1. Look at the printed cycle (e.g. `A → B → C → A`).
+2. Extract the shared logic into a new `CommonModule` that both modules can import without creating a cycle.
+3. Re-run `npm run docs:module-graph` to confirm the cycle is gone.
+
+## Docker Compose Dev Profiles
+
+The `docker-compose.yml` defines profiles so you can start only the services a given module needs instead of the full stack.
+
+| Profile | Services started | Use case |
+|---------|-----------------|----------|
+| *(none — default)* | app + postgres + redis | Full local development |
+| `db-only` | postgres | DB-focused module tests |
+| `cache-only` | redis | Cache / session module tests |
+
+```bash
+# Full stack (default)
+docker-compose up -d
+
+# Postgres only
+docker-compose --profile db-only up -d
+
+# Redis only
+docker-compose --profile cache-only up -d
+```
 
 ## Documentation
 

@@ -75,6 +75,7 @@ import { AnalyticsReportsProcessor } from './reports/analytics-reports.processor
       UserPreference,
       DriftFinding,
     ]),
+    TypeOrmModule.forFeature([UserEvent, MetricSnapshot, Trade, Signal, User], 'replica'),
     ScheduleModule.forRoot(),
     TradePatternsModule,
     JobsModule,

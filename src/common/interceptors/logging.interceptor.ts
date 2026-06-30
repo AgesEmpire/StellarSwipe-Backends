@@ -7,6 +7,7 @@ import {
 import { Observable } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { CorrelationIdStore } from '../correlation/correlation-id.store';
 
@@ -15,6 +16,7 @@ export class LoggingInterceptor implements NestInterceptor {
   constructor(
     private readonly logger: LoggerService,
     private readonly correlationIdStore: CorrelationIdStore,
+    private readonly configService: ConfigService,
   ) {
     this.logger.setContext(LoggingInterceptor.name);
   }
@@ -45,7 +47,7 @@ export class LoggingInterceptor implements NestInterceptor {
 
     // Only log request body in development
     if (
-      process.env.NODE_ENV === 'development' &&
+      this.configService.get<string>('NODE_ENV') === 'development' &&
       body &&
       Object.keys(body).length > 0
     ) {
@@ -69,7 +71,7 @@ export class LoggingInterceptor implements NestInterceptor {
         };
 
         // Only log response body in development
-        if (process.env.NODE_ENV === 'development' && data) {
+        if (this.configService.get<string>('NODE_ENV') === 'development' && data) {
           responseLog.responseData = data;
         }
 

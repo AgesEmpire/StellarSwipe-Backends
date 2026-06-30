@@ -83,4 +83,48 @@ describe('RiskGateService', () => {
       expect(err.code).toBe(RISK_CODES.INSUFFICIENT_BALANCE);
     }
   });
+
+  // ── boundary condition tests (kill boundary-flip mutants) ─────────────────
+
+  describe('RISK_001 — exact boundary', () => {
+    it('passes when post-trade balance equals the minimum buffer exactly', async () => {
+      process.env.RISK_MIN_BALANCE_USD = '10';
+      // 110 - 100 = 10 = buffer → should PASS (not strictly less than)
+      const ctx = { ...baseCtx, availableBalanceUSD: 110, tradeSizeUSD: 100 };
+      await expect(service.evaluate(ctx)).resolves.toBeUndefined();
+      delete process.env.RISK_MIN_BALANCE_USD;
+    });
+
+    it('blocks when post-trade balance is 1 cent below the minimum buffer', async () => {
+      process.env.RISK_MIN_BALANCE_USD = '10';
+      // 109.99 - 100 = 9.99 < 10 → BLOCK
+      const ctx = { ...baseCtx, availableBalanceUSD: 109.99, tradeSizeUSD: 100 };
+      await expect(service.evaluate(ctx)).rejects.toThrow(UnprocessableEntityException);
+      delete process.env.RISK_MIN_BALANCE_USD;
+    });
+  });
+
+  describe('RISK_002 — exact boundary', () => {
+    it('passes when trade size equals the maximum exactly', async () => {
+      process.env.RISK_MAX_TRADE_USD = '500';
+      // tradeSizeUSD === maxTradeSizeUSD → should PASS (not strictly greater than)
+      await expect(
+        service.evaluate({ ...baseCtx, tradeSizeUSD: 500 }),
+      ).resolves.toBeUndefined();
+      delete process.env.RISK_MAX_TRADE_USD;
+    });
+
+    it('blocks when trade size is 1 cent above the maximum', async () => {
+      process.env.RISK_MAX_TRADE_USD = '500';
+      await expect(
+        service.evaluate({ ...baseCtx, tradeSizeUSD: 500.01 }),
+      ).rejects.toThrow(UnprocessableEntityException);
+      delete process.env.RISK_MAX_TRADE_USD;
+    });
+  });
+
+  it('passes when available balance is large and trade size is tiny', async () => {
+    const ctx = { ...baseCtx, availableBalanceUSD: 100_000, tradeSizeUSD: 1 };
+    await expect(service.evaluate(ctx)).resolves.toBeUndefined();
+  });
 });

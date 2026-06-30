@@ -137,6 +137,48 @@ export class ReputationScoringService {
   }
 
   /**
+   * Compute an incremental score update from a previous score record and a
+   * single new signal outcome, avoiding a full history recompute.
+   */
+  calculateIncrementalScore(
+    previous: {
+      score: number;
+      smoothedScore: number;
+      totalSignals: number;
+      winningSignals: number;
+      totalCopiers: number;
+      activeCopiers: number;
+      stakeAmount: number;
+      avgRating: number;
+      ratingCount: number;
+      activeDays: number;
+      activeDaysLast30: number;
+    },
+    delta: { signalsDelta: number; winsDelta: number; newCopierCount: number },
+  ): ScoreBreakdown {
+    const updatedMetrics: ProviderMetrics = {
+      providerId: '',
+      totalSignals: previous.totalSignals + delta.signalsDelta,
+      winningSignals: previous.winningSignals + delta.winsDelta,
+      totalCopiers: Math.max(previous.totalCopiers, delta.newCopierCount),
+      activeCopiers: delta.newCopierCount,
+      stakeAmount: previous.stakeAmount,
+      avgRating: previous.avgRating,
+      ratingCount: previous.ratingCount,
+      activeDays: previous.activeDays,
+      activeDaysLast30: previous.activeDaysLast30,
+    };
+
+    const breakdown = this.calculateScore(updatedMetrics);
+    const smoothedScore = this.applyEMA(previous.smoothedScore, breakdown.score);
+
+    return {
+      ...breakdown,
+      smoothedScore: parseFloat(smoothedScore.toFixed(2)),
+    };
+  }
+
+  /**
    * Bulk update scores for all providers — used by the daily cron job.
    */
   async updateAllProviderScores(allMetrics: ProviderMetrics[]): Promise<void> {
@@ -154,6 +196,14 @@ export class ReputationScoringService {
     this.logger.log(
       `Reputation update complete: ${results.length - failed} succeeded, ${failed} failed`,
     );
+  }
+
+  /**
+   * Full recompute for a single provider — used as a correctness safeguard
+   * against incremental drift. Returns the freshly computed score.
+   */
+  async fullRecompute(metrics: ProviderMetrics): Promise<ReputationScore> {
+    return this.updateProviderScore(metrics);
   }
 
   /**

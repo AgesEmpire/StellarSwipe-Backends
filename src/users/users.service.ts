@@ -90,6 +90,19 @@ export class UsersService {
         return user;
     }
 
+    async findByUsername(username: string): Promise<User> {
+        const user = await this.userRepository.findOne({
+            where: { username },
+            relations: ['preference', 'sessions'],
+        });
+
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        return user;
+    }
+
     async findOrCreateByWalletAddress(walletAddress: string): Promise<User> {
         try {
             return await this.findByWalletAddress(walletAddress);

@@ -13,9 +13,11 @@ import {
 } from './indicators';
 import { HealthSummaryService, ServiceHealthSummary } from './health-summary.service';
 import { HealthMetricsAuthGuard } from '../common/guards/health-metrics-auth.guard';
+import { AuditExempt } from '../audit-log/decorators/audit-exempt.decorator';
 
 @Controller('health')
 @UseGuards(HealthMetricsAuthGuard)
+@AuditExempt()
 export class HealthController implements OnApplicationBootstrap {
   private readonly logger = new Logger(HealthController.name);
 

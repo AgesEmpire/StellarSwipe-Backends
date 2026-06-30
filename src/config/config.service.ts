@@ -38,6 +38,10 @@ export class ConfigService {
     return this.config.get<string>('app.host', 'localhost');
   }
 
+  get slippageToleranceBps(): number {
+    return this.config.get<number>('app.slippageToleranceBps', 50);
+  }
+
   // ── Database ───────────────────────────────────────────────────────────────
   get databaseHost(): string {
     return this.config.getOrThrow<string>('database.host');

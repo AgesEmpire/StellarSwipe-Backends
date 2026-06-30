@@ -26,6 +26,8 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
 import { TransactionLimitsModule } from './transaction-limits/transaction-limits.module';
 import { TradeEligibilityService } from './trade-eligibility.service';
 import { TradeEligibilityController } from './trade-eligibility.controller';
+import { SignedUrlGeneratorService } from './exporters/signed-url-generator.service';
+import { SignedUrlDownloadController } from './exporters/signed-url-download.controller';
 
 @Module({
   imports: [
@@ -57,8 +59,9 @@ import { TradeEligibilityController } from './trade-eligibility.controller';
     GdprReportGenerator,
     FinancialReportGenerator,
     TradeEligibilityService,
+    SignedUrlGeneratorService,
   ],
-  controllers: [ComplianceController, TradeEligibilityController],
+  controllers: [ComplianceController, TradeEligibilityController, SignedUrlDownloadController],
   exports: [
     GeoBlockService,
     SanctionsScreeningService,

@@ -18,10 +18,11 @@ export class DuplicateDetectorService {
   private readonly windowMs: number;
 
   constructor(private readonly configService?: ConfigService) {
+    const fromEnv = this.configService?.get<string>('TRANSACTION_DUPLICATE_WINDOW_MS');
     this.windowMs = this.configService?.get<number>(
       'transactions.duplicateWindowMs',
-      Number(process.env.TRANSACTION_DUPLICATE_WINDOW_MS ?? 300_000),
-    ) ?? Number(process.env.TRANSACTION_DUPLICATE_WINDOW_MS ?? 300_000);
+      Number(fromEnv ?? 300_000),
+    ) ?? Number(fromEnv ?? 300_000);
   }
 
   checkTransaction(dto: DuplicateCheckDto, now = new Date()): DuplicateCheckResultDto {

@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { RateLimit, RateLimitTier } from '../../common/decorators/rate-limit.decorator';
 import { SwipeService } from './swipe.service';
 import { SwipeIntentDto } from './dto/swipe-intent.dto';
 import { OrchestratorResult } from '../services/trade-execution-orchestrator.service';
@@ -22,6 +23,7 @@ export class SwipeController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async handleSwipe(@Body() dto: SwipeIntentDto): Promise<OrchestratorResult> {
     return this.swipeService.handleSwipe(dto);
   }

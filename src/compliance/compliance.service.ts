@@ -15,6 +15,8 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import { JobSchedulerService } from '../jobs/job-scheduler.service';
 import { EncryptionService } from '../security/encryption.service';
+import { SignedUrlGeneratorService } from './exporters/signed-url-generator.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class ComplianceService {
@@ -29,6 +31,7 @@ export class ComplianceService {
     private gdprGenerator: GdprReportGenerator,
     private financialGenerator: FinancialReportGenerator,
     private encryptionService: EncryptionService,
+    private signedUrlGenerator: SignedUrlGeneratorService,
   ) {
     this.exportDir = this.configService.get('EXPORT_DIR', '/tmp/exports');
     this.ensureExportDir();
@@ -40,10 +43,14 @@ export class ComplianceService {
     }
   }
 
-  async exportUserData(userId: string, format: ExportFormat = ExportFormat.JSON): Promise<string> {
+  async exportUserData(
+    userId: string,
+    format: ExportFormat = ExportFormat.JSON,
+  ): Promise<{ signedUrl: string; expiresIn: string }> {
     this.logger.log(`Exporting user data for ${userId} in ${format} format`);
 
     const userData = await this.userDataExporter.exportUserData(userId);
+    const exportId = crypto.randomUUID();
     const fileName = `user_export_${userId}_${Date.now()}.${format}`;
     const filePath = join(this.exportDir, fileName);
 
@@ -61,7 +68,20 @@ export class ComplianceService {
 
     this.scheduleFileDeletion(filePath, 7);
 
-    return filePath;
+    // Generate signed URL for the export
+    const signedUrl = this.signedUrlGenerator.generateSignedUrl(
+      exportId,
+      'user-data',
+      userId,
+      filePath,
+      format,
+      60 * 24 * 7, // 7 days expiry
+    );
+
+    return {
+      signedUrl,
+      expiresIn: '7 days',
+    };
   }
 
   async generateComplianceReport(type: string, startDate: Date, endDate: Date): Promise<any> {

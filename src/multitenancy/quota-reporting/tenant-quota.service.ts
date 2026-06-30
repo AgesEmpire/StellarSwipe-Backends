@@ -1,9 +1,10 @@
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import { TenantUsage, TenantUsageType } from './entities/tenant-usage.entity';
 import { QuotaReportDto, QuotaMetricReportDto } from './dto/quota-report.dto';
 import { QuotaReportRequestDto } from './dto/quota-report-request.dto';
+import { TenantConnectionProvider } from '../../tenancy/tenant-connection.provider';
 
 export interface TenantQuotaRequester {
   id: string;
@@ -24,20 +25,39 @@ export class TenantQuotaService {
   constructor(
     @InjectRepository(TenantUsage)
     private readonly usageRepository: Repository<TenantUsage>,
+    @Optional()
+    private readonly tenantConnection?: TenantConnectionProvider,
   ) {}
+
+  /**
+   * Returns the usage repository scoped to the active tenant's schema when a
+   * tenant connection is available, falling back to the default connection.
+   */
+  private async resolveUsageRepository(): Promise<Repository<TenantUsage>> {
+    if (this.tenantConnection) {
+      return this.tenantConnection.getRepository(TenantUsage);
+    }
+    return this.usageRepository;
+  }
 
   async generateReport(
     requester: TenantQuotaRequester,
     request: QuotaReportRequestDto = {},
+    targetTenantId?: string,
   ): Promise<QuotaReportDto> {
-    this.assertTenantAdmin(requester);
+    if (targetTenantId && targetTenantId !== (requester.tenantId ?? requester.id)) {
+      this.assertPlatformAdmin(requester);
+    } else {
+      this.assertTenantAdmin(requester);
+    }
 
-    const tenantId = requester.tenantId ?? requester.id;
+    const tenantId = targetTenantId ?? requester.tenantId ?? requester.id;
     const periodStart = request.periodStart ? new Date(request.periodStart) : this.defaultPeriodStart();
     const periodEnd = request.periodEnd ? new Date(request.periodEnd) : new Date();
     const forecastDays = request.forecastDays ?? this.deriveForecastDays(periodStart, periodEnd);
 
-    const usageRows = await this.usageRepository.find({
+    const usageRepository = await this.resolveUsageRepository();
+    const usageRows = await usageRepository.find({
       where: {
         tenantId,
         recordedAt: Between(periodStart, periodEnd),
@@ -134,10 +154,28 @@ export class TenantQuotaService {
     const roles = (requester.roles ?? []).map((role) => role.toLowerCase());
     const isTenantAdmin =
       roles.includes('tenant-admin') ||
-      roles.includes('tenant_admin');
+      roles.includes('tenant_admin') ||
+      this.isPlatformAdmin(roles);
 
     if (!isTenantAdmin) {
       throw new ForbiddenException('Only tenant admins can access quota reports');
     }
+  }
+
+  private assertPlatformAdmin(requester: TenantQuotaRequester): void {
+    const roles = (requester.roles ?? []).map((role) => role.toLowerCase());
+    if (!this.isPlatformAdmin(roles)) {
+      throw new ForbiddenException(
+        'Viewing another tenant\'s quota report requires platform admin privileges',
+      );
+    }
+  }
+
+  private isPlatformAdmin(roles: string[]): boolean {
+    return (
+      roles.includes('admin') ||
+      roles.includes('super_admin') ||
+      roles.includes('platform_admin')
+    );
   }
 }

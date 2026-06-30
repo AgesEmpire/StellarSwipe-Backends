@@ -37,7 +37,7 @@ export class ComplianceController {
   @HttpCode(HttpStatus.ACCEPTED)
   async exportUserData(@Req() req: any, @Body() dto: ExportRequestDto) {
     const userId = req.user.id;
-    const filePath = await this.complianceService.exportUserData(
+    const exportResult = await this.complianceService.exportUserData(
       userId,
       dto.format,
     );
@@ -45,8 +45,8 @@ export class ComplianceController {
     return {
       message: 'Export initiated successfully',
       format: dto.format,
-      expiresIn: '7 days',
-      downloadUrl: `/compliance/download/${filePath.split('/').pop()}`,
+      expiresIn: exportResult.expiresIn,
+      downloadUrl: `/compliance/download?token=${exportResult.signedUrl}`,
     };
   }
 

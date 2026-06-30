@@ -1,0 +1,29 @@
+# .auditignore — Accepted-risk / pending-remediation vulnerability suppressions
+#
+# FORMAT: One advisory ID per line (e.g. GHSA-xxxx-xxxx-xxxx or npm advisory number).
+# Each entry MUST be accompanied by a comment explaining:
+#   - WHY it is suppressed (no fix available, transitive-only, false positive, etc.)
+#   - WHEN it should be re-evaluated (next dep upgrade, next release, specific date)
+#
+# ─────────────────────────────────────────────────────────────────────
+# HOW TO SUPPRESS A FINDING
+# ─────────────────────────────────────────────────────────────────────
+# 1. Identify the advisory ID from `npm audit` output.
+# 2. Verify it is truly unavoidable (no patched version, transitive dep locked
+#    by a dependency you do not control, etc.).
+# 3. Add the ID below with a mandatory comment block following the template:
+#
+#   GHSA-xxxx-xxxx-xxxx
+#   # Package   : <package-name>
+#   # Severity  : <high|critical>
+#   # Reason    : <why no fix is applied>
+#   # Fix plan  : <upgrade path / upstream issue link>
+#   # Review by : <YYYY-MM-DD>
+#
+# 4. Open a tracking issue or add it to the remediation backlog.
+# 5. Re-evaluate on the review date and remove entries once patched.
+#
+# ─────────────────────────────────────────────────────────────────────
+# CURRENT SUPPRESSIONS
+# ─────────────────────────────────────────────────────────────────────
+# (none — add entries here as needed following the template above)

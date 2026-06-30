@@ -2,9 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { PriceSourceResult } from '../dto/price-data.dto';
+import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
-export class StellarExpertPriceProvider {
+export class StellarExpertPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(StellarExpertPriceProvider.name);
   private readonly baseUrl = 'https://api.stellar.expert/explorer/public';
 

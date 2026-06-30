@@ -130,6 +130,71 @@ export class WebhookSenderService {
     return updated as unknown as void;
   }
 
+  /**
+   * Performs a single HTTP delivery attempt on an EXISTING delivery record,
+   * updating it in-place. Used by the reconciliation job to avoid creating
+   * duplicate delivery records.
+   *
+   * Returns true if delivery succeeded, false otherwise.
+   */
+  async retryInPlace(delivery: WebhookDelivery): Promise<boolean> {
+    const webhook = delivery.webhook;
+    if (!webhook?.active) {
+      this.logger.warn(
+        `Skipping reconciliation retry — webhook inactive: delivery=${delivery.id} webhookId=${delivery.webhookId}`,
+      );
+      return false;
+    }
+
+    const payload = delivery.payload as unknown as WebhookPayload;
+    const signature = this.signatureGenerator.generateSignature(payload, webhook.secret);
+
+    delivery.attempts += 1;
+
+    try {
+      const response = await axios.post(webhook.url, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-StellarSwipe-Signature': `sha256=${signature}`,
+          'X-StellarSwipe-Event': payload.event,
+          'X-StellarSwipe-Delivery-Id': payload.deliveryId,
+        },
+        timeout: REQUEST_TIMEOUT_MS,
+      });
+
+      delivery.status = 'success';
+      delivery.responseStatus = response.status;
+      delivery.responseBody = JSON.stringify(response.data).slice(0, 1000);
+      delivery.deliveredAt = new Date();
+      delivery.nextRetryAt = undefined;
+      delivery.errorMessage = undefined;
+      await this.deliveryRepo.save(delivery);
+
+      await this.webhookRepo.update(webhook.id, { consecutiveFailures: 0 });
+
+      this.logger.log(
+        `Reconciliation delivery succeeded: delivery=${delivery.id} event=${payload.event} attempt=${delivery.attempts}`,
+      );
+      return true;
+    } catch (err) {
+      const error = err as AxiosError;
+      const backoffMs = Math.pow(2, delivery.attempts) * 1000;
+
+      delivery.responseStatus = error.response?.status;
+      delivery.responseBody = error.response
+        ? JSON.stringify(error.response.data).slice(0, 1000)
+        : undefined;
+      delivery.errorMessage = error.message;
+      delivery.nextRetryAt = new Date(Date.now() + backoffMs);
+      await this.deliveryRepo.save(delivery);
+
+      this.logger.warn(
+        `Reconciliation delivery attempt ${delivery.attempts} failed: delivery=${delivery.id} event=${payload.event} error=${error.message} nextRetry=${delivery.nextRetryAt.toISOString()}`,
+      );
+      return false;
+    }
+  }
+
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }

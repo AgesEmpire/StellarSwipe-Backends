@@ -46,6 +46,25 @@ export const connectionPoolConfig = registerAs(
 );
 
 /**
+ * Read Replica Connection Pool Configuration
+ */
+export const connectionPoolReplicaConfig = registerAs(
+  'connectionPoolReplica',
+  (): PoolOptions => ({
+    min: parseInt(process.env.DATABASE_REPLICA_POOL_MIN || '5', 10),
+    max: parseInt(process.env.DATABASE_REPLICA_POOL_MAX || '20', 10),
+    idleTimeoutMillis: parseInt(
+      process.env.DATABASE_REPLICA_POOL_IDLE_TIMEOUT || '30000',
+      10,
+    ),
+    connectionTimeoutMillis: parseInt(
+      process.env.DATABASE_REPLICA_POOL_CONNECTION_TIMEOUT || '2000',
+      10,
+    ),
+  }),
+);
+
+/**
  * Query Performance Thresholds
  */
 export const queryPerformanceConfig = registerAs('queryPerformance', () => ({

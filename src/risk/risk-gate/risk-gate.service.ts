@@ -1,5 +1,5 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
-import { RISK_GATE_CONFIG, RISK_CODES, RiskCode } from './risk-gate.config';
+import { getRiskGateConfig, RISK_CODES, RiskCode } from './risk-gate.config';
 
 export interface RiskGateContext {
   userId: string;
@@ -25,18 +25,19 @@ export class RiskGateService {
    */
   async evaluate(ctx: RiskGateContext): Promise<void> {
     const { userId, pair, tradeSizeUSD, availableBalanceUSD } = ctx;
+    const config = getRiskGateConfig();
 
     // Rule RISK_001: sufficient balance after trade
-    if (availableBalanceUSD - tradeSizeUSD < RISK_GATE_CONFIG.minBalanceBufferUSD) {
+    if (availableBalanceUSD - tradeSizeUSD < config.minBalanceBufferUSD) {
       this.block(userId, pair, tradeSizeUSD, RISK_CODES.INSUFFICIENT_BALANCE,
         `Insufficient balance: $${availableBalanceUSD.toFixed(2)} available, ` +
-        `$${tradeSizeUSD.toFixed(2)} required (min buffer $${RISK_GATE_CONFIG.minBalanceBufferUSD})`);
+        `$${tradeSizeUSD.toFixed(2)} required (min buffer $${config.minBalanceBufferUSD})`);
     }
 
     // Rule RISK_002: trade size cap
-    if (tradeSizeUSD > RISK_GATE_CONFIG.maxTradeSizeUSD) {
+    if (tradeSizeUSD > config.maxTradeSizeUSD) {
       this.block(userId, pair, tradeSizeUSD, RISK_CODES.TRADE_SIZE_EXCEEDED,
-        `Trade size $${tradeSizeUSD.toFixed(2)} exceeds maximum $${RISK_GATE_CONFIG.maxTradeSizeUSD}`);
+        `Trade size $${tradeSizeUSD.toFixed(2)} exceeds maximum $${config.maxTradeSizeUSD}`);
     }
 
     this.logger.log({

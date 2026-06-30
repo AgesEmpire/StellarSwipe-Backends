@@ -41,6 +41,7 @@ console.log(`Found ${signals.signals.length} signals`);
 - [Authentication](./guides/authentication.md) - Secure API key management
 - [Webhooks](./guides/webhooks.md) - Real-time event notifications
 - [Best Practices](./guides/best-practices.md) - Production-ready patterns
+- [Rate Limiting & Abuse Protection](./RATE_LIMITING.md) - Tiers, configuration, and 429 retry guidance
 
 ### Examples
 
@@ -120,8 +121,13 @@ Comprehensive analytics including win rate, ROI, P&L tracking, and performance m
 
 ## Rate Limits
 
-- **1000 requests per hour** for authenticated users
-- Rate limit headers included in responses
+- Tiered limits by route: 100 req/15 min for public endpoints, 1000 req/15 min for
+  authenticated endpoints, 10 req/min for trade execution — see
+  [Rate Limiting & Abuse Protection](./RATE_LIMITING.md) for the full breakdown and how to
+  configure limits per environment.
+- `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers included in
+  every response
+- `429` responses include a `Retry-After` header and retry guidance in the response body
 - Automatic retry handling in SDK
 
 ## Support

@@ -44,4 +44,9 @@ export class SignalFeedQueryDto {
   @IsOptional()
   @IsEnum(SortBy)
   sortBy?: SortBy = SortBy.RANKED;
+
+  @ApiPropertyOptional({ description: 'Comma-separated list of fields to include in each signal item or top-level response' })
+  @IsOptional()
+  @IsString()
+  fields?: string;
 }

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { QueryFailedError, Repository, DataSource } from 'typeorm';
 import { MetricSnapshot, MetricPeriod } from './entities/metric-snapshot.entity';
 import { UserEvent, UserEventType } from './entities/user-event.entity';
 
@@ -38,7 +38,28 @@ export class AnalyticsService {
     private readonly userEventRepository: Repository<UserEvent>,
     @InjectRepository(MetricSnapshot)
     private readonly metricSnapshotRepository: Repository<MetricSnapshot>,
+    @InjectDataSource('replica')
+    private readonly replicaDataSource: DataSource,
+    @InjectDataSource()
+    private readonly primaryDataSource: DataSource,
   ) { }
+
+  private getReadDataSource(): DataSource {
+    return this.replicaDataSource || this.primaryDataSource;
+  }
+
+  private async executeReadQuery<T>(
+    queryFn: (dataSource: DataSource) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await queryFn(this.getReadDataSource());
+    } catch (error) {
+      this.logger.warn('Replica query failed, falling back to primary', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return await queryFn(this.primaryDataSource);
+    }
+  }
 
   async trackEvent(input: TrackEventInput): Promise<{ status: 'tracked' | 'duplicate' }> {
     const event = this.userEventRepository.create({
@@ -215,46 +236,50 @@ export class AnalyticsService {
     periodEnd: Date,
     timezone: string,
   ): Promise<MetricAggregation> {
-    const [totals] = await this.userEventRepository.query(
-      `
-        SELECT
-          COUNT(*)::int AS total_events,
-          COUNT(DISTINCT user_id)::int AS active_users,
-          SUM(CASE WHEN event_type = $3 THEN 1 ELSE 0 END)::int AS total_swipes_right,
-          SUM(CASE WHEN event_type = $4 THEN 1 ELSE 0 END)::int AS total_swipes_left,
-          SUM(CASE WHEN event_type = $5 THEN 1 ELSE 0 END)::int AS total_trades,
-          SUM(CASE WHEN event_type = $6 THEN 1 ELSE 0 END)::int AS total_signal_views,
-          COALESCE(SUM(
-            COALESCE(NULLIF(metadata->>'revenue', '')::numeric, NULLIF(metadata->>'feeAmount', '')::numeric, 0)
-          ), 0) AS total_revenue
-        FROM user_events
-        WHERE occurred_at >= $1
-          AND occurred_at < $2
-      `,
-      [
-        periodStart,
-        periodEnd,
-        UserEventType.SWIPE_RIGHT,
-        UserEventType.SWIPE_LEFT,
-        UserEventType.TRADE_EXECUTED,
-        UserEventType.SIGNAL_VIEW,
-      ],
-    );
-
-    const [sessionAvg] = await this.userEventRepository.query(
-      `
-        SELECT COALESCE(AVG(session_seconds), 0) AS avg_session_seconds
-        FROM (
-          SELECT user_id,
-                 EXTRACT(EPOCH FROM (MAX(occurred_at) - MIN(occurred_at))) AS session_seconds
+    const [totals] = await this.executeReadQuery(async (dataSource) =>
+      dataSource.query(
+        `
+          SELECT
+            COUNT(*)::int AS total_events,
+            COUNT(DISTINCT user_id)::int AS active_users,
+            SUM(CASE WHEN event_type = $3 THEN 1 ELSE 0 END)::int AS total_swipes_right,
+            SUM(CASE WHEN event_type = $4 THEN 1 ELSE 0 END)::int AS total_swipes_left,
+            SUM(CASE WHEN event_type = $5 THEN 1 ELSE 0 END)::int AS total_trades,
+            SUM(CASE WHEN event_type = $6 THEN 1 ELSE 0 END)::int AS total_signal_views,
+            COALESCE(SUM(
+              COALESCE(NULLIF(metadata->>'revenue', '')::numeric, NULLIF(metadata->>'feeAmount', '')::numeric, 0)
+            ), 0) AS total_revenue
           FROM user_events
           WHERE occurred_at >= $1
             AND occurred_at < $2
-            AND user_id IS NOT NULL
-          GROUP BY user_id
-        ) per_user
-      `,
-      [periodStart, periodEnd],
+        `,
+        [
+          periodStart,
+          periodEnd,
+          UserEventType.SWIPE_RIGHT,
+          UserEventType.SWIPE_LEFT,
+          UserEventType.TRADE_EXECUTED,
+          UserEventType.SIGNAL_VIEW,
+        ],
+      ),
+    );
+
+    const [sessionAvg] = await this.executeReadQuery(async (dataSource) =>
+      dataSource.query(
+        `
+          SELECT COALESCE(AVG(session_seconds), 0) AS avg_session_seconds
+          FROM (
+            SELECT user_id,
+                   EXTRACT(EPOCH FROM (MAX(occurred_at) - MIN(occurred_at))) AS session_seconds
+            FROM user_events
+            WHERE occurred_at >= $1
+              AND occurred_at < $2
+              AND user_id IS NOT NULL
+            GROUP BY user_id
+          ) per_user
+        `,
+        [periodStart, periodEnd],
+      ),
     );
 
     const activeUsers = Number(totals.active_users ?? 0);
@@ -302,29 +327,31 @@ export class AnalyticsService {
     const previousEnd = new Date(periodEnd);
     previousEnd.setMonth(previousEnd.getMonth() - 1);
 
-    const [result] = await this.userEventRepository.query(
-      `
-        SELECT COUNT(*)::int AS returning_users
-        FROM (
-          SELECT DISTINCT current_events.user_id
+    const [result] = await this.executeReadQuery(async (dataSource) =>
+      dataSource.query(
+        `
+          SELECT COUNT(*)::int AS returning_users
           FROM (
-            SELECT DISTINCT user_id
-            FROM user_events
-            WHERE occurred_at >= $1
-              AND occurred_at < $2
-              AND user_id IS NOT NULL
-          ) current_events
-          INNER JOIN (
-            SELECT DISTINCT user_id
-            FROM user_events
-            WHERE occurred_at >= $3
-              AND occurred_at < $4
-              AND user_id IS NOT NULL
-          ) previous_events
-          ON current_events.user_id = previous_events.user_id
-        ) retained
-      `,
-      [periodStart, periodEnd, previousStart, previousEnd],
+            SELECT DISTINCT current_events.user_id
+            FROM (
+              SELECT DISTINCT user_id
+              FROM user_events
+              WHERE occurred_at >= $1
+                AND occurred_at < $2
+                AND user_id IS NOT NULL
+            ) current_events
+            INNER JOIN (
+              SELECT DISTINCT user_id
+              FROM user_events
+              WHERE occurred_at >= $3
+                AND occurred_at < $4
+                AND user_id IS NOT NULL
+            ) previous_events
+            ON current_events.user_id = previous_events.user_id
+          ) retained
+        `,
+        [periodStart, periodEnd, previousStart, previousEnd],
+      ),
     );
 
     const returningUsers = Number(result.returning_users ?? 0);
@@ -334,15 +361,17 @@ export class AnalyticsService {
   }
 
   private async countDistinctUsers(periodStart: Date, periodEnd: Date): Promise<number> {
-    const [result] = await this.userEventRepository.query(
-      `
-        SELECT COUNT(DISTINCT user_id)::int AS active_users
-        FROM user_events
-        WHERE occurred_at >= $1
-          AND occurred_at < $2
-          AND user_id IS NOT NULL
-      `,
-      [periodStart, periodEnd],
+    const [result] = await this.executeReadQuery(async (dataSource) =>
+      dataSource.query(
+        `
+          SELECT COUNT(DISTINCT user_id)::int AS active_users
+          FROM user_events
+          WHERE occurred_at >= $1
+            AND occurred_at < $2
+            AND user_id IS NOT NULL
+        `,
+        [periodStart, periodEnd],
+      ),
     );
 
     return Number(result.active_users ?? 0);

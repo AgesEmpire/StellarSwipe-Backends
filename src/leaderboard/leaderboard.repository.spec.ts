@@ -55,8 +55,10 @@ describe('LeaderboardRepository', () => {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       groupBy: jest.fn().mockReturnThis(),
+      having: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
       setParameters: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue(rows),
     };
@@ -94,6 +96,33 @@ describe('LeaderboardRepository', () => {
       expect(result[0].providerId).toBe('provider-1');
       expect(result[0].username).toBe('alice');
       expect(result[1].rank).toBe(2);
+    });
+
+    it('applies date filter for MONTHLY period', async () => {
+      const qb = buildQb([]);
+      signalRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await repo.aggregateProviderLeaderboard(LeaderboardPeriod.MONTHLY, 20);
+
+      expect(qb.andWhere).toHaveBeenCalledWith('s.createdAt >= :from', expect.objectContaining({ from: expect.any(Date) }));
+    });
+
+    it('applies offset for page 2', async () => {
+      const qb = buildQb([]);
+      signalRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await repo.aggregateProviderLeaderboard(LeaderboardPeriod.ALL_TIME, 10, 2, 3);
+
+      expect(qb.offset).toHaveBeenCalledWith(10);
+    });
+
+    it('applies minimum activity threshold via HAVING clause', async () => {
+      const qb = buildQb([]);
+      signalRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await repo.aggregateProviderLeaderboard(LeaderboardPeriod.ALL_TIME, 20, 1, 5);
+
+      expect(qb.having).toHaveBeenCalledWith('COUNT(s.id) >= :minActivity', { minActivity: 5 });
     });
   });
 

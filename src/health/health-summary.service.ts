@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   HealthCheckService,
   HealthCheckResult,
@@ -56,6 +57,7 @@ export class HealthSummaryService {
     private redisHealth: RedisHealthIndicator,
     private queueHealth: QueueHealthIndicator,
     private prometheus: PrometheusService,
+    private configService: ConfigService,
   ) {}
 
   async getHealthSummary(): Promise<ServiceHealthSummary> {
@@ -82,7 +84,7 @@ export class HealthSummaryService {
       timestamp: new Date().toISOString(),
       services,
       uptime: Date.now() - this.startupTime,
-      version: process.env.npm_package_version || '1.0.0',
+      version: this.configService.get<string>('npm_package_version') || '1.0.0',
     };
   }
 

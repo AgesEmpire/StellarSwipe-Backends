@@ -11,6 +11,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
 import { PaymentGatewayFactory } from './gateways/payment-gateway.factory';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { Request } from 'express';
@@ -23,6 +24,7 @@ export class PaymentsController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
+  @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 30, window: 60 })
   async createPayment(@Body() dto: CreatePaymentDto) {
     const gateway = dto.gateway
       ? this.gatewayFactory.getGateway(dto.gateway)
@@ -42,6 +44,7 @@ export class PaymentsController {
 
   @Post(':id/confirm')
   @UseGuards(JwtAuthGuard)
+  @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 30, window: 60 })
   async confirmPayment(@Param('id') paymentId: string) {
     const gateway = this.gatewayFactory.getDefaultGateway();
     const result = await gateway.confirmPayment(paymentId);
@@ -63,6 +66,7 @@ export class PaymentsController {
 
   @Post(':id/refund')
   @UseGuards(JwtAuthGuard)
+  @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 30, window: 60 })
   async refundPayment(
     @Param('id') paymentId: string,
     @Body('amount') amount?: number,
@@ -74,6 +78,7 @@ export class PaymentsController {
   }
 
   @Post('webhooks/stripe')
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 120, window: 60 })
   async handleStripeWebhook(
     @Headers('stripe-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,

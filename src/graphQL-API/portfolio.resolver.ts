@@ -8,6 +8,7 @@ import {
   AllocationItemType,
   PositionType,
 } from '../types/portfolio.type';
+import { AssetMetaType } from '../types/asset.type';
 import { PortfolioService } from '../../portfolio/portfolio.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -34,7 +35,17 @@ export class PortfolioResolver {
 
   @ResolveField(() => [PositionType])
   async openPositions(@Parent() portfolio: PortfolioType): Promise<PositionType[]> {
-    return this.portfolioService.getOpenPositions(portfolio.userId);
+    const positions = await this.portfolioService.getOpenPositions(portfolio.userId);
+    return positions;
+  }
+
+  @ResolveField(() => [AssetMetaType], { nullable: true })
+  async assets(@Parent() portfolio: PortfolioType, @Context() ctx: any): Promise<AssetMetaType[]> {
+    // Example: batch-fetch asset metadata for all positions in the portfolio
+    const positions = await this.portfolioService.getOpenPositions(portfolio.userId);
+    const codes = positions.map((p) => p.assetSymbol?.split('/')[0]);
+    const assets = await ctx.loaders.assetByCode.loadMany(codes);
+    return assets as AssetMetaType[];
   }
 
   @ResolveField(() => [AllocationItemType])

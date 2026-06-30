@@ -61,6 +61,27 @@
         "argsIgnorePattern": "^_"
       }
     ],
-    "prettier/prettier": "error"
-  }
+    "prettier/prettier": "error",
+    "no-restricted-syntax": [
+      "error",
+      {
+        "selector": "MemberExpression[object.name='process'][property.name='env']",
+        "message": "Direct process.env access is not allowed outside the config module. Inject and use ConfigService (src/config/config.service.ts) instead, so config access stays centralized, validated, and auditable."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/config/**/*.ts",
+        "src/database/config/**/*.ts",
+        "src/database/seeds/**/*.ts",
+        "src/security/config/**/*.ts",
+        "**/*.config.ts"
+      ],
+      "rules": {
+        "no-restricted-syntax": "off"
+      }
+    }
+  ]
 }

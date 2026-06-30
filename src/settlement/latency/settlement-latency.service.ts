@@ -26,10 +26,11 @@ export class SettlementLatencyService {
   private readonly thresholdMs: number;
 
   constructor(private readonly configService?: ConfigService) {
+    const fromEnv = this.configService?.get<string>('SETTLEMENT_LATENCY_THRESHOLD_MS');
     this.thresholdMs = this.configService?.get<number>(
       'settlement.latencyThresholdMs',
-      Number(process.env.SETTLEMENT_LATENCY_THRESHOLD_MS ?? 30_000),
-    ) ?? Number(process.env.SETTLEMENT_LATENCY_THRESHOLD_MS ?? 30_000);
+      Number(fromEnv ?? 30_000),
+    ) ?? Number(fromEnv ?? 30_000);
   }
 
   recordTradeExecution(tradeId: string, executedAt = new Date(), assetPair?: string): void {

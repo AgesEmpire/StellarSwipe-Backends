@@ -20,6 +20,10 @@ export const appConfig = registerAs(
       'http://localhost:3000',
     ],
     corsCredentials: process.env.CORS_CREDENTIALS !== 'false',
+    slippageToleranceBps: parseInt(
+      process.env.SLIPPAGE_TOLERANCE_BPS || '50',
+      10,
+    ),
   }),
 );
 

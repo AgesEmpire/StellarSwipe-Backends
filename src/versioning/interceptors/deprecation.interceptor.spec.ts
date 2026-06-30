@@ -8,11 +8,22 @@ import { DEPRECATED_KEY, DEPRECATION_METADATA_KEY } from '../decorators/deprecat
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildContext(isDeprecated: boolean, options?: any): ExecutionContext {
+function buildContext(
+  isDeprecated: boolean,
+  options?: any,
+  user?: { id?: string; walletAddress?: string },
+): ExecutionContext {
   const headers: Record<string, string> = {};
   const res = {
     setHeader: jest.fn((k: string, v: string) => { headers[k] = v; }),
     _headers: headers,
+  };
+  const req = {
+    method: 'GET',
+    url: '/api/v1/signals',
+    originalUrl: '/api/v1/signals',
+    ip: '10.0.0.1',
+    user: user ?? undefined,
   };
 
   const reflector = new Reflector();
@@ -26,6 +37,7 @@ function buildContext(isDeprecated: boolean, options?: any): ExecutionContext {
     getHandler: jest.fn(),
     getClass: jest.fn(),
     switchToHttp: jest.fn().mockReturnValue({
+      getRequest: jest.fn().mockReturnValue(req),
       getResponse: jest.fn().mockReturnValue(res),
     }),
   } as unknown as ExecutionContext;
@@ -137,6 +149,49 @@ describe('DeprecationInterceptor', () => {
         (c: any[]) => c[0] === 'Sunset',
       );
       expect(sunsetCall).toBeUndefined();
+      done();
+    });
+  });
+
+  it('logs deprecated endpoint usage with caller identity', (done) => {
+    const warnSpy = jest.spyOn((interceptor as any).logger, 'warn').mockImplementation(() => {});
+    const ctx = buildContext(
+      true,
+      { sunsetDate: '2025-12-31' },
+      { id: 'user-42' },
+    );
+    const handler = buildHandler();
+
+    interceptor.intercept(ctx, handler).subscribe(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('caller=user-42'),
+        expect.objectContaining({ type: 'deprecated_endpoint_usage', caller: 'user-42' }),
+      );
+      done();
+    });
+  });
+
+  it('does NOT log when endpoint is not deprecated', (done) => {
+    const warnSpy = jest.spyOn((interceptor as any).logger, 'warn').mockImplementation(() => {});
+    const ctx = buildContext(false);
+    const handler = buildHandler();
+
+    interceptor.intercept(ctx, handler).subscribe(() => {
+      expect(warnSpy).not.toHaveBeenCalled();
+      done();
+    });
+  });
+
+  it('falls back to IP when no user identity is present', (done) => {
+    const warnSpy = jest.spyOn((interceptor as any).logger, 'warn').mockImplementation(() => {});
+    const ctx = buildContext(true, { sunsetDate: '2025-12-31' });
+    const handler = buildHandler();
+
+    interceptor.intercept(ctx, handler).subscribe(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('caller=10.0.0.1'),
+        expect.objectContaining({ type: 'deprecated_endpoint_usage' }),
+      );
       done();
     });
   });

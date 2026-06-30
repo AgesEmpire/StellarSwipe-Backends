@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { CqrsModule } from '@nestjs/cqrs';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ConfigService } from '@nestjs/config';
 import { Trade } from './entities/trade.entity';
 import { AdvancedOrder } from './entities/advanced-order.entity';
 import { TradesController } from './trades.controller';
@@ -26,10 +29,8 @@ import { PartialCloseService } from './partial-close/partial-close.service';
 import { TradeHistoryService } from './trade-history.service';
 import { TradeOutcomeService } from './trade-outcome.service';
 import { TradeAuditService } from './trade-audit.service';
-import { TradeAuditController } from './trade-audit.controller';
 import { ConfirmationPollingService } from './services/confirmation-polling.service';
 import { AuditModule } from '../audit-log/audit.module';
-import { NotificationsModule } from '../notifications/notifications.module';
 import { TradeExecutionOrchestratorService } from './services/trade-execution-orchestrator.service';
 import { SwipeController } from './swipe/swipe.controller';
 import { SwipeService } from './swipe/swipe.service';
@@ -37,25 +38,50 @@ import { MarketOrderService } from './services/market-order.service';
 import { MarketOrderController } from './market-order.controller';
 import { TradeRetryService } from './services/trade-retry.service';
 import { TradeRetryController } from './trade-retry.controller';
+import { TradeSagaOrchestrator } from './saga/trade-saga.orchestrator';
+import { TradeSagaStepsFactory } from './saga/trade-saga.steps';
+import { TradeSagaService } from './saga/trade-saga.service';
+import { TradeSagaEntity } from './saga/trade-saga.entity';
+import { TRADE_CQRS_HANDLERS } from './cqrs';
+import {
+  NotificationPreferencesClientService,
+  NOTIFICATION_TCP_CLIENT,
+} from './services/notification-preferences-client.service';
+import { CanaryRoutingModule } from './canary/canary-routing.module';
+import { SlippageGuardService } from './services/slippage-guard.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Trade, AdvancedOrder, Signal]),
+    CqrsModule,
+    TypeOrmModule.forFeature([Trade, AdvancedOrder, Signal, TradeSagaEntity]),
     RiskManagerModule,
     ComplianceModule,
     SdexModule,
     SorobanModule,
-    BullModule.registerQueue({
-      name: 'transactions',
-    }),
+    BullModule.registerQueue({ name: 'transactions' }),
     WebsocketModule,
     AuditModule,
     NotificationsModule,
+    CanaryRoutingModule,
+    ClientsModule.registerAsync([
+      {
+        name: NOTIFICATION_TCP_CLIENT,
+        inject: [ConfigService],
+        useFactory: (cfg: ConfigService) => ({
+          transport: Transport.TCP,
+          options: {
+            host: cfg.get<string>('NOTIFICATION_TCP_HOST', 'localhost'),
+            port: cfg.get<number>('NOTIFICATION_TCP_PORT', 3001),
+          },
+        }),
+      },
+    ]),
   ],
   controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController, TradeRetryController],
   providers: [
     TradesService,
     MarketOrderService,
+    BatchOrderService,
     RiskManagerService,
     TradeExecutorService,
     StellarConfigService,
@@ -70,8 +96,29 @@ import { TradeRetryController } from './trade-retry.controller';
     TradeExecutionOrchestratorService,
     SwipeService,
     TradeRetryService,
+    TradeSagaOrchestrator,
+    TradeSagaStepsFactory,
+    TradeSagaService,
+    NotificationPreferencesClientService,
+    SlippageGuardService,
+    ...TRADE_CQRS_HANDLERS,
   ],
-  exports: [TradesService, RiskManagerService, OcoOrderService, IcebergOrderService, PartialCloseService, TradeHistoryService, TradeOutcomeService, TradeAuditService, ConfirmationPollingService, TradeExecutionOrchestratorService, TradeRetryService, TradeExecutorService],
+  exports: [
+    TradesService,
+    RiskManagerService,
+    OcoOrderService,
+    IcebergOrderService,
+    PartialCloseService,
+    TradeHistoryService,
+    TradeOutcomeService,
+    TradeAuditService,
+    ConfirmationPollingService,
+    TradeExecutionOrchestratorService,
+    TradeRetryService,
+    TradeExecutorService,
+    TradeSagaService,
+    NotificationPreferencesClientService,
+    SlippageGuardService,
+  ],
 })
-export class TradesModule { }
-
+export class TradesModule {}

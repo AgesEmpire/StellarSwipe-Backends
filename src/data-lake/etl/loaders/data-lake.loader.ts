@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ParquetRecord } from '../transformers/parquet.transformer';
@@ -21,8 +22,8 @@ export class DataLakeLoader {
   private readonly logger = new Logger(DataLakeLoader.name);
   readonly basePath: string;
 
-  constructor(basePath?: string) {
-    this.basePath = basePath ?? process.env.DATA_LAKE_PATH ?? '/tmp/data-lake';
+  constructor(basePath?: string, private readonly configService?: ConfigService) {
+    this.basePath = basePath ?? this.configService?.get<string>('DATA_LAKE_PATH') ?? '/tmp/data-lake';
   }
 
   async load(parquetRecord: ParquetRecord): Promise<LoadResult> {

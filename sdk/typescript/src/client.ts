@@ -1,6 +1,7 @@
 import { Signals } from './resources/signals';
 import { Trades } from './resources/trades';
 import { Portfolio } from './resources/portfolio';
+import { Soroban } from './resources/soroban';
 import {
   APIError,
   AuthenticationError,
@@ -8,6 +9,7 @@ import {
   NotFoundError,
   RateLimitError,
   NetworkError,
+  resolveErrorClass,
 } from './errors';
 import { withRetry, RetryOptions } from './utils/retry';
 import { RequestOptions } from './types';
@@ -23,6 +25,7 @@ export class StellarSwipeClient {
   public signals: Signals;
   public trades: Trades;
   public portfolio: Portfolio;
+  public soroban: Soroban;
 
   private apiKey: string;
   private baseUrl: string;
@@ -45,6 +48,7 @@ export class StellarSwipeClient {
     this.signals = new Signals(this);
     this.trades = new Trades(this);
     this.portfolio = new Portfolio(this);
+    this.soroban = new Soroban(this);
   }
 
   async request<T = any>(
@@ -117,7 +121,24 @@ export class StellarSwipeClient {
     }
 
     const message = errorData.message || errorData.error || 'API request failed';
+    const backendCode: string | undefined = errorData.errorCode ?? errorData.code;
 
+    // If the backend included a canonical error code, resolve the exact SDK class.
+    if (backendCode) {
+      const ErrorClass = resolveErrorClass(backendCode);
+      // RateLimitError needs the retryAfter header
+      if (ErrorClass === RateLimitError) {
+        const retryAfter = response.headers.get('Retry-After');
+        throw new RateLimitError(message, retryAfter ? parseInt(retryAfter, 10) : undefined);
+      }
+      // NotFoundError has a different constructor signature
+      if (ErrorClass === NotFoundError) {
+        throw new NotFoundError(errorData.resource || message, errorData.id);
+      }
+      throw new ErrorClass(message, status, errorData);
+    }
+
+    // Fallback: status-based mapping (legacy / no errorCode in response)
     switch (status) {
       case 401:
         throw new AuthenticationError(message);
@@ -125,12 +146,10 @@ export class StellarSwipeClient {
         throw new NotFoundError(errorData.resource || 'Resource', errorData.id);
       case 400:
         throw new ValidationError(message, errorData.errors);
-      case 429:
+      case 429: {
         const retryAfter = response.headers.get('Retry-After');
-        throw new RateLimitError(
-          message,
-          retryAfter ? parseInt(retryAfter, 10) : undefined
-        );
+        throw new RateLimitError(message, retryAfter ? parseInt(retryAfter, 10) : undefined);
+      }
       default:
         throw new APIError(message, status, errorData);
     }

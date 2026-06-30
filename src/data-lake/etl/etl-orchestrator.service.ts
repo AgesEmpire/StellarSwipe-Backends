@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { UserEventsExtractor } from './extractors/user-events.extractor';
 import { TradesExtractor } from './extractors/trades.extractor';
 import { SignalsExtractor } from './extractors/signals.extractor';
+import { PositionsExtractor } from './extractors/positions.extractor';
 import { BaseExtractor } from './extractors/base.extractor';
 import { ParquetTransformer } from './transformers/parquet.transformer';
 import { DataLakeLoader, RetentionPolicy } from './loaders/data-lake.loader';
@@ -27,6 +28,7 @@ export class EtlOrchestratorService {
     { sourceName: 'user_events', retentionDays: 365 },
     { sourceName: 'trades', retentionDays: 730 },
     { sourceName: 'signals', retentionDays: 365 },
+    { sourceName: 'positions', retentionDays: 1825 },
   ];
 
   private readonly extractors: Map<EtlJobType, BaseExtractor>;
@@ -35,6 +37,7 @@ export class EtlOrchestratorService {
     private readonly userEventsExtractor: UserEventsExtractor,
     private readonly tradesExtractor: TradesExtractor,
     private readonly signalsExtractor: SignalsExtractor,
+    private readonly positionsExtractor: PositionsExtractor,
     private readonly parquetTransformer: ParquetTransformer,
     private readonly dataLakeLoader: DataLakeLoader,
     @InjectRepository(EtlJob)
@@ -44,6 +47,7 @@ export class EtlOrchestratorService {
       [EtlJobType.USER_EVENTS, this.userEventsExtractor],
       [EtlJobType.TRADES, this.tradesExtractor],
       [EtlJobType.SIGNALS, this.signalsExtractor],
+      [EtlJobType.POSITIONS, this.positionsExtractor],
     ]);
   }
 
@@ -64,6 +68,7 @@ export class EtlOrchestratorService {
       this.runEtlPipeline(EtlJobType.USER_EVENTS, yesterday, endOfYesterday),
       this.runEtlPipeline(EtlJobType.TRADES, yesterday, endOfYesterday),
       this.runEtlPipeline(EtlJobType.SIGNALS, yesterday, endOfYesterday),
+      this.runEtlPipeline(EtlJobType.POSITIONS, yesterday, endOfYesterday),
     ]);
 
     await this.runRetentionCleanup();

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BaseEvent } from '../../events/base.event';
+import { OutboxService } from '../../events/outbox.service';
 import { 
   HorizonStreamEvent, 
   HorizonTransaction, 
@@ -17,7 +18,7 @@ import {
 export class EventProcessorService {
   private readonly logger = new Logger(EventProcessorService.name);
 
-  constructor(private eventEmitter: EventEmitter2) {}
+  constructor(private readonly outboxService: OutboxService) {}
 
   @OnEvent('horizon.transaction')
   async handleTransactionEvent(payload: { accountId: string; event: HorizonStreamEvent }): Promise<void> {
@@ -50,9 +51,14 @@ export class EventProcessorService {
       const processedEvent = await this.processEffect(accountId, effect);
       
       if (processedEvent) {
-        // Emit processed event
-        this.eventEmitter.emit(`stellar.${processedEvent.eventType}`, processedEvent);
-        this.logger.debug(`Processed ${processedEvent.eventType} event for account ${accountId}`);
+        await this.outboxService.enqueue(
+          new StellarProcessedEvent(
+            `stellar.${processedEvent.eventType}`,
+            processedEvent,
+            processedEvent.eventId,
+          ),
+        );
+        this.logger.debug(`Queued processed ${processedEvent.eventType} event for account ${accountId}`);
       }
       
     } catch (error) {
@@ -78,7 +84,13 @@ export class EventProcessorService {
         },
       };
 
-      this.eventEmitter.emit('stellar.transaction.confirmed', processedEvent);
+      await this.outboxService.enqueue(
+        new StellarProcessedEvent(
+          'stellar.transaction.confirmed',
+          processedEvent,
+          processedEvent.eventId,
+        ),
+      );
       
     } catch (error) {
       this.logger.error(`Error processing transaction operations:`, error);
@@ -315,5 +327,19 @@ export class EventProcessorService {
     }
     
     return true;
+  }
+}
+
+class StellarProcessedEvent extends BaseEvent {
+  readonly eventName: string;
+
+  constructor(eventName: string, payload: unknown, correlationId?: string) {
+    super(correlationId);
+    this.eventName = eventName;
+    Object.assign(this, payload);
+  }
+
+  validate(): void {
+    return;
   }
 }

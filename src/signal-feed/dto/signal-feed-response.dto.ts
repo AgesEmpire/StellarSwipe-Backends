@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PaginationLinks } from '../../common/pagination/pagination-links.util';
 
 export class PairMetadataDto {
   @ApiProperty() base!: string;
@@ -33,12 +34,21 @@ export class SignalFeedItemDto {
   @ApiPropertyOptional() feedScore?: number;
 }
 
+export class PaginationLinksDto {
+  @ApiProperty() self!: string;
+  @ApiProperty() first!: string;
+  @ApiProperty({ nullable: true }) last!: string | null;
+  @ApiProperty({ nullable: true }) next!: string | null;
+  @ApiProperty({ nullable: true }) prev!: string | null;
+}
+
 export class SignalFeedResponseDto {
   @ApiProperty({ type: [SignalFeedItemDto] }) signals: SignalFeedItemDto[] = [];
   @ApiProperty({ nullable: true }) nextCursor: string | null = null;
   @ApiProperty() hasMore: boolean = false;
   @ApiPropertyOptional() page?: number;
   @ApiPropertyOptional() totalPages?: number;
+  @ApiPropertyOptional({ type: PaginationLinksDto }) links?: PaginationLinks;
 }
 
 // Keep backward-compat exports used by existing code

@@ -25,6 +25,8 @@ export const configSchema = Joi.object({
   API_PREFIX: Joi.string().default('api'),
   // Default: 'v1'
   API_VERSION: Joi.string().default('v1'),
+  // Default: 50 (bps)
+  SLIPPAGE_TOLERANCE_BPS: Joi.number().integer().min(0).default(50),
 
   // ─── Logging ────────────────────────────────────────────────────────────────
   // Default: 'info' | Values: error | warn | info | http | verbose | debug | silly
@@ -95,4 +97,10 @@ export const configSchema = Joi.object({
 
   // ─── Encryption — required ──────────────────────────────────────────────────
   ENCRYPTION_KEY: Joi.string().min(32).required(),
+
+  // ─── N+1 Detection (development mode only) ────────────────────────────────────
+  // Default: 25 queries
+  NPLUS1_MAX_QUERIES: Joi.number().integer().positive().default(25),
+  // Default: 1000 ms
+  NPLUS1_MAX_QUERY_TIME_MS: Joi.number().integer().positive().default(1000),
 });

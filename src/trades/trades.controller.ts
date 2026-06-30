@@ -9,9 +9,25 @@ import {
   HttpStatus,
   ParseUUIDPipe,
   UseGuards,
+  UseInterceptors,
   Request,
 } from '@nestjs/common';
+import { ApiResponse } from '@nestjs/swagger';
+import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { buildPaginationLinks } from '../common/pagination/pagination-links.util';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OwnershipGuard } from '../common/guards/ownership.guard';
+import { MaxCallDepthGuard } from '../common/guards/max-call-depth.guard';
+import { CheckOwnership } from '../common/decorators/check-ownership.decorator';
+import { Trade } from './entities/trade.entity';
+import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
+import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
+import { MaxCallDepth } from '../common/decorators/max-call-depth.decorator';
+import {
+  ExecuteTradeCommand,
+  CancelTradeCommand,
+  GetTradeStatusQuery,
+} from './cqrs';
 import { TradesService } from './trades.service';
 import { TradeOutcomeService } from './trade-outcome.service';
 import { TradeOutcomeQueryDto } from './dto/trade-outcome-query.dto';
@@ -30,6 +46,7 @@ import {
 import { PaginatedTradeHistoryDto } from './trade-history.service';
 
 @Controller('trades')
+@UseInterceptors(IdempotencyInterceptor)
 export class TradesController {
   constructor(
     private readonly tradesService: TradesService,
@@ -37,16 +54,23 @@ export class TradesController {
     private readonly riskManager: RiskManagerService,
     private readonly partialCloseService: PartialCloseService,
     private readonly tradeOutcomeService: TradeOutcomeService,
+    private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
   ) { }
 
-  /**
+/**
    * Execute a new trade (swipe right action)
    * POST /trades/execute
    */
   @Post('execute')
   @HttpCode(HttpStatus.CREATED)
+  @RateLimit({ tier: RateLimitTier.TRADE })
+  @UseGuards(MaxCallDepthGuard)
+  @MaxCallDepth({ maxDepth: 5, endpoint: 'execute-trade', onViolation: 'reject' })
+  @ApiResponse({ status: 201, description: 'Trade execution started' })
+  @ApiResponse({ status: 422, description: 'Slippage tolerance exceeded' })
   async executeTrade(@Body() dto: ExecuteTradeDto): Promise<TradeResultDto> {
-    return this.tradesService.executeTrade(dto);
+    return this.commandBus.execute(new ExecuteTradeCommand(dto));
   }
 
   /**
@@ -55,6 +79,7 @@ export class TradesController {
    */
   @Post('validate')
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async validateTrade(@Body() dto: ExecuteTradeDto): Promise<TradeValidationResultDto> {
     return this.tradesService.validateTradePreview(dto);
   }
@@ -65,8 +90,11 @@ export class TradesController {
    */
   @Post('close')
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ tier: RateLimitTier.TRADE })
+  @UseGuards(MaxCallDepthGuard)
+  @MaxCallDepth({ maxDepth: 3, endpoint: 'close-trade', onViolation: 'reject' })
   async closeTrade(@Body() dto: CloseTradeDto): Promise<CloseTradeResultDto> {
-    return this.tradesService.closeTrade(dto);
+    return this.commandBus.execute(new CancelTradeCommand(dto));
   }
 
   /**
@@ -75,6 +103,7 @@ export class TradesController {
    */
   @Post('partial-close')
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async partialClose(@Body() dto: PartialCloseDto): Promise<any> {
     return this.partialCloseService.closePartial(dto);
   }
@@ -84,11 +113,13 @@ export class TradesController {
    * GET /trades/:tradeId
    */
   @Get(':tradeId')
+  @UseGuards(JwtAuthGuard, OwnershipGuard)
+  @CheckOwnership('tradeId', Trade)
   async getTradeById(
     @Param('tradeId', ParseUUIDPipe) tradeId: string,
-    @Query('userId', ParseUUIDPipe) userId: string,
+    @Request() req: any,
   ): Promise<TradeDetailsDto> {
-    return this.tradesService.getTradeById(tradeId, userId);
+    return this.queryBus.execute(new GetTradeStatusQuery(tradeId, req.user.id));
   }
 
   /**
@@ -104,15 +135,28 @@ export class TradesController {
     @Query('endDate') endDate?: string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
-  ): Promise<PaginatedTradeHistoryDto> {
-    return this.tradeHistoryService.getUserTradeHistory({
+    @Request() req?: any,
+  ): Promise<PaginatedTradeHistoryDto & { links?: ReturnType<typeof buildPaginationLinks> }> {
+    const resolvedLimit = Number(limit) || 20;
+    const resolvedOffset = Number(offset) || 0;
+
+    const result = await this.tradeHistoryService.getUserTradeHistory({
       userId,
       status,
       startDate,
       endDate,
-      limit,
-      offset,
+      limit: resolvedLimit,
+      offset: resolvedOffset,
     });
+
+    const totalPages = Math.ceil(result.total / resolvedLimit);
+    const currentPage = Math.floor(resolvedOffset / resolvedLimit) + 1;
+
+    const links = req
+      ? buildPaginationLinks(req.url, { page: currentPage, limit: resolvedLimit, totalPages })
+      : undefined;
+
+    return { ...result, links };
   }
 
   /**
@@ -181,7 +225,8 @@ export class TradesController {
    * GET /trades/:tradeId/outcome
    */
   @Get(':tradeId/outcome')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, OwnershipGuard)
+  @CheckOwnership('tradeId', Trade)
   getOutcome(
     @Param('tradeId', ParseUUIDPipe) tradeId: string,
     @Request() req: any,

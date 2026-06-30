@@ -46,11 +46,11 @@ export class TracingService {
   constructor(private readonly config: NestConfigService) {}
 
   get isEnabled(): boolean {
-    return process.env.TRACING_ENABLED === 'true';
+    return this.config.get<string>('TRACING_ENABLED') === 'true';
   }
 
   get serviceName(): string {
-    return process.env.TRACING_SERVICE_NAME ?? 'stellarswipe-backend';
+    return this.config.get<string>('TRACING_SERVICE_NAME') ?? 'stellarswipe-backend';
   }
 
   /** Extract the trace ID from an Express request. */

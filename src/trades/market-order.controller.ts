@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Keypair } from '@stellar/stellar-sdk';
+import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
 import { MarketOrderService } from './services/market-order.service';
 import { MarketOrderDto } from './dto/market-order.dto';
 import { MarketOrderResponseDto } from './dto/order-response.dto';
@@ -25,10 +26,12 @@ export class MarketOrderController {
    */
   @Post('market')
   @HttpCode(HttpStatus.CREATED)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   @ApiOperation({ summary: 'Execute a market order at best SDEX quote' })
   @ApiResponse({ status: 201, description: 'Order filled — returns fill details' })
   @ApiResponse({ status: 400, description: 'Validation error (invalid key, same-asset trade, etc.)' })
   @ApiResponse({ status: 422, description: 'Low liquidity, self-trade, or slippage exceeded' })
+  @ApiResponse({ status: 429, description: 'Trade rate limit exceeded — see Retry-After header' })
   async executeMarketOrder(@Body() dto: MarketOrderDto): Promise<MarketOrderResponseDto> {
     this.guardSelfTrade(dto);
     return this.marketOrderService.executeOrder(dto);

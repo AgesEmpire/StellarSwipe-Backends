@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ConfigService } from '@nestjs/config';
 import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 
 export interface PoolSnapshot {
@@ -36,11 +37,12 @@ export class ConnectionPoolMetricsService implements OnModuleInit, OnModuleDestr
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
     private readonly prometheus: PrometheusService,
+    private readonly configService: ConfigService,
   ) {
-    this.poolMax = parseInt(process.env.DATABASE_POOL_MAX || '30', 10);
-    this.saturationThreshold = parseFloat(process.env.DB_POOL_SATURATION_THRESHOLD || '0.90');
-    this.highUtilizationThreshold = parseFloat(process.env.DB_POOL_HIGH_UTIL_THRESHOLD || '0.75');
-    this.pollIntervalMs = parseInt(process.env.DB_POOL_POLL_INTERVAL_MS || '15000', 10);
+    this.poolMax = parseInt(this.configService.get<string>('DATABASE_POOL_MAX') || '30', 10);
+    this.saturationThreshold = parseFloat(this.configService.get<string>('DB_POOL_SATURATION_THRESHOLD') || '0.90');
+    this.highUtilizationThreshold = parseFloat(this.configService.get<string>('DB_POOL_HIGH_UTIL_THRESHOLD') || '0.75');
+    this.pollIntervalMs = parseInt(this.configService.get<string>('DB_POOL_POLL_INTERVAL_MS') || '15000', 10);
   }
 
   onModuleInit(): void {

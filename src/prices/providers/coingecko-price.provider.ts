@@ -2,9 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { PriceSourceResult } from '../dto/price-data.dto';
+import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
-export class CoinGeckoPriceProvider {
+export class CoinGeckoPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(CoinGeckoPriceProvider.name);
   private readonly baseUrl = 'https://api.coingecko.com/api/v3';
 

@@ -9,6 +9,7 @@ import { User } from '../users/entities/user.entity';
 import { PnlHistory } from './entities/pnl-history.entity';
 import { PriceService } from '../shared/price.service';
 import { PnlCalculatorService } from './services/pnl-calculator.service';
+import { OutboxService } from '../events/outbox.service';
 
 const VALID_WALLET = 'GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBKM6GS6HMDE';
 
@@ -21,13 +22,28 @@ describe('PortfolioService', () => {
   let mockPriceService: any;
   let mockCacheManager: any;
   let mockPnlCalculator: any;
+  let mockOutboxService: any;
 
   beforeEach(async () => {
+    const mockOutboxRepository = {
+      create: jest.fn((entity: unknown, dto: unknown) => dto),
+      save: jest.fn().mockResolvedValue({ id: 'outbox-event-1' }),
+    };
+
     mockTradeRepository = {
       find: jest.fn(),
       findAndCount: jest.fn(),
-      create: jest.fn(),
-      save: jest.fn(),
+      create: jest.fn((dto) => dto),
+      save: jest.fn().mockImplementation(async (trade) => ({ ...trade, id: 'trade-1' })),
+      manager: {
+        transaction: jest.fn().mockImplementation(async (fn) =>
+          fn({
+            create: jest.fn((entity: unknown, dto: unknown) => dto),
+            save: jest.fn().mockImplementation(async (entity: unknown) => ({ ...entity, id: 'trade-1' })),
+            getRepository: jest.fn().mockReturnValue(mockOutboxRepository),
+          }),
+        ),
+      },
     };
 
     mockPositionRepository = {
@@ -63,6 +79,10 @@ describe('PortfolioService', () => {
       calculatePortfolioPnl: jest.fn().mockReturnValue({ realizedPnL: 0, unrealizedPnL: 0 }),
     };
 
+    mockOutboxService = {
+      enqueue: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PortfolioService,
@@ -94,6 +114,10 @@ describe('PortfolioService', () => {
           provide: CACHE_MANAGER,
           useValue: mockCacheManager,
         },
+        {
+          provide: OutboxService,
+          useValue: mockOutboxService,
+        },
       ],
     }).compile();
 
@@ -124,6 +148,25 @@ describe('PortfolioService', () => {
       const result = await service.getPositions('user-id');
       
       expect(result[0].unrealizedPnL).toBe(2); // (0.12 - 0.1) * 100
+    });
+  });
+
+  describe('addTransaction', () => {
+    it('should save a trade and enqueue an outbox event', async () => {
+      const dto = {
+        side: 'buy',
+        baseAsset: 'XLM',
+        counterAsset: 'USDC',
+        amount: 100,
+        entryPrice: 0.1,
+        feeAmount: 0.5,
+      };
+
+      const result = await service.addTransaction('user-id', dto as any);
+
+      expect(result).toMatchObject({ id: 'trade-1' });
+      expect(mockOutboxService.enqueue).toHaveBeenCalledTimes(1);
+      expect(mockCacheManager.del).toHaveBeenCalledWith('portfolio_performance_user-id');
     });
   });
 

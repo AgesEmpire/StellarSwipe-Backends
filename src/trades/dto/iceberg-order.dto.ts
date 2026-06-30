@@ -9,6 +9,7 @@ import {
   IsDateString,
   ValidateIf,
 } from 'class-validator';
+import { IsStellarPrecision } from '../../common/decorators/is-stellar-precision.decorator';
 
 // ─── Create DTO ───────────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ export class CreateIcebergOrderDto {
    */
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
+  @IsStellarPrecision()
   totalAmount!: number;
 
   /**
@@ -71,6 +73,7 @@ export class CreateIcebergOrderDto {
    */
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
+  @IsStellarPrecision()
   displayAmount!: number;
 
   // ── Price ──────────────────────────────────────────────────────────────────
@@ -80,6 +83,7 @@ export class CreateIcebergOrderDto {
    */
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
+  @IsStellarPrecision()
   limitPrice!: number;
 
   // ── Optional TTL ───────────────────────────────────────────────────────────

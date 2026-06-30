@@ -30,6 +30,7 @@ import {
 } from '../dto/oco-order.dto';
 import { StellarConfigService } from '../../config/stellar.service';
 import { buildAsset } from './asset-utils';
+import { HorizonBulkheadService } from '../../stellar/bulkhead/horizon-bulkhead.service';
 
 @Injectable()
 export class OcoOrderService {
@@ -40,6 +41,7 @@ export class OcoOrderService {
     @InjectRepository(AdvancedOrder)
     private readonly repo: Repository<AdvancedOrder>,
     private readonly stellarConfig: StellarConfigService,
+    private readonly bulkhead: HorizonBulkheadService,
   ) {
     this.server = new Horizon.Server(this.stellarConfig.horizonUrl, {
       allowHttp: this.stellarConfig.horizonUrl.startsWith('http://'),
@@ -142,7 +144,9 @@ export class OcoOrderService {
 
       tx.sign(keypair);
 
-      const result = await this.server.submitTransaction(tx);
+      const result = await this.bulkhead.write(() =>
+        this.server.submitTransaction(tx),
+      );
       this.logger.log(`OCO order submitted – tx: ${result.hash}`);
 
       // Parse offer IDs from the tx result operations
@@ -388,7 +392,7 @@ export class OcoOrderService {
       .build();
 
     tx.sign(keypair);
-    await this.server.submitTransaction(tx);
+    await this.bulkhead.write(() => this.server.submitTransaction(tx));
     this.logger.log(`Cancelled offer ${offerId}`);
   }
 
@@ -423,7 +427,7 @@ export class OcoOrderService {
 
   private async loadAccount(publicKey: string): Promise<Horizon.AccountResponse> {
     try {
-      return await this.server.loadAccount(publicKey);
+      return await this.bulkhead.read(() => this.server.loadAccount(publicKey));
     } catch (err: any) {
       if (err?.response?.status === 404) {
         throw new BadRequestException(

@@ -12,7 +12,7 @@ import { AssignPermissionDto, CheckPermissionDto } from './dto/assign-permission
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow-config.dto';
 import { CreateAccessRequestDto, ApproveRequestDto, RejectRequestDto } from './dto/access-request.dto';
 import { IPermissionContext } from './interfaces/permission.interface';
-import { PermissionAuditService, AuditAction } from '../auth/permission-audit.service';
+import { PermissionAuditService, AuditAction, diffObjects } from '../auth/permission-audit.service';
 
 @Injectable()
 export class RbacService {
@@ -67,6 +67,17 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    // Capture before state for diffing
+    const beforeSnapshot: Record<string, unknown> = {
+      name: role.name,
+      description: role.description,
+      type: role.type,
+      scope: role.scope,
+      isActive: role.isActive,
+      priority: role.priority,
+      permissionIds: role.permissions?.map((p) => p.id) ?? [],
+    };
+
     Object.assign(role, dto);
 
     if (dto.permissionIds) {
@@ -75,13 +86,29 @@ export class RbacService {
     }
 
     const saved = await this.roleRepository.save(role);
+
     if (updatedBy) {
-      await this.permissionAuditService.log({
-        actorId: updatedBy,
-        action: AuditAction.ROLE_UPDATED,
-        resourceName: saved.name,
-        metadata: { roleId: id, changes: dto },
-      });
+      const afterSnapshot: Record<string, unknown> = {
+        name: saved.name,
+        description: saved.description,
+        type: saved.type,
+        scope: saved.scope,
+        isActive: saved.isActive,
+        priority: saved.priority,
+        permissionIds: saved.permissions?.map((p) => p.id) ?? [],
+      };
+
+      const diff = diffObjects(beforeSnapshot, afterSnapshot);
+      if (diff) {
+        await this.permissionAuditService.log({
+          actorId: updatedBy,
+          action: AuditAction.ROLE_UPDATED,
+          resourceName: saved.name,
+          beforeState: diff.before,
+          afterState: diff.after,
+          metadata: { roleId: id },
+        });
+      }
     }
     return saved;
   }
@@ -161,17 +188,28 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    const previousPermissionIds = role.permissions?.map((p) => p.id) ?? [];
+
     const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
     role.permissions = permissions;
 
     const saved = await this.roleRepository.save(role);
+
     if (actorId) {
-      await this.permissionAuditService.log({
-        actorId,
-        action: AuditAction.PERMISSION_GRANTED,
-        resourceName: role.name,
-        metadata: { roleId: dto.roleId, permissionIds: dto.permissionIds },
-      });
+      const diff = diffObjects(
+        { permissionIds: previousPermissionIds },
+        { permissionIds: dto.permissionIds },
+      );
+      if (diff) {
+        await this.permissionAuditService.log({
+          actorId,
+          action: AuditAction.PERMISSION_GRANTED,
+          resourceName: role.name,
+          beforeState: diff.before,
+          afterState: diff.after,
+          metadata: { roleId: dto.roleId },
+        });
+      }
     }
     return saved;
   }

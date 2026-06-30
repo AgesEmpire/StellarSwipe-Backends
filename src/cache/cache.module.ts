@@ -1,6 +1,8 @@
 import { Module, Global } from '@nestjs/common';
 import { CacheModule as NestCacheModule } from '@nestjs/cache-manager';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { redisStore } from 'cache-manager-redis-yet';
 import { FeedCacheStrategy } from './strategies/feed-cache.strategy';
 import { ProviderCacheStrategy } from './strategies/provider-cache.strategy';
@@ -15,10 +17,14 @@ import { TradeCacheInvalidationListener } from './trade-cache-invalidation.liste
 import { ResponseCacheService, ResponseCacheInterceptor } from './response-cache.service';
 import { TradingCacheService } from './trading-cache.service';
 import { CacheWarmupService } from './cache-warmup.service';
+import { CacheReconciliationJob } from './cache-reconciliation.job';
+import { Signal } from '../signals/entities/signal.entity';
 
 @Global()
 @Module({
   imports: [
+    TypeOrmModule.forFeature([Signal]),
+    ScheduleModule.forRoot(),
     NestCacheModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -53,6 +59,7 @@ import { CacheWarmupService } from './cache-warmup.service';
     ResponseCacheInterceptor,
     TradingCacheService,
     CacheWarmupService,
+    CacheReconciliationJob,
   ],
   controllers: [CacheController],
   exports: [

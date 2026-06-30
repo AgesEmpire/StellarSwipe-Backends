@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Delete, Request, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Delete, UseGuards, Query } from '@nestjs/common';
 import { WalletStatusService } from './wallet-status.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentWallet } from '../common/decorators/current-wallet.decorator';
 
 @Controller('wallet')
 export class WalletStatusController {
@@ -17,8 +18,11 @@ export class WalletStatusController {
 
   @UseGuards(JwtAuthGuard)
   @Post('refresh')
-  refresh(@Request() req: any, @Query('sessionId') sessionId: string) {
-    return this.walletStatusService.refresh(sessionId, req.user.publicKey ?? '');
+  refresh(
+    @CurrentWallet() walletAddress: string,
+    @Query('sessionId') sessionId: string,
+  ) {
+    return this.walletStatusService.refresh(sessionId, walletAddress);
   }
 
   @UseGuards(JwtAuthGuard)

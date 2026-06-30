@@ -6,8 +6,11 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { SentryService } from '../sentry';
+import { CORRELATION_ID_HEADER } from '../correlation/correlation-id.store';
+import { ErrorResponseDto } from '../dto/error-response.dto';
 import { StellarException, SorobanException } from '../exceptions';
 import { ErrorClassificationService } from '../error-classification/error-classification.service';
 
@@ -17,6 +20,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     private readonly logger: LoggerService,
     private readonly sentry: SentryService,
     private readonly errorClassifier: ErrorClassificationService,
+    private readonly configService: ConfigService,
   ) {
     this.logger.setContext(GlobalExceptionFilter.name);
   }
@@ -38,17 +42,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     });
 
     // Build error response
-    const errorResponse: any = {
+    const errorResponse: ErrorResponseDto = {
       statusCode: classification.httpStatus,
-      code: classification.code,
+      errorCode: classification.code,
       message: classification.message,
-      timestamp: new Date().toISOString(),
       path: request.url,
+      timestamp: new Date().toISOString(),
+      requestId: (request.headers[CORRELATION_ID_HEADER] as string) || undefined,
     };
 
     // Include details in development mode
     if (
-      process.env.NODE_ENV === 'development' &&
+      this.configService.get<string>('NODE_ENV') === 'development' &&
       classification.originalError
     ) {
       errorResponse.details = {

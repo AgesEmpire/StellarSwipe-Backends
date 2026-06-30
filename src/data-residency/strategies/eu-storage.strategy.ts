@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { RegionCode } from '../entities/data-region.entity';
 
 export interface StorageStrategy {
@@ -33,8 +34,10 @@ export class EuStorageStrategy implements StorageStrategy {
     'IS', 'LI', 'NO',
   ];
 
+  constructor(private readonly configService: ConfigService) {}
+
   getStorageEndpoint(): string {
-    return process.env.EU_STORAGE_ENDPOINT ?? 'https://eu-storage.stellarswipe.internal';
+    return this.configService.get<string>('EU_STORAGE_ENDPOINT') ?? 'https://eu-storage.stellarswipe.internal';
   }
 
   getEncryptionConfig(): EncryptionConfig {

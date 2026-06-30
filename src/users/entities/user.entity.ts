@@ -14,6 +14,7 @@ import { Trade } from '../../trades/entities/trade.entity';
 import { UserPreference } from './user-preference.entity';
 import { Session } from './session.entity';
 import { encryptedColumn } from '../../security/encrypted-column.transformer';
+import { Internal } from '../../common/decorators';
 
 export enum UserTier {
   BASIC = 'basic',
@@ -58,6 +59,9 @@ export class User {
   @Column({ default: true })
   isActive!: boolean;
 
+  @Column({ name: 'email_verified', default: false })
+  emailVerified!: boolean;
+
   @Column({
     type: 'enum',
     enum: UserTier,
@@ -74,6 +78,10 @@ export class User {
 
   @Column({ default: 0 })
   reputationScore!: number;
+
+  @Column({ default: 0, nullable: true })
+  @Internal()
+  internalRiskScore?: number;
 
   @Column({ name: 'referred_by', type: 'uuid', nullable: true })
   referredBy?: string;

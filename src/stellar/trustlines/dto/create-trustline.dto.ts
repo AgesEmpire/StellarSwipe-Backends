@@ -1,14 +1,14 @@
 import { IsString, IsOptional, IsNotEmpty, Matches, IsNumberString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsStellarPublicKey } from '../../../common/decorators/is-stellar-address.decorator';
 
 export class CreateTrustlineDto {
   @ApiProperty({
     description: 'Account public key (Stellar address)',
     example: 'GCLWGQPMKXQSPF776IU33AH4PZNOOWNAWGGKVTBQMIC5IMKUNP3E6NVU',
   })
-  @IsString()
+  @IsStellarPublicKey({ message: 'publicKey must be a valid Stellar public key (56-char G... address)' })
   @IsNotEmpty()
-  @Matches(/^G[A-Z0-9]{55}$/, { message: 'Invalid Stellar public key format' })
   publicKey: string;
 
   @ApiProperty({
@@ -32,9 +32,8 @@ export class CreateTrustlineDto {
     description: 'Asset issuer public key',
     example: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
   })
-  @IsString()
+  @IsStellarPublicKey({ message: 'assetIssuer must be a valid Stellar public key (56-char G... address)' })
   @IsNotEmpty()
-  @Matches(/^G[A-Z0-9]{55}$/, { message: 'Invalid asset issuer public key format' })
   assetIssuer: string;
 
   @ApiPropertyOptional({

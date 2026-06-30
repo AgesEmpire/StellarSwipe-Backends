@@ -158,4 +158,42 @@ describe('WebhooksService', () => {
       expect(webhookRepo.remove).toHaveBeenCalledWith(webhook);
     });
   });
+
+  describe('replayToSubscriber', () => {
+    it('replays event to named subscriber with replay metadata', async () => {
+      const delivery = {
+        id: 'd-1',
+        eventType: 'signal.created',
+        eventId: 'evt-1',
+        payload: { event: 'signal.created', deliveryId: 'd-orig', timestamp: '2024-01-01T00:00:00.000Z', data: {} },
+      };
+      const webhook = { id: 'wh-1', userId, secret: 's1', url: 'https://example.com', active: true, events: ['signal.created'], consecutiveFailures: 0 };
+
+      deliveryRepo.findOne.mockResolvedValue(delivery);
+      webhookRepo.findOne.mockResolvedValue(webhook);
+      deliveryRepo.create = jest.fn().mockImplementation((v) => v);
+      deliveryRepo.save = jest.fn().mockResolvedValue({});
+
+      await service.replayToSubscriber(userId, 'd-1', 'wh-1');
+
+      expect(webhookSender.deliverWebhook).toHaveBeenCalledWith(
+        webhook,
+        expect.objectContaining({ isReplay: true, originalDeliveryId: 'd-1' }),
+      );
+      expect(deliveryRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ eventId: 'replay:d-1', webhookId: 'wh-1' }),
+      );
+    });
+
+    it('throws NotFoundException for unknown delivery', async () => {
+      deliveryRepo.findOne.mockResolvedValue(null);
+      await expect(service.replayToSubscriber(userId, 'd-missing', 'wh-1')).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException for unknown subscriber webhook', async () => {
+      deliveryRepo.findOne.mockResolvedValue({ id: 'd-1', payload: {}, eventType: 'signal.created', eventId: 'e1' });
+      webhookRepo.findOne.mockResolvedValue(null);
+      await expect(service.replayToSubscriber(userId, 'd-1', 'wh-unknown')).rejects.toThrow(NotFoundException);
+    });
+  });
 });

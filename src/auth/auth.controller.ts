@@ -25,6 +25,8 @@ export class AuthController {
     @ApiOperation({ summary: 'Register a new user' })
     @ApiResponse({ status: 201, description: 'User successfully registered' })
     @ApiResponse({ status: 400, description: 'Bad Request' })
+    @ApiResponse({ status: 429, description: 'Too many registration attempts — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60, keyBy: ['email'], accountLimit: 3, accountWindow: 300 })
     async register(@Body() dto: RegisterDto) {
         return this.authService.register(dto);
     }
@@ -33,6 +35,8 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Request password reset link' })
     @ApiResponse({ status: 200, description: 'Reset link sent if user exists' })
+    @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60, keyBy: ['email'], accountLimit: 3, accountWindow: 3600 })
     async forgotPassword(@Body() dto: ForgotPasswordDto) {
         return this.authService.forgotPassword(dto);
     }
@@ -42,13 +46,15 @@ export class AuthController {
     @ApiOperation({ summary: 'Reset password using token' })
     @ApiResponse({ status: 200, description: 'Password successfully reset' })
     @ApiResponse({ status: 401, description: 'Invalid or expired token' })
+    @ApiResponse({ status: 429, description: 'Too many attempts — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60, keyBy: ['token'], accountLimit: 5, accountWindow: 300 })
     async resetPassword(@Body() dto: ResetPasswordDto) {
         return this.authService.resetPassword(dto);
     }
 
     @Post('challenge')
     @HttpCode(HttpStatus.OK)
-    @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 20, window: 60 })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 20, window: 60, keyBy: ['publicKey'], accountLimit: 10, accountWindow: 60 })
     async getChallenge(@Body() dto: AuthChallengeDto) {
         if (!dto.publicKey) {
             throw new Error('Public Key is required for now');
@@ -59,7 +65,7 @@ export class AuthController {
     @Post('verify')
     @Audit({ action: AuditAction.LOGIN, resource: 'auth' })
     @HttpCode(HttpStatus.OK)
-    @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 10, window: 60 })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 10, window: 60, keyBy: ['publicKey'], accountLimit: 5, accountWindow: 300 })
     async verify(@Body() dto: VerifySignatureDto, @Req() req: Request) {
         return this.authService.verifySignature(dto, req);
     }
@@ -69,7 +75,7 @@ export class AuthController {
     @ApiOperation({ summary: 'Refresh access token using a refresh token' })
     @ApiResponse({ status: 200, description: 'New token pair issued' })
     @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
-    @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 20, window: 60 })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 20, window: 60 })
     async refresh(@Body('refreshToken') refreshToken: string) {
         return this.sessionManager.refreshTokens(refreshToken);
     }

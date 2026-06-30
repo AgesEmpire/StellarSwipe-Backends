@@ -1,5 +1,17 @@
 version: '3.8'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Available profiles
+#   (none)       Full stack — app + postgres + redis  (default)
+#   db-only      Postgres only, useful for DB-focused module tests
+#   cache-only   Redis only, useful for cache-focused module tests
+#
+# Examples:
+#   docker-compose up -d                          # full stack
+#   docker-compose --profile db-only up -d        # postgres only
+#   docker-compose --profile cache-only up -d     # redis only
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
   app:
     build:
@@ -45,6 +57,8 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: stellarswipe-postgres
+    profiles:
+      - db-only
     environment:
       POSTGRES_USER: ${DATABASE_USER:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-password}
@@ -64,6 +78,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: stellarswipe-redis
+    profiles:
+      - cache-only
     ports:
       - '${REDIS_PORT:-6379}:6379'
     command: redis-server ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}

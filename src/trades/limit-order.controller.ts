@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
 import { LimitOrderService } from './limit-order.service';
 import { PlaceLimitOrderDto, LimitOrderStatusDto } from './dto/limit-order.dto';
 
@@ -18,8 +19,10 @@ export class LimitOrderController {
   constructor(private readonly limitOrderService: LimitOrderService) {}
 
   @Post()
+  @RateLimit({ tier: RateLimitTier.TRADE })
   @ApiOperation({ summary: 'Place a limit order via Soroban / SDEX' })
   @ApiResponse({ status: 201, type: LimitOrderStatusDto })
+  @ApiResponse({ status: 429, description: 'Trade rate limit exceeded — see Retry-After header' })
   async place(
     @Body(new ValidationPipe({ transform: true, whitelist: true })) dto: PlaceLimitOrderDto,
   ): Promise<LimitOrderStatusDto> {

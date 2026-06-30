@@ -12,12 +12,18 @@ import {
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
 import { MonitoringModule } from '../monitoring/monitoring.module';
+import { SyntheticMonitoringService } from './synthetic-monitoring.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from '../users/entities/user.entity';
+import { Signal } from '../signals/entities/signal.entity';
+import { Trade } from '../trades/entities/trade.entity';
 
 @Module({
   imports: [
     TerminusModule,
     MonitoringModule,
     BullModule.registerQueue({ name: 'priority-queue' }),
+    TypeOrmModule.forFeature([User, Signal, Trade]),
   ],
   controllers: [HealthController],
   providers: [
@@ -28,6 +34,7 @@ import { MonitoringModule } from '../monitoring/monitoring.module';
     RedisHealthIndicator,
     QueueHealthIndicator,
     HealthSummaryService,
+    SyntheticMonitoringService,
   ],
   exports: [
     StellarHealthIndicator,
@@ -36,6 +43,7 @@ import { MonitoringModule } from '../monitoring/monitoring.module';
     RedisHealthIndicator,
     QueueHealthIndicator,
     HealthSummaryService,
+    SyntheticMonitoringService,
   ],
 })
 export class HealthModule {}

@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { APP_FILTER } from '@nestjs/core';
 import { StellarConfigService } from '../config/stellar.service';
 import { CacheModule } from '../cache/cache.module';
 import { AccountManagerService } from './account/account-manager.service';
@@ -18,6 +19,10 @@ import { User } from '../users/entities/user.entity';
 import { OnChainEvent } from './entities/on-chain-event.entity';
 import { OnChainSyncService } from './on-chain-sync.service';
 import { OnChainSyncJob } from './on-chain-sync.job';
+import { FeeBumpModule } from './fee-bump/fee-bump.module';
+import { ClaimableBalanceModule } from './claimable-balance/claimable-balance.module';
+import { SponsoredReservesModule } from './sponsored-reserves/sponsored-reserves.module';
+import { HorizonExceptionFilter } from './errors/horizon-error.filter';
 
 @Module({
   imports: [
@@ -26,6 +31,9 @@ import { OnChainSyncJob } from './on-chain-sync.job';
     CacheModule,
     ScheduleModule.forRoot(),
     TypeOrmModule.forFeature([User, OnChainEvent]),
+    FeeBumpModule,
+    ClaimableBalanceModule,
+    SponsoredReservesModule,
   ],
   controllers: [TrustlineController, HorizonStreamController],
   providers: [
@@ -39,6 +47,7 @@ import { OnChainSyncJob } from './on-chain-sync.job';
     WalletBalanceSyncJob,
     OnChainSyncService,
     OnChainSyncJob,
+    { provide: APP_FILTER, useClass: HorizonExceptionFilter },
   ],
   exports: [
     StellarConfigService,
@@ -50,6 +59,9 @@ import { OnChainSyncJob } from './on-chain-sync.job';
     StellarIntegrationService,
     WalletBalanceSyncJob,
     OnChainSyncService,
+    FeeBumpModule,
+    ClaimableBalanceModule,
+    SponsoredReservesModule,
   ],
 })
 export class StellarModule {}

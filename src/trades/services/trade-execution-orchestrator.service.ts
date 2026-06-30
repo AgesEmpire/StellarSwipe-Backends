@@ -15,6 +15,7 @@ import { SorobanTransactionBuilderService } from '../../soroban/soroban-transact
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Trade, TradeStatus } from '../entities/trade.entity';
+import { TradeSagaService } from '../saga/trade-saga.service';
 
 export enum OrderType {
   MARKET = 'market',
@@ -32,6 +33,7 @@ export interface OrchestratorResult {
   success: boolean;
   tradeId?: string;
   traceId: string;
+  sagaId?: string;
   orderType: OrderType;
   result?: TradeResultDto;
   error?: string;
@@ -70,6 +72,7 @@ export class TradeExecutionOrchestratorService {
     private readonly velocityRiskManager: VelocityRiskManager,
     private readonly complianceEngine: ComplianceRuleEngineService,
     private readonly txBuilder: SorobanTransactionBuilderService,
+    private readonly tradeSagaService: TradeSagaService,
   ) {}
 
   async orchestrate(intent: TradeIntent): Promise<OrchestratorResult> {
@@ -138,99 +141,59 @@ export class TradeExecutionOrchestratorService {
         },
       );
 
-      // ── Stage 5: Persist trade record ────────────────────────────────────────
-      const trade = await this.runStage(stages, 'trade_persist', async () => {
-        const newTrade = this.tradeRepository.create({
+      // ── Stages 5–7: Saga-driven execution (reserve → persist → execute → portfolio → finalize) ──
+      // The saga orchestrator tracks each completed step and runs compensating
+      // actions in reverse order if any step fails, ensuring no partial state.
+      const sagaResult = await this.runStage(stages, 'saga_execution', async () => {
+        return this.tradeSagaService.executeTradeSaga({
           userId: intent.userId,
           signalId: intent.signalId,
           side: intent.side,
+          amount: intent.amount,
+          walletAddress: intent.walletAddress,
+          stopLossPrice: intent.stopLossPrice,
+          takeProfitPrice: intent.takeProfitPrice,
+          slippageTolerance: intent.slippageTolerance,
           baseAsset: signal.baseAsset,
           counterAsset: signal.counterAsset,
           entryPrice: signal.entryPrice,
-          amount: intent.amount.toString(),
-          totalValue: (intent.amount * parseFloat(signal.entryPrice)).toFixed(8),
-          stopLossPrice: intent.stopLossPrice?.toString() ?? signal.stopLossPrice,
-          takeProfitPrice: intent.takeProfitPrice?.toString() ?? signal.targetPrice,
-          status: TradeStatus.EXECUTING,
         });
-        return this.tradeRepository.save(newTrade);
       });
 
-      this.logger.log(`[${traceId}] Trade persisted: tradeId=${trade.id}`);
-
-      // ── Stage 6: Soroban contract invocation ─────────────────────────────────
-      const executionResult = await this.runStage(
-        stages,
-        'soroban_execution',
-        () => this.tradeExecutor.executeTrade(trade, intent.walletAddress),
-      );
-
-      // ── Stage 7: Finalize trade record ───────────────────────────────────────
-      const result = await this.runStage(stages, 'finalize', async () => {
-        if (executionResult.success) {
-          trade.status = TradeStatus.COMPLETED;
-          trade.transactionHash = executionResult.transactionHash;
-          trade.sorobanContractId = executionResult.contractId;
-          trade.feeAmount = executionResult.feeAmount ?? '0';
-          trade.executedAt = new Date();
-
-          if (executionResult.executedPrice) {
-            trade.entryPrice = executionResult.executedPrice;
-            trade.totalValue = (
-              parseFloat(trade.amount) * parseFloat(executionResult.executedPrice)
-            ).toFixed(8);
-          }
-
-          await this.tradeRepository.save(trade);
-
-          await this.velocityRiskManager.recordTradeExecution({
-            userId: trade.userId,
-            asset: `${trade.baseAsset}/${trade.counterAsset}`,
-            amount: parseFloat(trade.amount),
-            entryPrice: parseFloat(trade.entryPrice),
-          });
-
-          this.logger.log(
-            `[${traceId}] Trade ${trade.id} completed. hash=${trade.transactionHash}`,
-          );
-
-          return {
-            id: trade.id,
-            userId: trade.userId,
-            signalId: trade.signalId,
-            status: trade.status,
-            side: trade.side,
-            baseAsset: trade.baseAsset,
-            counterAsset: trade.counterAsset,
-            entryPrice: trade.entryPrice,
-            amount: trade.amount,
-            totalValue: trade.totalValue,
-            feeAmount: trade.feeAmount,
-            transactionHash: trade.transactionHash,
-            executedAt: trade.executedAt,
-            message: 'Trade executed successfully',
-          } as TradeResultDto;
-        }
-
-        trade.status = TradeStatus.FAILED;
-        trade.errorMessage = executionResult.error;
-        await this.tradeRepository.save(trade);
-
-        this.logger.error(
-          `[${traceId}] Trade ${trade.id} failed: ${executionResult.error}`,
-        );
-
-        // Propagate as a domain error so runStage captures it
+      if (!sagaResult.success) {
         throw new BadRequestException({
-          message: 'Trade execution failed',
-          error: executionResult.error,
-          tradeId: trade.id,
+          message: sagaResult.error ?? 'Trade saga execution failed',
+          sagaId: sagaResult.sagaId,
+          traceId: sagaResult.traceId,
         });
+      }
+
+      // Fetch the finalised trade record to build the result DTO
+      const trade = await this.tradeRepository.findOneOrFail({
+        where: { id: sagaResult.tradeId },
       });
+
+      const result: TradeResultDto = {
+        id: trade.id,
+        userId: trade.userId,
+        signalId: trade.signalId,
+        status: trade.status,
+        side: trade.side,
+        baseAsset: trade.baseAsset,
+        counterAsset: trade.counterAsset,
+        entryPrice: trade.entryPrice,
+        amount: trade.amount,
+        totalValue: trade.totalValue,
+        feeAmount: trade.feeAmount,
+        transactionHash: trade.transactionHash,
+        executedAt: trade.executedAt,
+        message: 'Trade executed successfully',
+      };
 
       return {
         success: true,
         traceId,
+        sagaId: sagaResult.sagaId,
         tradeId: result.id,
         orderType,
         result,
