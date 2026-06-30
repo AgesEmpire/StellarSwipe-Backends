@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   ParseArrayPipe,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,9 +29,12 @@ import {
   SubmitTransactionResultDto,
 } from './dto/multisig-status.dto';
 import { PendingTransactionStatus } from './entities/pending-transaction.entity';
+import { XdrOperationTypeGuard } from './guards/xdr-operation-type.guard';
+import { ValidateXdrOperationType } from './decorators/validate-xdr-operation-type.decorator';
 
 @ApiTags('Stellar Multisig')
 @Controller('stellar/multisig')
+@UseGuards(XdrOperationTypeGuard)
 export class MultisigController {
   constructor(private readonly multisigService: MultisigService) {}
 
