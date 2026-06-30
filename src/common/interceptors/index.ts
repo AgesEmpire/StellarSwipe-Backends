@@ -6,3 +6,5 @@ export { SensitiveDataInterceptor } from './sensitive-data.interceptor';
 export { ResponseEnvelopeInterceptor, ApiEnvelope, ApiMeta } from './response-envelope.interceptor';
 export { ETagInterceptor } from './etag.interceptor';
 export { ConditionalCompressionInterceptor, ConditionalCompressionOptions } from './conditional-compression.interceptor';
+export { TransactionalInterceptor } from './transactional.interceptor';
+export { RetryAfterInterceptor } from './retry-after.interceptor';

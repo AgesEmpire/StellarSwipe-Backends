@@ -180,6 +180,37 @@ export class WebhooksService {
     );
   }
 
+  async initiateSecretRotation(
+    userId: string,
+    webhookId: string,
+    rotationWindowMs: number = 3600000,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, webhookId);
+
+    webhook.nextSecret = this.signatureGenerator.generateSecret();
+    webhook.rotationStartedAt = new Date();
+    webhook.rotationFinalizesAt = new Date(Date.now() + rotationWindowMs);
+
+    this.logger.log(`Initiated secret rotation for webhook ${webhookId}, window: ${rotationWindowMs}ms`);
+    return this.webhookRepo.save(webhook);
+  }
+
+  async finalizeSecretRotation(userId: string, webhookId: string): Promise<Webhook> {
+    const webhook = await this.findOne(userId, webhookId);
+
+    if (!webhook.nextSecret) {
+      throw new BadRequestException('No rotation in progress for this webhook');
+    }
+
+    webhook.secret = webhook.nextSecret;
+    webhook.nextSecret = undefined;
+    webhook.rotationStartedAt = undefined;
+    webhook.rotationFinalizesAt = undefined;
+
+    this.logger.log(`Finalized secret rotation for webhook ${webhookId}`);
+    return this.webhookRepo.save(webhook);
+  }
+
   private validateEvents(events: string[]): void {
     const invalid = events.filter(
       (e) => !(SUPPORTED_WEBHOOK_EVENTS as readonly string[]).includes(e),

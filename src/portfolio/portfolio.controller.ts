@@ -23,6 +23,7 @@ import { ExportQueryDto } from './dto/export-query.dto';
 import { ExportService } from './services/export.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AddTransactionDto } from './dto/add-transaction.dto';
+import { Transactional } from '../common/decorators/transactional.decorator';
 
 @ApiTags('portfolio')
 @ApiBearerAuth()
@@ -214,6 +215,7 @@ export class PortfolioController {
    * Approve and execute a specific pending rebalancing plan.
    */
   @Put('rebalancing/plans/:planId/approve')
+  @Transactional()
   async approvePlan(
     @Query('userId') userId: string,
     @Param('planId') planId: string,

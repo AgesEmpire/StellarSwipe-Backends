@@ -14,3 +14,4 @@ export {
   CurrentWallet,
   type CurrentWalletOptions,
 } from './current-wallet.decorator';
+export { Transactional, TRANSACTIONAL_KEY } from './transactional.decorator';
