@@ -13,15 +13,16 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsStellarPrecision } from '../../common/decorators/is-stellar-precision.decorator';
 import { TradeSide } from '../entities/trade.entity';
 
 export class BatchOrderItemDto {
   @ApiProperty() @IsUUID() @IsNotEmpty() userId!: string;
   @ApiProperty() @IsUUID() @IsNotEmpty() signalId!: string;
   @ApiProperty({ enum: TradeSide }) @IsEnum(TradeSide) side!: TradeSide;
-  @ApiProperty() @IsNumber({ maxDecimalPlaces: 8 }) @IsPositive() amount!: number;
-  @ApiPropertyOptional() @IsNumber({ maxDecimalPlaces: 8 }) @IsOptional() @IsPositive() stopLossPrice?: number;
-  @ApiPropertyOptional() @IsNumber({ maxDecimalPlaces: 8 }) @IsOptional() @IsPositive() takeProfitPrice?: number;
+  @ApiProperty() @IsNumber({ maxDecimalPlaces: 8 }) @IsPositive() @IsStellarPrecision() amount!: number;
+  @ApiPropertyOptional() @IsNumber({ maxDecimalPlaces: 8 }) @IsOptional() @IsPositive() @IsStellarPrecision() stopLossPrice?: number;
+  @ApiPropertyOptional() @IsNumber({ maxDecimalPlaces: 8 }) @IsOptional() @IsPositive() @IsStellarPrecision() takeProfitPrice?: number;
   @ApiPropertyOptional() @IsNumber({ maxDecimalPlaces: 2 }) @IsOptional() @Min(0) @Max(100) slippageTolerance?: number;
   @ApiPropertyOptional() @IsString() @IsOptional() walletAddress?: string;
 }

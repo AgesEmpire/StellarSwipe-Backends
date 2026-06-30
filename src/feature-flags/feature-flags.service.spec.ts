@@ -255,4 +255,90 @@ describe('FeatureFlagsService', () => {
       expect(mockCacheManager.del).toHaveBeenCalledWith('flag:test_flag');
     });
   });
+
+  describe('isEntrypointKilled', () => {
+    it('should return false when entrypoint flag exists and is enabled', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      const flag = {
+        contractId: 'CONTRACT123',
+        method: 'swap',
+        type: 'boolean',
+        enabled: true,
+        retired: false,
+      };
+      mockFlagRepository.findOne.mockResolvedValue(flag);
+
+      const result = await service.isEntrypointKilled('CONTRACT123', 'swap');
+      expect(result).toBe(false);
+      expect(mockCacheManager.set).toHaveBeenCalledWith(
+        'entrypoint:CONTRACT123:swap:killed',
+        false,
+        60000,
+      );
+    });
+
+    it('should return true when entrypoint flag does not exist', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      mockFlagRepository.findOne.mockResolvedValue(null);
+
+      const result = await service.isEntrypointKilled('CONTRACT123', 'swap');
+      expect(result).toBe(true);
+    });
+
+    it('should use cached value', async () => {
+      mockCacheManager.get.mockResolvedValue(true);
+
+      const result = await service.isEntrypointKilled('CONTRACT123', 'swap');
+      expect(result).toBe(true);
+      expect(mockFlagRepository.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('checkEntrypointAccess', () => {
+    it('should allow access when entrypoint flag exists', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      const flag = {
+        contractId: 'CONTRACT123',
+        method: 'swap',
+        type: 'boolean',
+        enabled: true,
+        retired: false,
+      };
+      mockFlagRepository.findOne.mockResolvedValue(flag);
+      mockConfigService.get.mockReturnValue('');
+
+      const result = await service.checkEntrypointAccess('CONTRACT123', 'swap');
+      expect(result.allowed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('should deny access when entrypoint is killed', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      mockFlagRepository.findOne.mockResolvedValue(null);
+      mockConfigService.get.mockReturnValue('');
+
+      const result = await service.checkEntrypointAccess('CONTRACT123', 'swap');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('temporarily disabled');
+      expect(result.reason).toContain('CONTRACT123.swap');
+    });
+
+    it('should respect env override for killed entrypoint', async () => {
+      mockConfigService.get.mockReturnValue('ENTRYPOINT_KILL_CONTRACT123_swap=true');
+
+      const module = await Test.createTestingModule({
+        providers: [
+          FeatureFlagsService,
+          { provide: getRepositoryToken(FeatureFlag), useValue: mockFlagRepository },
+          { provide: getRepositoryToken(FlagAssignment), useValue: mockAssignmentRepository },
+          { provide: CACHE_MANAGER, useValue: mockCacheManager },
+          { provide: ConfigService, useValue: mockConfigService },
+        ],
+      }).compile();
+
+      const svc = module.get<FeatureFlagsService>(FeatureFlagsService);
+      const result = await svc.checkEntrypointAccess('CONTRACT123', 'swap');
+      expect(result.allowed).toBe(false);
+    });
+  });
 });

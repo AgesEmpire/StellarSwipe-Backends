@@ -189,4 +189,55 @@ export class FeatureFlagsService {
   async getUserAssignments(userId: string): Promise<FlagAssignment[]> {
     return this.assignmentRepository.find({ where: { userId } });
   }
+
+  async isEntrypointKilled(contractId: string, method: string): Promise<boolean> {
+    const cacheKey = `entrypoint:${contractId}:${method}:killed`;
+    const cached = await this.cacheManager.get<boolean>(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const flag = await this.flagRepository.findOne({
+      where: {
+        contractId,
+        method,
+        type: 'boolean',
+        enabled: true,
+        retired: false,
+      },
+    });
+
+    const isKilled = !flag;
+
+    await this.cacheManager.set(cacheKey, isKilled, 60000);
+    return isKilled;
+  }
+
+  async checkEntrypointAccess(
+    contractId: string,
+    method: string,
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    if (this.envOverrides.has(`ENTRYPOINT_KILL_${contractId}_${method}`)) {
+      const isKilled = this.envOverrides.get(
+        `ENTRYPOINT_KILL_${contractId}_${method}`,
+      )!;
+      if (isKilled) {
+        return {
+          allowed: false,
+          reason: `Entrypoint ${contractId}.${method} is temporarily disabled`,
+        };
+      }
+    }
+
+    const isKilled = await this.isEntrypointKilled(contractId, method);
+    if (isKilled) {
+      this.logger.warn(
+        `[FeatureFlag] Entrypoint ${contractId}.${method} is killed`,
+      );
+      return {
+        allowed: false,
+        reason: `Entrypoint ${contractId}.${method} is temporarily disabled`,
+      };
+    }
+
+    return { allowed: true };
+  }
 }

@@ -6,6 +6,7 @@ import {
   IsString,
   ValidateIf,
 } from "class-validator";
+import { IsStellarPrecision } from "../../../common/decorators/is-stellar-precision.decorator";
 
 export class BaseOrderDto {
   @IsString()
@@ -38,5 +39,6 @@ export class BaseOrderDto {
 
   @IsNumber()
   @IsPositive()
+  @IsStellarPrecision()
   amount!: number;
 }
