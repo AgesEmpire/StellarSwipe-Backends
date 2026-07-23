@@ -11,17 +11,19 @@ export const UserCacheKeys = {
     tenantKey(CachePrefix.USER_PROFILE, tenantId, `${userId}:profile`),
   preferences: (userId: string, tenantId = 'default') =>
     tenantKey(CachePrefix.USER_PROFILE, tenantId, `${userId}:preferences`),
-  sessions: (userId: string) =>
-    `${USER_PREFIX}${userId}:sessions`,
+  sessions: (userId: string) => `${USER_PREFIX}${userId}:sessions`,
   portfolio: (userId: string) => `${CachePrefix.PORTFOLIO}${userId}`,
 };
 
 /** Signal and feed-related cache keys */
 export const SignalCacheKeys = {
   signal: (signalId: string) => `${CachePrefix.SIGNAL}${signalId}`,
-  feedPage: (page: number, sortBy?: string) => `${CachePrefix.SIGNAL}feed:${sortBy || 'ranked'}:${page}`,
-  feedAsset: (asset: string, page: number) => `${CachePrefix.SIGNAL}feed:${asset}:${page}`,
-  feedProvider: (providerId: string, page: number) => `${CachePrefix.SIGNAL}feed:provider:${providerId}:${page}`,
+  feedPage: (page: number, sortBy?: string) =>
+    `${CachePrefix.SIGNAL}feed:${sortBy || 'ranked'}:${page}`,
+  feedAsset: (asset: string, page: number) =>
+    `${CachePrefix.SIGNAL}feed:${asset}:${page}`,
+  feedProvider: (providerId: string, page: number) =>
+    `${CachePrefix.SIGNAL}feed:provider:${providerId}:${page}`,
   allFeed: () => `${CachePrefix.SIGNAL}feed`,
   userSignals: (userId: string) => `${CachePrefix.SIGNAL}user:${userId}`,
 };
@@ -45,7 +47,8 @@ export const MarketCacheKeys = {
 /** Leaderboard and portfolio cache keys */
 export const LeaderboardCacheKeys = {
   overall: (page: number) => `stellarswipe:leaderboard:overall:${page}`,
-  assetSpecific: (asset: string, page: number) => `stellarswipe:leaderboard:${asset}:${page}`,
+  assetSpecific: (asset: string, page: number) =>
+    `stellarswipe:leaderboard:${asset}:${page}`,
   userRank: (userId: string) => `stellarswipe:leaderboard:user:${userId}`,
   topPerformers: () => `stellarswipe:leaderboard:top-performers`,
 };
@@ -77,13 +80,19 @@ export class CacheInvalidationService {
   }
 
   /** Invalidate only the user's profile cache entry. */
-  async invalidateUserProfile(userId: string, tenantId = 'default'): Promise<void> {
+  async invalidateUserProfile(
+    userId: string,
+    tenantId = 'default',
+  ): Promise<void> {
     await this.cacheService.del(UserCacheKeys.profile(userId, tenantId));
     this.logger.log(`Profile cache invalidated for user ${userId}`);
   }
 
   /** Invalidate only the user's preferences cache entry. */
-  async invalidateUserPreferences(userId: string, tenantId = 'default'): Promise<void> {
+  async invalidateUserPreferences(
+    userId: string,
+    tenantId = 'default',
+  ): Promise<void> {
     await this.cacheService.del(UserCacheKeys.preferences(userId, tenantId));
     this.logger.log(`Preferences cache invalidated for user ${userId}`);
   }
@@ -95,28 +104,44 @@ export class CacheInvalidationService {
   }
 
   /** Invalidate cache for multiple users at once (e.g. bulk admin operations). */
-  async invalidateUsers(userIds: string[], tenantId = 'default'): Promise<void> {
+  async invalidateUsers(
+    userIds: string[],
+    tenantId = 'default',
+  ): Promise<void> {
     await Promise.all(userIds.map((id) => this.invalidateUser(id, tenantId)));
   }
 
   /** Invalidate analytics dashboard cache for a tenant+period. */
   async invalidateAnalytics(tenantId: string, period: string): Promise<void> {
     await this.cacheService.del(AnalyticsCacheKeys.dashboard(tenantId, period));
-    this.logger.log(`Analytics cache invalidated for tenant ${tenantId}, period ${period}`);
+    this.logger.log(
+      `Analytics cache invalidated for tenant ${tenantId}, period ${period}`,
+    );
   }
 
   /** Invalidate a single analytics snapshot. */
-  async invalidateAnalyticsSnapshot(tenantId: string, period: string, date: string): Promise<void> {
-    await this.cacheService.del(AnalyticsCacheKeys.snapshot(tenantId, period, date));
+  async invalidateAnalyticsSnapshot(
+    tenantId: string,
+    period: string,
+    date: string,
+  ): Promise<void> {
+    await this.cacheService.del(
+      AnalyticsCacheKeys.snapshot(tenantId, period, date),
+    );
   }
 
   /** Invalidate market data (price + history) for an asset pair. */
-  async invalidateMarketData(tenantId: string, assetPair: string): Promise<void> {
+  async invalidateMarketData(
+    tenantId: string,
+    assetPair: string,
+  ): Promise<void> {
     await Promise.all([
       this.cacheService.del(MarketCacheKeys.price(tenantId, assetPair)),
       this.cacheService.del(MarketCacheKeys.history(tenantId, assetPair)),
     ]);
-    this.logger.log(`Market cache invalidated for ${assetPair} (tenant: ${tenantId})`);
+    this.logger.log(
+      `Market cache invalidated for ${assetPair} (tenant: ${tenantId})`,
+    );
   }
 
   /**
@@ -190,7 +215,9 @@ export class CacheInvalidationService {
     // Invalidate asset-specific leaderboards if asset pair is provided
     if (assetPair) {
       for (let page = 1; page <= 10; page++) {
-        keysToInvalidate.push(LeaderboardCacheKeys.assetSpecific(assetPair, page));
+        keysToInvalidate.push(
+          LeaderboardCacheKeys.assetSpecific(assetPair, page),
+        );
       }
     }
 
@@ -243,7 +270,8 @@ export class CacheInvalidationService {
     eventNameList: string[];
   } {
     return {
-      listenersAttached: this.eventEmitter.listenerCount('cache.invalidated.signal') +
+      listenersAttached:
+        this.eventEmitter.listenerCount('cache.invalidated.signal') +
         this.eventEmitter.listenerCount('cache.invalidated.trade') +
         this.eventEmitter.listenerCount('cache.invalidated.user') +
         this.eventEmitter.listenerCount('cache.invalidated.dashboard'),
