@@ -14,16 +14,23 @@ import { UsersService } from '../users/users.service';
 import { AuthAuditService } from './auth-audit.service';
 import { SessionManagerService } from './session/session-manager.service';
 import { SessionFingerprintService } from './session/session-fingerprint.service';
+import { EmailService } from '../email/email.service';
 import { Request } from 'express';
 
 @Injectable()
 export class AuthService {
+    // Approximate P50 latency of a real forgotPassword lookup + email dispatch.
+    // Non-existent-user requests are padded up to this floor so response timing
+    // cannot be used to enumerate registered emails.
+    private static readonly FORGOT_PASSWORD_RESPONSE_FLOOR_MS = 150;
+
     constructor(
         private jwtService: JwtService,
         private usersService: UsersService,
         private authAuditService: AuthAuditService,
         private sessionManager: SessionManagerService,
         private sessionFingerprintService: SessionFingerprintService,
+        private emailService: EmailService,
         @Inject(CACHE_MANAGER) private cacheManager: Cache,
     ) { }
 
@@ -151,10 +158,19 @@ export class AuthService {
 
     async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
         const { email } = dto;
+        const startedAt = Date.now();
 
+        let user: { id: string; displayName?: string; username?: string } | null = null;
         try {
-            const user = await this.usersService.findByEmail(email);
+            user = await this.usersService.findByEmail(email);
+        } catch (error) {
+            // We should not reveal if user exists or not for security reasons
+            if (!(error instanceof NotFoundException)) {
+                throw error;
+            }
+        }
 
+        if (user) {
             // Generate secure token
             const token = crypto.randomBytes(32).toString('hex');
 
@@ -171,14 +187,22 @@ export class AuthService {
                     link: `https://stellarswipe.com/reset-password?token=${token}`,
                 },
             });
-        } catch (error) {
-            // We should not reveal if user exists or not for security reasons
-            if (!(error instanceof NotFoundException)) {
-                throw error;
-            }
         }
 
-        return { message: 'If an account with that email exists, a password reset link has been sent.' };
+        // Pad the response so a non-existent-user request takes as long as a
+        // real lookup + email dispatch, preventing enumeration via timing.
+        await this.padToMinimumDuration(startedAt, AuthService.FORGOT_PASSWORD_RESPONSE_FLOOR_MS);
+
+        // Always return the same message and shape regardless of whether the
+        // account exists, so the response body cannot be used to enumerate emails.
+        return { message: 'If this email is registered, you will receive a reset link.' };
+    }
+
+    private async padToMinimumDuration(startedAt: number, floorMs: number): Promise<void> {
+        const remaining = floorMs - (Date.now() - startedAt);
+        if (remaining > 0) {
+            await new Promise((resolve) => setTimeout(resolve, remaining));
+        }
     }
 
     async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {

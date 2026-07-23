@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { CacheService, CachePrefix } from './cache.service';
+import { CacheService, CachePrefix, tenantKey } from './cache.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 /** All user-data cache keys are namespaced under this prefix. */
@@ -24,6 +24,22 @@ export const SignalCacheKeys = {
   feedProvider: (providerId: string, page: number) => `${CachePrefix.SIGNAL}feed:provider:${providerId}:${page}`,
   allFeed: () => `${CachePrefix.SIGNAL}feed`,
   userSignals: (userId: string) => `${CachePrefix.SIGNAL}user:${userId}`,
+};
+
+/** Analytics dashboard cache keys */
+export const AnalyticsCacheKeys = {
+  dashboard: (tenantId: string, period: string) =>
+    tenantKey(CachePrefix.ANALYTICS, tenantId, `dashboard:${period}`),
+  snapshot: (tenantId: string, period: string, date: string) =>
+    tenantKey(CachePrefix.ANALYTICS, tenantId, `snapshot:${period}:${date}`),
+};
+
+/** Market data cache keys */
+export const MarketCacheKeys = {
+  price: (tenantId: string, assetPair: string) =>
+    tenantKey(CachePrefix.MARKET, tenantId, `price:${assetPair}`),
+  history: (tenantId: string, assetPair: string) =>
+    tenantKey(CachePrefix.MARKET, tenantId, `history:${assetPair}`),
 };
 
 /** Leaderboard and portfolio cache keys */
