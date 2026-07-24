@@ -36,7 +36,7 @@ import { ProvidersModule } from '../providers/providers.module';
 import { UsersModule } from '../users/users.module';
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
-import { createDataLoader, createGroupedDataLoader } from './utils/dataloader-factory';
+import { createDataLoader, createGroupedDataLoader } from './dataloader-factory';
 import {
   simpleComplexityEstimator,
   getComplexityLimit,

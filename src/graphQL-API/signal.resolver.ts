@@ -15,7 +15,7 @@ import { SignalFilterInput } from '../inputs/signal-filter.input';
 import { PaginationInput } from '../inputs/pagination.input';
 import { SignalsService } from '../../signals/signals.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { DataLoaderSet } from '../utils/dataloader-factory';
+import { DataLoaderSet } from './dataloader-factory';
 
 interface GqlContext {
   loaders: DataLoaderSet;

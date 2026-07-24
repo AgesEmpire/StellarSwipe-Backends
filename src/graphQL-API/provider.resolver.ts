@@ -15,7 +15,7 @@ import { ProviderType, ProviderStatsType, PaginatedProvidersType } from '../type
 import { SignalType } from '../types/signal.type';
 import { PaginationInput } from '../inputs/pagination.input';
 import { ProvidersService } from '../../providers/providers.service';
-import { DataLoaderSet } from '../utils/dataloader-factory';
+import { DataLoaderSet } from './dataloader-factory';
 import { Public } from '../../common/decorators/public.decorator';
 
 interface GqlContext {
