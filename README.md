@@ -318,7 +318,81 @@ lsof -i :3000
 kill -9 <PID>
 ```
 
-## Contributing
+## Queue Operational Runbook
+
+### Architecture
+
+Async tasks are processed via **BullMQ/Bull** backed by Redis. Three priority tiers exist:
+
+| Queue | Priority | Use case |
+|---|---|---|
+| `critical-queue` | 1 (highest) | Market order execution, stop-loss triggers |
+| `priority-queue` | 10–100 | Limit orders, notifications, webhooks |
+| `low-priority-queue` | 1000 (lowest) | Analytics, leaderboard updates |
+| `dead-letter` | — | Failed jobs after all retries exhausted |
+| `notifications` | 100 (NORMAL) | Async notification delivery |
+
+### Retry Policy
+
+All queued jobs use exponential backoff with 3 attempts by default:
+```
+attempts: 3, backoff: { type: 'exponential', delay: 2000ms }
+```
+Fatal errors (unauthorized, not found, validation failed) skip retries and go directly to the DLQ.
+
+### Dead-Letter Queue (DLQ)
+
+Jobs that exhaust all retries land in the `dead-letter` queue. Operators can:
+
+```bash
+# List dead-lettered jobs
+GET /api/v1/admin/dead-letter
+
+# Retry a specific DLQ entry
+POST /api/v1/admin/dead-letter/:id/retry
+
+# Discard a DLQ entry permanently
+DELETE /api/v1/admin/dead-letter/:id
+```
+
+### Job Scheduler Dashboard
+
+```bash
+# View all registered cron jobs and last execution status
+GET /api/v1/jobs/status
+
+# View execution history for a job
+GET /api/v1/jobs/:name/history
+
+# Trigger a job immediately
+POST /api/v1/jobs/:name/trigger
+
+# Pause / resume a job
+POST /api/v1/jobs/:name/pause
+POST /api/v1/jobs/:name/resume
+```
+
+### Health Check
+
+Queue connectivity is included in the readiness probe:
+
+```bash
+GET /api/v1/health/queue   # queue-only check
+GET /api/v1/health/ready   # full readiness (DB + Redis + queue + blockchain)
+```
+
+A `503` on `/health/queue` means Redis is unreachable (Bull uses Redis). Restore Redis connectivity — Bull reconnects automatically.
+
+### Cron Expression Overrides
+
+All cron schedules can be overridden via environment variables without code changes. See `JobSchedulerService.register()` for the `cronEnvKey` per job.
+
+### Stuck Job Detection
+
+`StuckJobDetectorService` runs every 5 minutes and quarantines active jobs that exceed their registered `maxDurationMs`. Quarantined jobs are moved to failed state and logged with `type: job_quarantined`.
+
+---
+
 
 1. Create feature branch: `git checkout -b feature/new-feature`
 2. Commit changes using the [Conventional Commits](https://www.conventionalcommits.org/) format, e.g. `git commit -m 'feat(trades): add new feature'`

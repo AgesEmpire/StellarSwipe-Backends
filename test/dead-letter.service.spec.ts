@@ -1,6 +1,7 @@
 import { DeadLetterService, DEAD_LETTER_QUEUE } from '../src/jobs/dead-letter.service';
 import { getQueueToken } from '@nestjs/bull';
 import { Test } from '@nestjs/testing';
+import { Queue } from 'bull';
 
 const makeDlqMock = () => ({
   add: jest.fn().mockResolvedValue({ id: 'dlq-1' }),
@@ -85,7 +86,7 @@ describe('DeadLetterService (#368)', () => {
 
     const result = await service.replay('dlq-1', targetQueue);
 
-    expect(targetAdd).toHaveBeenCalledWith({ userId: 42 }, { attempts: 3 });
+    expect(targetAdd).toHaveBeenCalledWith({ userId: 42 }, { priority: 100, attempts: 3 });
     expect(remove).toHaveBeenCalled();
     expect(result).toEqual({ id: 'new-1' });
   });
