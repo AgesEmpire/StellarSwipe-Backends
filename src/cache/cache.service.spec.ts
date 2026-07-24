@@ -146,6 +146,74 @@ describe('CacheService', () => {
     });
   });
 
+  describe('fetchWithEarlyRecomputation (XFetch stampede prevention)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('coalesces concurrent hard misses into a single computeFn call', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      mockCacheManager.set.mockResolvedValue(undefined);
+
+      let resolveDb: (v: any) => void;
+      const dbPromise = new Promise((res) => {
+        resolveDb = res;
+      });
+      const computeFn = jest.fn().mockReturnValue(dbPromise);
+
+      const calls = Array.from({ length: 10 }, () =>
+        service.fetchWithEarlyRecomputation('feed-key', 30, computeFn),
+      );
+      resolveDb!({ signals: [] });
+      const results = await Promise.all(calls);
+
+      expect(computeFn).toHaveBeenCalledTimes(1);
+      results.forEach((r) => expect(r).toEqual({ signals: [] }));
+    });
+
+    it('serves the cached value without recomputing when nowhere near expiry', async () => {
+      const entry = { value: { signals: ['a'] }, delta: 50, expiry: Date.now() + 60_000, beta: 1 };
+      mockCacheManager.get.mockResolvedValue(entry);
+      jest.spyOn(Math, 'random').mockReturnValue(0.9); // ln(0.9) is small in magnitude
+      const computeFn = jest.fn();
+
+      const result = await service.fetchWithEarlyRecomputation('feed-key', 30, computeFn, 1);
+
+      expect(result).toEqual({ signals: ['a'] });
+      expect(computeFn).not.toHaveBeenCalled();
+    });
+
+    it('triggers exactly one background recompute when many readers hit near expiry, without blocking any of them', async () => {
+      // expiry 1ms in the future with a large delta/beta guarantees the XFetch
+      // condition fires regardless of the random draw.
+      const entry = { value: { signals: ['stale'] }, delta: 10_000, expiry: Date.now() + 1, beta: 5 };
+      mockCacheManager.get.mockResolvedValue(entry);
+      mockCacheManager.set.mockResolvedValue(undefined);
+      jest.spyOn(Math, 'random').mockReturnValue(0.5);
+
+      let resolveDb: (v: any) => void;
+      const dbPromise = new Promise((res) => {
+        resolveDb = res;
+      });
+      const computeFn = jest.fn().mockReturnValue(dbPromise);
+
+      const calls = Array.from({ length: 10 }, () =>
+        service.fetchWithEarlyRecomputation('feed-key', 30, computeFn, 5),
+      );
+      const results = await Promise.all(calls);
+
+      // All 10 concurrent readers get the still-valid stale value immediately —
+      // none of them wait on the recompute.
+      results.forEach((r) => expect(r).toEqual({ signals: ['stale'] }));
+      resolveDb!({ signals: ['fresh'] });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Exactly one background recompute was triggered despite 10 near-simultaneous readers.
+      expect(computeFn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('getTTL', () => {
     it.each<[CacheTTLType, number]>([
       ['session', 86400],

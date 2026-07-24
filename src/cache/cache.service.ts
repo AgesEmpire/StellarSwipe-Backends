@@ -172,6 +172,7 @@ export class CacheService {
      * into a single DB/upstream call.
      */
     private readonly inflightRequests = new Map<string, Promise<any>>();
+    private readonly inflightXFetchRequests = new Map<string, Promise<XFetchEntry<any>>>();
 
     async getOrSetWithLock<T>(
         key: string,
@@ -201,4 +202,99 @@ export class CacheService {
     getTTL(ttlType: CacheTTLType): number {
         return this.ttlConfig[ttlType];
     }
+
+    /**
+     * Stampede-safe getOrSet using Probabilistic Early Recomputation (XFetch).
+     *
+     * Instead of waiting for hard TTL expiry — where every concurrent
+     * requester finds a simultaneous miss and stampedes the DB — each read
+     * near expiry has a probability of triggering a recompute early. That
+     * probability rises as the entry approaches expiry and scales with how
+     * expensive the last recompute was, so a smooth stream of early
+     * refreshes replaces one big thundering-herd spike. Unlike
+     * `getOrSetWithLock`, other concurrent readers are never blocked on the
+     * recompute — they keep getting the still-valid cached value while one
+     * winner refreshes it in the background.
+     *
+     * recompute if: now - (delta * beta * ln(random())) > expiry
+     * (Vattani, Chierichetti & Lowenstein, "Optimal Probabilistic Cache Stampede Prevention", 2015)
+     */
+    async fetchWithEarlyRecomputation<T>(
+        key: string,
+        ttlSeconds: number,
+        computeFn: () => Promise<T>,
+        beta = 1,
+    ): Promise<T> {
+        // `get()` already records the hit/miss metric for this lookup.
+        const entry = await this.get<XFetchEntry<T>>(key);
+        const now = Date.now();
+
+        if (entry !== undefined && entry !== null) {
+            const xfetch = entry.delta * beta * Math.log(Math.random());
+            if (now - xfetch < entry.expiry) {
+                // Still fresh and the probabilistic check didn't fire — serve as-is.
+                return entry.value;
+            }
+
+            this.prometheusService?.cacheEarlyRecomputeTotal.inc({ layer: 'redis' });
+            // Recompute in the background; concurrent/subsequent readers keep
+            // getting the still-valid cached value until it lands, so nobody
+            // blocks and only one recompute runs per key.
+            this.recomputeInBackground(key, ttlSeconds, computeFn, beta);
+            return entry.value;
+        }
+
+        // Hard miss — coalesce concurrent callers into a single computeFn call.
+        return this.getOrSetXFetchEntry(key, ttlSeconds, computeFn, beta);
+    }
+
+    private recomputeInBackground<T>(
+        key: string,
+        ttlSeconds: number,
+        computeFn: () => Promise<T>,
+        beta: number,
+    ): void {
+        if (this.inflightXFetchRequests.has(key)) {
+            // A refresh for this key is already in flight.
+            return;
+        }
+        void this.getOrSetXFetchEntry(key, ttlSeconds, computeFn, beta).catch((error) => {
+            this.logger.error(`XFetch background recompute failed for key ${key}:`, error);
+        });
+    }
+
+    private async getOrSetXFetchEntry<T>(
+        key: string,
+        ttlSeconds: number,
+        computeFn: () => Promise<T>,
+        beta: number,
+    ): Promise<T> {
+        const existingFlight = this.inflightXFetchRequests.get(key);
+        if (existingFlight) {
+            return existingFlight.then((entry) => entry.value);
+        }
+
+        const promise = (async (): Promise<XFetchEntry<T>> => {
+            const start = Date.now();
+            const value = await computeFn();
+            const delta = Math.max(Date.now() - start, 1);
+            const entry: XFetchEntry<T> = { value, delta, expiry: Date.now() + ttlSeconds * 1000, beta };
+            await this.setWithTTL(key, entry, ttlSeconds);
+            return entry;
+        })().finally(() => {
+            this.inflightXFetchRequests.delete(key);
+        });
+
+        this.inflightXFetchRequests.set(key, promise);
+        return promise.then((entry) => entry.value);
+    }
+}
+
+interface XFetchEntry<T> {
+    value: T;
+    /** Duration the last recompute took, in ms — drives recompute urgency. */
+    delta: number;
+    /** Absolute expiry time (epoch ms) of this entry. */
+    expiry: number;
+    beta: number;
 }
