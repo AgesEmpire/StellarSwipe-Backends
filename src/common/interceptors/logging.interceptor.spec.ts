@@ -4,6 +4,7 @@ import { of, throwError } from 'rxjs';
 import { LoggingInterceptor } from './logging.interceptor';
 import { LoggerService } from '../logger';
 import { CorrelationIdStore } from '../correlation/correlation-id.store';
+import { ConfigService } from '@nestjs/config';
 
 describe('LoggingInterceptor', () => {
   let interceptor: LoggingInterceptor;
@@ -27,6 +28,10 @@ describe('LoggingInterceptor', () => {
         LoggingInterceptor,
         { provide: LoggerService, useValue: logger },
         { provide: CorrelationIdStore, useValue: correlationIdStore },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue('test') },
+        },
       ],
     }).compile();
 

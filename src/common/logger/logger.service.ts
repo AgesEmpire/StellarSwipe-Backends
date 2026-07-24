@@ -1,4 +1,8 @@
-import { Injectable, LoggerService as NestLoggerService } from '@nestjs/common';
+import {
+  Injectable,
+  LoggerService as NestLoggerService,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
@@ -19,7 +23,7 @@ export class LoggerService implements NestLoggerService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly correlationIdStore: CorrelationIdStore,
+    @Optional() private readonly correlationIdStore?: CorrelationIdStore,
   ) {
     this.initializeLogger();
   }
@@ -34,35 +38,15 @@ export class LoggerService implements NestLoggerService {
 
     const transports: winston.transport[] = [];
 
-    // Console transport
-    if (nodeEnv === 'development') {
-      transports.push(
-        new winston.transports.Console({
-          format: winston.format.combine(
-            winston.format.colorize(),
-            winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-            winston.format.printf((info) => {
-              const ctx = info.context ? `[${info.context}]` : '';
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { timestamp, level, message, context, ...meta } = info;
-              const metaStr = Object.keys(meta).length
-                ? `\n${JSON.stringify(meta, null, 2)}`
-                : '';
-              return `${timestamp} ${level} ${ctx} ${message}${metaStr}`;
-            }),
-          ),
-        }),
-      );
-    } else {
-      transports.push(
-        new winston.transports.Console({
-          format: winston.format.combine(
-            winston.format.timestamp(),
-            winston.format.json(),
-          ),
-        }),
-      );
-    }
+    // Keep console output machine-readable in every environment.
+    transports.push(
+      new winston.transports.Console({
+        format: winston.format.combine(
+          winston.format.timestamp(),
+          winston.format.json(),
+        ),
+      }),
+    );
 
     // File transports for production
     if (nodeEnv === 'production') {
@@ -115,7 +99,7 @@ export class LoggerService implements NestLoggerService {
    * request-scoped correlation ID, when one is available.
    */
   private baseMeta(): Record<string, any> {
-    const correlationId = this.correlationIdStore.getCorrelationId();
+    const correlationId = this.correlationIdStore?.getCorrelationId();
     return {
       context: this.context,
       ...(correlationId ? { correlationId } : {}),
