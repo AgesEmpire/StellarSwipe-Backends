@@ -35,8 +35,16 @@ export class MonitorTransactionsJob implements OnModuleInit {
                     repeat: {
                         every: 5000, // 5 seconds
                     },
+                    attempts: 3,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 5000,
+                    },
                     removeOnComplete: true,
-                    removeOnFail: true,
+                    // Keep a bounded history of failed cycles instead of discarding them —
+                    // the trade-dlq processor and the admin failed-jobs endpoint both
+                    // depend on failed jobs being inspectable after exhausting retries.
+                    removeOnFail: { count: 200 },
                 },
             );
             this.logger.log('Registered repeatable transaction monitoring job');

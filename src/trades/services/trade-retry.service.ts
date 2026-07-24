@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Trade, TradeStatus } from '../trades/entities/trade.entity';
-import { TradeExecutorService, ExecutionResult } from '../trades/services/trade-executor.service';
+import { Trade, TradeStatus } from '../entities/trade.entity';
+import { TradeExecutorService, ExecutionResult } from './trade-executor.service';
 
 export interface RetryLog {
   attempt: number;
@@ -87,11 +87,22 @@ export class TradeRetryService {
     };
   }
 
-  async retryFailedTrade(tradeId: string): Promise<RetryableError> {
+  async retryFailedTrade(
+    tradeId: string,
+    requestingUserId?: string,
+    isAdmin = false,
+  ): Promise<RetryableError> {
     const trade = await this.tradeRepository.findOne({ where: { id: tradeId } });
 
     if (!trade) {
       return { retryable: false, message: 'Trade not found', logs: [] };
+    }
+
+    if (!isAdmin && trade.userId !== requestingUserId) {
+      this.logger.warn(
+        `User ${requestingUserId} attempted to retry trade ${tradeId} owned by ${trade.userId}`,
+      );
+      return { retryable: false, message: 'You may only retry your own trades', logs: [] };
     }
 
     if (trade.status !== TradeStatus.FAILED) {
