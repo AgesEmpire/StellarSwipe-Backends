@@ -22,6 +22,8 @@ import { WebsocketModule } from '../websocket/websocket.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TxMonitorService } from './services/tx-monitor.service';
 import { MonitorTransactionsJob } from './jobs/monitor-transactions.job';
+import { TradeDlqProcessor } from './jobs/trade-dlq.processor';
+import { TradeDlqController } from './trade-dlq.controller';
 import { PartialCloseService } from './partial-close/partial-close.service';
 import { TradeHistoryService } from './trade-history.service';
 import { TradeOutcomeService } from './trade-outcome.service';
@@ -52,7 +54,7 @@ import { TradeRetryController } from './trade-retry.controller';
     AuditModule,
     NotificationsModule,
   ],
-  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController, TradeRetryController],
+  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController, TradeRetryController, TradeDlqController],
   providers: [
     TradesService,
     MarketOrderService,
@@ -61,6 +63,7 @@ import { TradeRetryController } from './trade-retry.controller';
     StellarConfigService,
     TxMonitorService,
     MonitorTransactionsJob,
+    TradeDlqProcessor,
     OcoOrderService,
     IcebergOrderService,
     PartialCloseService,

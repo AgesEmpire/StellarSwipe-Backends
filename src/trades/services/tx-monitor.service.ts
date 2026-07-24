@@ -6,6 +6,11 @@ import { StellarConfigService } from '../../config/stellar.service';
 import { WebsocketGateway } from '../../websocket/websocket.gateway';
 import { SocketEvent } from '../../websocket/dto/socket-event.dto';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { NotificationsService } from '../../notifications/notifications.service';
+import {
+    NotificationType,
+    NotificationChannel,
+} from '../../notifications/entities/notification.entity';
 
 @Injectable()
 export class TxMonitorService {
@@ -17,6 +22,7 @@ export class TxMonitorService {
         private readonly tradeRepository: Repository<Trade>,
         private readonly stellarConfig: StellarConfigService,
         private readonly websocketGateway: WebsocketGateway,
+        private readonly notificationsService: NotificationsService,
     ) {
         this.server = new StellarSdk.Horizon.Server(this.stellarConfig.horizonUrl);
     }
@@ -89,6 +95,23 @@ export class TxMonitorService {
             await this.tradeRepository.save(trade);
             this.emitUpdate(trade);
             this.logger.warn(`Trade ${trade.id} marked as FAILED: ${reason}`);
+
+            try {
+                await this.notificationsService.createAndQueueNotification(
+                    trade.userId,
+                    NotificationType.RISK_ALERT,
+                    'Trade failed',
+                    `Your trade ${trade.id} failed: ${reason}. You can retry it from your trade history.`,
+                    NotificationChannel.BOTH,
+                    { tradeId: trade.id, reason, retryable: true },
+                );
+            } catch (notifyError: any) {
+                // Notification delivery is best-effort — never let it block the
+                // status update that already succeeded above.
+                this.logger.error(
+                    `Failed to send failure notification for trade ${trade.id}: ${notifyError.message}`,
+                );
+            }
         }
     }
 

@@ -8,7 +8,9 @@ export class TradeRetryController {
   constructor(private readonly tradeRetryService: TradeRetryService) {}
 
   @Post(':id/retry')
-  retryTrade(@Param('id') id: string) {
-    return this.tradeRetryService.retryFailedTrade(id);
+  retryTrade(@Param('id') id: string, @Request() req: any) {
+    const requestingUserId: string = req.user?.id ?? req.user?.sub;
+    const isAdmin: boolean = req.user?.roles?.includes('admin') ?? false;
+    return this.tradeRetryService.retryFailedTrade(id, requestingUserId, isAdmin);
   }
 }
