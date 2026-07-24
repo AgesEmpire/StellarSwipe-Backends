@@ -16,3 +16,4 @@ export {
 } from './current-wallet.decorator';
 export { Transactional, TRANSACTIONAL_KEY } from './transactional.decorator';
 export { Internal, INTERNAL_FIELD_KEY } from './internal.decorator';
+export { UseAuth } from './use-auth.decorator';

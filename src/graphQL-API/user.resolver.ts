@@ -4,6 +4,8 @@ import { UseGuards, Logger } from '@nestjs/common';
 import { GqlAuthGuard } from '../guards/gql-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from '../../users/users.service';
+import { Roles } from '../../authorization/decorators/roles.decorator';
+import { RolesGuard } from '../../authorization/guards/roles.guard';
 
 /** Lightweight user type — mirrors what the JWT payload exposes. */
 @ObjectType()
@@ -52,11 +54,11 @@ export class UserResolver {
     nullable: true,
     description: 'Public profile lookup by user ID (admin only)',
   })
+  @UseGuards(RolesGuard)
+  @Roles('admin')
   async userById(
     @Args('id', { type: () => ID }) id: string,
-    @CurrentUser() currentUser: { id: string; role: string },
   ): Promise<GqlUserType | null> {
-    if (currentUser.role !== 'admin') return null;
     return this.usersService.findById(id);
   }
 }

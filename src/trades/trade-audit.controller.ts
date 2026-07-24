@@ -21,6 +21,7 @@ import { IsDateString, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validat
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OwnershipGuard } from '../common/guards/ownership.guard';
 import { TradeHistoryService, PaginatedTradeHistoryDto } from './trade-history.service';
 import { AuditService, AuditLogPage } from '../audit-log/audit.service';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
@@ -146,8 +147,8 @@ export class TradeAuditController {
 
   private assertSelf(req: any, targetUserId: string): void {
     const requestingUserId: string = req.user?.id ?? req.user?.sub;
-    const isAdmin: boolean = req.user?.roles?.includes('admin') ?? false;
-    if (!isAdmin && requestingUserId !== targetUserId) {
+    const isOwner = requestingUserId === targetUserId;
+    if (!isOwner) {
       throw new ForbiddenException('You may only access your own trade data');
     }
   }
