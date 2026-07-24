@@ -27,6 +27,7 @@ export class PrometheusService implements OnModuleInit {
   // Cache metrics
   readonly cacheHitsTotal: Counter;
   readonly cacheMissesTotal: Counter;
+  readonly cacheEarlyRecomputeTotal: Counter;
 
   // DB metrics
   readonly dbQueryDuration: Histogram;
@@ -106,6 +107,13 @@ export class PrometheusService implements OnModuleInit {
     this.cacheMissesTotal = new Counter({
       name: 'cache_misses_total',
       help: 'Total cache misses',
+      labelNames: ['layer'],
+      registers: [this.registry],
+    });
+
+    this.cacheEarlyRecomputeTotal = new Counter({
+      name: 'cache_early_recompute_total',
+      help: 'Total probabilistic early recomputations (XFetch) triggered before TTL expiry',
       labelNames: ['layer'],
       registers: [this.registry],
     });

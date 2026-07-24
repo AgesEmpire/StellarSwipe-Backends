@@ -79,10 +79,10 @@ export class SignalsService {
   }
 
   async findAll(): Promise<Signal[]> {
-    return this.cacheService.getOrSetWithLock(
+    return this.cacheService.fetchWithEarlyRecomputation(
       SignalsService.FEED_KEY,
+      this.cacheService.getTTL('signal'),
       () => this.signalRepository.find({ order: { createdAt: 'DESC' }, take: 100 }),
-      'signal',
     );
   }
 
