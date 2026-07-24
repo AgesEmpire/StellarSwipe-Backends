@@ -7,6 +7,9 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
+import { AuthAuditService } from './auth-audit.service';
+import { SessionManagerService } from './session/session-manager.service';
+import { SessionFingerprintService } from './session/session-fingerprint.service';
 
 describe('AuthService', () => {
     let service: AuthService;
@@ -14,6 +17,9 @@ describe('AuthService', () => {
     let jwtServiceSpec: any;
     let usersServiceSpec: any;
     let emailServiceSpec: any;
+    let authAuditServiceSpec: any;
+    let sessionManagerSpec: any;
+    let sessionFingerprintServiceSpec: any;
 
     const mockCacheStore = new Map();
 
@@ -46,6 +52,23 @@ describe('AuthService', () => {
             sendEmail: jest.fn().mockResolvedValue(undefined),
         };
 
+        authAuditServiceSpec = {
+            logLoginFailed: jest.fn().mockResolvedValue(undefined),
+            logLogin: jest.fn().mockResolvedValue(undefined),
+        };
+
+        sessionManagerSpec = {
+            issueTokens: jest.fn().mockResolvedValue({
+                accessToken: 'mock-jwt-token',
+                refreshToken: 'mock-refresh-token',
+                expiresIn: 3600,
+            }),
+        };
+
+        sessionFingerprintServiceSpec = {
+            checkAndRecord: jest.fn().mockResolvedValue(undefined),
+        };
+
         const module: TestingModule = await Test.createTestingModule({
             providers: [
                 AuthService,
@@ -64,6 +87,18 @@ describe('AuthService', () => {
                 {
                     provide: EmailService,
                     useValue: emailServiceSpec,
+                },
+                {
+                    provide: AuthAuditService,
+                    useValue: authAuditServiceSpec,
+                },
+                {
+                    provide: SessionManagerService,
+                    useValue: sessionManagerSpec,
+                },
+                {
+                    provide: SessionFingerprintService,
+                    useValue: sessionFingerprintServiceSpec,
                 },
             ],
         }).compile();
@@ -111,13 +146,15 @@ describe('AuthService', () => {
     });
 
     describe('forgotPassword', () => {
+        const GENERIC_MESSAGE = 'If this email is registered, you will receive a reset link.';
+
         it('should send a reset email if user exists', async () => {
             const user = { id: 'user-uuid', email: 'test@example.com', username: 'testuser' };
             usersServiceSpec.findByEmail.mockResolvedValue(user);
 
             const result = await service.forgotPassword({ email: 'test@example.com' });
 
-            expect(result.message).toContain('password reset link has been sent');
+            expect(result.message).toBe(GENERIC_MESSAGE);
             expect(cacheManagerSpec.set).toHaveBeenCalled();
             expect(emailServiceSpec.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
                 template: 'password-reset',
@@ -129,8 +166,36 @@ describe('AuthService', () => {
 
             const result = await service.forgotPassword({ email: 'nonexistent@example.com' });
 
-            expect(result.message).toContain('password reset link has been sent');
+            expect(result.message).toBe(GENERIC_MESSAGE);
             expect(emailServiceSpec.sendEmail).not.toHaveBeenCalled();
+        });
+
+        it('should return identical response shape for existing and non-existing email', async () => {
+            usersServiceSpec.findByEmail.mockResolvedValueOnce({ id: 'user-uuid', username: 'testuser' });
+            const existingResult = await service.forgotPassword({ email: 'test@example.com' });
+
+            usersServiceSpec.findByEmail.mockRejectedValueOnce(new NotFoundException());
+            const nonExistingResult = await service.forgotPassword({ email: 'nonexistent@example.com' });
+
+            expect(Object.keys(existingResult)).toEqual(Object.keys(nonExistingResult));
+            expect(existingResult).toEqual(nonExistingResult);
+        });
+
+        it('should keep response time for a non-existent email within 100ms of an existing email', async () => {
+            usersServiceSpec.findByEmail.mockResolvedValueOnce({ id: 'user-uuid', username: 'testuser' });
+            emailServiceSpec.sendEmail.mockImplementationOnce(
+                () => new Promise((resolve) => setTimeout(resolve, 20)),
+            );
+            const existingStart = Date.now();
+            await service.forgotPassword({ email: 'test@example.com' });
+            const existingDuration = Date.now() - existingStart;
+
+            usersServiceSpec.findByEmail.mockRejectedValueOnce(new NotFoundException());
+            const nonExistingStart = Date.now();
+            await service.forgotPassword({ email: 'nonexistent@example.com' });
+            const nonExistingDuration = Date.now() - nonExistingStart;
+
+            expect(Math.abs(existingDuration - nonExistingDuration)).toBeLessThan(100);
         });
     });
 
@@ -182,7 +247,7 @@ describe('AuthService', () => {
             });
 
             expect(result.accessToken).toBe('mock-jwt-token');
-            expect(jwtServiceSpec.sign).toHaveBeenCalledWith({ sub: 'user-uuid' });
+            expect(sessionManagerSpec.issueTokens).toHaveBeenCalledWith('user-uuid', kp.publicKey(), expect.any(Object));
             expect(cacheManagerSpec.del).toHaveBeenCalledWith(`auth_challenge:${kp.publicKey()}`);
         });
 
