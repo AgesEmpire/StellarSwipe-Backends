@@ -17,12 +17,14 @@ import { queryCounterStore } from './query-counter.store';
 export interface NPlus1DetectionConfig {
   maxQueriesPerRequest: number;
   maxQueryTimeMs: number;
+  logInProduction: boolean;
 }
 
 @Injectable()
 export class NPlus1DetectionInterceptor implements NestInterceptor {
   private readonly logger = new Logger(NPlus1DetectionInterceptor.name);
   private readonly config: NPlus1DetectionConfig;
+  private readonly nodeEnv: string;
 
   constructor(
     configService: ConfigService,
@@ -31,16 +33,12 @@ export class NPlus1DetectionInterceptor implements NestInterceptor {
     this.config = {
       maxQueriesPerRequest: configService.get<number>('NPLUS1_MAX_QUERIES', 25),
       maxQueryTimeMs: configService.get<number>('NPLUS1_MAX_QUERY_TIME_MS', 1000),
+      logInProduction: configService.get<boolean>('NPLUS1_LOG_IN_PRODUCTION', false),
     };
+    this.nodeEnv = process.env.NODE_ENV || 'development';
   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const nodeEnv = process.env.NODE_ENV;
-
-    if (nodeEnv !== 'development') {
-      return next.handle();
-    }
-
     const request = context.switchToHttp().getRequest();
     const url = request.url;
     const method = request.method;
@@ -48,7 +46,7 @@ export class NPlus1DetectionInterceptor implements NestInterceptor {
     return queryCounterStore.run(
       { method, url },
       () => next.handle().pipe(
-        tap({ 
+        tap({
           complete: () => this.checkAndWarn(url, method),
           error: () => this.checkAndWarn(url, method),
         }),
@@ -56,16 +54,30 @@ export class NPlus1DetectionInterceptor implements NestInterceptor {
     );
   }
 
+  private shouldReport(): boolean {
+    if (this.nodeEnv === 'development') return true;
+    if (this.nodeEnv === 'test') return false;
+    return this.config.logInProduction;
+  }
+
   private checkAndWarn(url: string, method: string): void {
+    if (!this.shouldReport()) return;
+
     const snapshot = queryCounterStore.snapshot;
     if (!snapshot) return;
 
     if (snapshot.queryCount >= this.config.maxQueriesPerRequest) {
-      this.logger.warn(
-        `Possible N+1 query pattern detected on ${method} ${url}: ` +
+      const severity = this.nodeEnv === 'development' ? 'warn' : 'error';
+      const message =
+        `N+1 query pattern detected on ${method} ${url}: ` +
         `${snapshot.queryCount} queries (threshold: ${this.config.maxQueriesPerRequest}), ` +
-        `total time: ${snapshot.totalTimeMs}ms (threshold: ${this.config.maxQueryTimeMs}ms)`,
-      );
+        `total time: ${snapshot.totalTimeMs}ms`;
+
+      if (severity === 'warn') {
+        this.logger.warn(message);
+      } else {
+        this.logger.error(message, undefined, 'NPlus1Detection');
+      }
     } else if (snapshot.totalTimeMs >= this.config.maxQueryTimeMs) {
       this.logger.warn(
         `Slow query aggregate on ${method} ${url}: ` +

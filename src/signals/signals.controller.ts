@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
@@ -30,6 +31,7 @@ import { IdempotencyInterceptor } from '../common/interceptors/idempotency.inter
 import { RequireIdempotencyKeyGuard } from '../common/guards/require-idempotency-key.guard';
 import { RequireScopes } from '../api-keys/decorators/require-scopes.decorator';
 import { ApiKeyScope } from '../api-keys/enums/api-key-scope.enum';
+import { CursorPaginationQueryDto } from '../common/pagination/cursor-pagination-query.dto';
 
 @Controller('signals')
 @UseInterceptors(IdempotencyInterceptor)
@@ -75,7 +77,7 @@ export class SignalsController {
           );
         } else if (error.message.includes('balance')) {
           errorMessage = await this.i18n.translate(
-            'errors.INSUFFICIENT_BALANCE',
+            'errors.INSUFFICIENT_BALCHASE',
             lang,
           );
         } else {
@@ -87,10 +89,26 @@ export class SignalsController {
     }
   }
 
+  /**
+   * GET /signals
+   *
+   * Paginated signal feed. Supports both cursor-based and offset pagination.
+   *
+   * Cursor-based: GET /signals?after=<cursor>&limit=20
+   * Offset-based: GET /signals?page=1&limit=20  (backward compatible)
+   *
+   * Issue #887 — standardized pagination
+   */
   @Get()
   @RequireScopes(ApiKeyScope.SIGNALS_READ)
-  async findAll(): Promise<Signal[]> {
-    return this.signalsService.findAll();
+  async findAll(
+    @Query() query: CursorPaginationQueryDto,
+  ) {
+    return this.signalsService.findPaginated(
+      query.page ?? 1,
+      query.limit ?? 20,
+      'createdAt',
+    );
   }
 
   @Get(':id')
