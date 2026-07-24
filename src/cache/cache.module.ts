@@ -7,6 +7,7 @@ import { redisStore } from 'cache-manager-redis-yet';
 import { FeedCacheStrategy } from './strategies/feed-cache.strategy';
 import { ProviderCacheStrategy } from './strategies/provider-cache.strategy';
 import { PriceCacheStrategy } from './strategies/price-cache.strategy';
+import { PortfolioCacheStrategy } from './strategies/portfolio-cache.strategy';
 import { CacheInvalidatorService } from './invalidation/cache-invalidator.service';
 import { CacheMetricsService } from './monitoring/cache-metrics.service';
 import { CacheController } from './cache.controller';
@@ -18,6 +19,8 @@ import { ResponseCacheService, ResponseCacheInterceptor } from './response-cache
 import { TradingCacheService } from './trading-cache.service';
 import { CacheWarmupService } from './cache-warmup.service';
 import { CacheReconciliationJob } from './cache-reconciliation.job';
+import { SignalFeedCacheService } from './signal-feed-cache.service';
+import { TradeHistoryCacheService } from './trade-history-cache.service';
 import { Signal } from '../signals/entities/signal.entity';
 
 @Global()
@@ -50,6 +53,7 @@ import { Signal } from '../signals/entities/signal.entity';
     FeedCacheStrategy,
     ProviderCacheStrategy,
     PriceCacheStrategy,
+    PortfolioCacheStrategy,
     CacheInvalidatorService,
     CacheMetricsService,
     CacheInvalidationService,
@@ -60,6 +64,8 @@ import { Signal } from '../signals/entities/signal.entity';
     TradingCacheService,
     CacheWarmupService,
     CacheReconciliationJob,
+    SignalFeedCacheService,
+    TradeHistoryCacheService,
   ],
   controllers: [CacheController],
   exports: [
@@ -67,6 +73,7 @@ import { Signal } from '../signals/entities/signal.entity';
     FeedCacheStrategy,
     ProviderCacheStrategy,
     PriceCacheStrategy,
+    PortfolioCacheStrategy,
     CacheInvalidatorService,
     CacheMetricsService,
     CacheInvalidationService,
@@ -76,6 +83,8 @@ import { Signal } from '../signals/entities/signal.entity';
     ResponseCacheInterceptor,
     TradingCacheService,
     CacheWarmupService,
+    SignalFeedCacheService,
+    TradeHistoryCacheService,
   ],
 })
 export class CacheModule { }

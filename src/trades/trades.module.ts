@@ -36,6 +36,7 @@ import { SwipeController } from './swipe/swipe.controller';
 import { SwipeService } from './swipe/swipe.service';
 import { MarketOrderService } from './services/market-order.service';
 import { MarketOrderController } from './market-order.controller';
+import { BatchOrderService } from './batch-order.service';
 import { TradeRetryService } from './services/trade-retry.service';
 import { TradeRetryController } from './trade-retry.controller';
 import { TradeSagaOrchestrator } from './saga/trade-saga.orchestrator';
