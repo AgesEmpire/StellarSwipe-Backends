@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  Inject,
+  Logger,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -10,8 +16,21 @@ import { FlagAssignment } from './entities/flag-assignment.entity';
 import { CreateFlagDto, UpdateFlagDto } from './dto/create-flag.dto';
 import { FlagEvaluationResult } from './dto/evaluate-flag.dto';
 
+/**
+ * Required flags that must exist at startup.
+ * Each entry defines the flag name and its safe default when missing.
+ * Add new required flags here — the startup validator will auto-seed them.
+ */
+const REQUIRED_FLAGS: Array<{ name: string; description: string; enabled: boolean }> = [
+  { name: 'trade-execution', description: 'Enable trade execution flow', enabled: true },
+  { name: 'signal-feed', description: 'Enable signal feed for users', enabled: true },
+  { name: 'copy-trading', description: 'Enable copy-trading feature', enabled: true },
+  { name: 'provider-onboarding', description: 'Enable provider onboarding flow', enabled: false },
+  { name: 'kyc-required', description: 'Enforce KYC before trading', enabled: false },
+];
+
 @Injectable()
-export class FeatureFlagsService {
+export class FeatureFlagsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(FeatureFlagsService.name);
 
   /** Flags that are force-enabled/disabled via environment variables.
@@ -188,5 +207,34 @@ export class FeatureFlagsService {
 
   async getUserAssignments(userId: string): Promise<FlagAssignment[]> {
     return this.assignmentRepository.find({ where: { userId } });
+  }
+
+  /**
+   * Startup validation — Issue #897.
+   * Ensures every required flag exists in the DB with a sensible default.
+   * Env overrides (FEATURE_FLAGS_OVERRIDES) take precedence at evaluation
+   * time, so this only seeds missing DB records.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    const missing: string[] = [];
+
+    for (const def of REQUIRED_FLAGS) {
+      const exists = await this.flagRepository.findOne({ where: { name: def.name } });
+      if (!exists) {
+        missing.push(def.name);
+        await this.flagRepository.save(
+          this.flagRepository.create({ ...def, type: 'boolean', config: {} }),
+        );
+      }
+    }
+
+    if (missing.length) {
+      this.logger.warn(
+        `[FeatureFlags] Auto-seeded ${missing.length} missing required flag(s): ${missing.join(', ')}. ` +
+          'Review defaults in feature-flags.service.ts → REQUIRED_FLAGS.',
+      );
+    } else {
+      this.logger.log('[FeatureFlags] All required feature flags are present.');
+    }
   }
 }

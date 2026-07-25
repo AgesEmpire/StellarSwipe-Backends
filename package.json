@@ -34,7 +34,9 @@
     "seed": "ts-node -r tsconfig-paths/register src/database/seeds/seed.ts",
     "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0",
     "changelog:init": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0 --release-count 0",
-    "docs:module-graph": "node scripts/generate-module-graph.js"
+    "docs:module-graph": "node scripts/generate-module-graph.js",
+    "migration:check": "node scripts/check-destructive-migrations.js",
+    "test:e2e": "jest --testPathPattern=test/e2e --forceExit --runInBand"
   },
   "bin": {
     "stellar-admin": "bin/stellar-admin"
