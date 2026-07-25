@@ -7,7 +7,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { GqlExecutionContext } from '@nestjs/graphql';
 import { Reflector } from '@nestjs/core';
-import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
+import { PUBLIC_ROUTE } from '../../common/decorators/public.decorator';
 
 @Injectable()
 export class GqlAuthGuard extends AuthGuard('jwt') {
@@ -25,7 +25,7 @@ export class GqlAuthGuard extends AuthGuard('jwt') {
 
   canActivate(context: ExecutionContext) {
     // Allow routes decorated with @Public()
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+    const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_ROUTE, [
       context.getHandler(),
       context.getClass(),
     ]);
