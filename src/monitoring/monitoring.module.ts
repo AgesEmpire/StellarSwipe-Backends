@@ -10,6 +10,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ApiKeysModule } from '../api-keys/api-keys.module';
 import { CircuitBreakerService } from '../http/circuit-breaker.service';
 import { CanaryTradeService } from './canary-trade.service';
+import { SorobanCircuitListener } from './soroban-circuit.listener';
 
 @Global()
 @Module({
@@ -19,6 +20,7 @@ import { CanaryTradeService } from './canary-trade.service';
     MetricsInterceptor,
     PayloadSizeInterceptor,
     CanaryTradeService,
+    SorobanCircuitListener,
     {
       provide: CircuitBreakerService,
       useFactory: (prometheus: PrometheusService) =>

@@ -6,15 +6,22 @@ import {
 } from '@nestjs/terminus';
 import { StellarConfigService } from '../../config/stellar.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { CircuitBreakerService } from '../../http/circuit-breaker.service';
+import { SOROBAN_RPC_CIRCUIT } from '../../soroban/soroban-rpc-resilience.service';
 
 @Injectable()
 export class SorobanHealthIndicator extends HealthIndicator {
-  constructor(private stellarConfig: StellarConfigService) {
+  constructor(
+    private stellarConfig: StellarConfigService,
+    private readonly circuitBreaker: CircuitBreakerService,
+  ) {
     super();
   }
 
   async isHealthy(key: string): Promise<HealthIndicatorResult> {
     const startTime = Date.now();
+    const circuitBreakerState =
+      this.circuitBreaker.getState(SOROBAN_RPC_CIRCUIT);
 
     try {
       const server = new StellarSdk.SorobanRpc.Server(
@@ -30,6 +37,7 @@ export class SorobanHealthIndicator extends HealthIndicator {
         sorobanRpcUrl: this.stellarConfig.sorobanRpcUrl,
         status: health.status,
         latency: `${latency}ms`,
+        circuitBreakerState,
       });
 
       return result;
@@ -45,17 +53,23 @@ export class SorobanHealthIndicator extends HealthIndicator {
           sorobanRpcUrl: this.stellarConfig.sorobanRpcUrl,
           error: errorMessage,
           latency: `${latency}ms`,
+          circuitBreakerState,
         }),
       );
     }
   }
 
-  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+  ): Promise<T> {
     let timeoutHandle: NodeJS.Timeout | undefined;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
-        reject(new Error(`Soroban RPC health check timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(`Soroban RPC health check timed out after ${timeoutMs}ms`),
+        );
       }, timeoutMs);
     });
 

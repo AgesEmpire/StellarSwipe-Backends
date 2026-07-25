@@ -226,7 +226,8 @@ describe('SorobanHealthIndicator', () => {
       sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
       network: 'testnet',
     } as any;
-    return new SorobanHealthIndicator(stellarConfig);
+    const circuitBreaker = { getState: jest.fn().mockReturnValue('CLOSED') } as any;
+    return new SorobanHealthIndicator(stellarConfig, circuitBreaker);
   };
 
   const getSorobanMock = () =>
