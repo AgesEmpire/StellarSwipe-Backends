@@ -1,4 +1,10 @@
-import { Controller, Get, OnApplicationBootstrap, Logger, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  OnApplicationBootstrap,
+  Logger,
+  UseGuards,
+} from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
@@ -11,11 +17,16 @@ import {
   RedisHealthIndicator,
   QueueHealthIndicator,
 } from './indicators';
-import { HealthSummaryService, ServiceHealthSummary } from './health-summary.service';
+import {
+  HealthSummaryService,
+  ServiceHealthSummary,
+} from './health-summary.service';
 import { HealthMetricsAuthGuard } from '../common/guards/health-metrics-auth.guard';
+import { AuditExempt } from '../audit-log/decorators/audit-exempt.decorator';
 
 @Controller('health')
 @UseGuards(HealthMetricsAuthGuard)
+@AuditExempt()
 export class HealthController implements OnApplicationBootstrap {
   private readonly logger = new Logger(HealthController.name);
 
@@ -39,7 +50,9 @@ export class HealthController implements OnApplicationBootstrap {
           () => this.databaseHealth.isHealthy('database'),
           () => this.redisHealth.isHealthy('cache'),
         ]);
-        this.logger.log('Startup health check passed: database and cache are ready');
+        this.logger.log(
+          'Startup health check passed: database and cache are ready',
+        );
         return;
       } catch (err) {
         this.logger.warn(
@@ -48,7 +61,9 @@ export class HealthController implements OnApplicationBootstrap {
         if (attempt < maxRetries) {
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         } else {
-          this.logger.error('Critical dependencies unavailable after max retries — aborting startup');
+          this.logger.error(
+            'Critical dependencies unavailable after max retries — aborting startup',
+          );
           process.exit(1);
         }
       }
@@ -105,6 +120,18 @@ export class HealthController implements OnApplicationBootstrap {
   @Get('liveness')
   @HealthCheck()
   async liveness(): Promise<HealthCheckResult> {
+    return this.health.check([]);
+  }
+
+  /**
+   * GET /health/live — explicit liveness endpoint (Issue #862).
+   * Alias for /health/liveness. Returns 200 as long as the Node.js process is
+   * running. Does NOT check any external dependencies so a DB outage never
+   * triggers a pod restart.
+   */
+  @Get('live')
+  @HealthCheck()
+  async live(): Promise<HealthCheckResult> {
     return this.health.check([]);
   }
 

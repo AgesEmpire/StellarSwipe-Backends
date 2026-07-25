@@ -73,4 +73,34 @@ describe('TenantQuotaService', () => {
       service.generateReport({ id: 'user-1', roles: ['member'] }, {}),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it('allows a platform admin to view a different tenant quota report', async () => {
+    const repo = makeRepo([
+      { usageType: TenantUsageType.API_CALLS, used: 500, quota: 2000, unit: 'calls' } as TenantUsage,
+    ]);
+    const service = new TenantQuotaService(repo);
+
+    const report = await service.generateReport(
+      { id: 'admin-user', tenantId: 'admin-tenant', roles: ['admin'] },
+      {},
+      'other-tenant',
+    );
+
+    expect(report.tenantId).toBe('other-tenant');
+    expect(report.metrics.find((m) => m.usageType === TenantUsageType.API_CALLS)).toMatchObject({
+      used: 500,
+    });
+  });
+
+  it('rejects a tenant-admin trying to view another tenant quota report', async () => {
+    const service = new TenantQuotaService(makeRepo([]));
+
+    await expect(
+      service.generateReport(
+        { id: 'tenant-admin-1', tenantId: 'tenant-1', roles: ['tenant-admin'] },
+        {},
+        'tenant-2',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
 });

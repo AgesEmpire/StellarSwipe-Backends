@@ -167,6 +167,9 @@ export class Signal {
   @Column({ type: 'jsonb', nullable: true })
   metadata!: Record<string, any> | null;
 
+  @Column({ name: 'version', type: 'int', default: 1 })
+  version!: number;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
 

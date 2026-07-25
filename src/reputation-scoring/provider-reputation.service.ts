@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ReputationScore } from './reputation-score.entity';
-import { ReputationScoringService, ProviderMetrics } from './reputation-scoring.service';
+import { ReputationScoringService } from './reputation-scoring.service';
 
 export type SignalOutcomeType = 'success' | 'failure' | 'invalidated';
 
@@ -56,13 +56,29 @@ export class ProviderReputationService {
       return { providerId: event.providerId, previousScore, newScore: previousScore, delta: 0, isBlacklisted: true };
     }
 
+    const delta = this.getOutcomeDelta(event);
     this.applyOutcomeToRecord(record, event);
     this.checkAndApplyBlacklist(record);
 
-    const metrics = this.buildMetrics(record, event.copierCount);
-    const breakdown = this.scoringService.calculateScore(metrics);
+    const breakdown = this.scoringService.calculateIncrementalScore(
+      {
+        score: previousScore,
+        smoothedScore: Number(record.smoothedScore ?? previousScore),
+        totalSignals: record.totalSignals - delta.signalsDelta,
+        winningSignals: record.winningSignals - delta.winsDelta,
+        totalCopiers: record.totalCopiers,
+        activeCopiers: record.activeCopiers,
+        stakeAmount: Number(record.stakeAmount),
+        avgRating: Number(record.avgRating),
+        ratingCount: record.ratingCount ?? 0,
+        activeDays: record.activeDays ?? 30,
+        activeDaysLast30: 20,
+      },
+      { ...delta, newCopierCount: event.copierCount },
+    );
 
     record.score = breakdown.smoothedScore;
+    record.smoothedScore = breakdown.smoothedScore;
     record.winRate = breakdown.winRate;
     record.consistencyScore = breakdown.consistencyScore;
     record.retentionRate = breakdown.retentionRate;
@@ -150,18 +166,14 @@ export class ProviderReputationService {
     }
   }
 
-  private buildMetrics(record: ReputationScore, copierCount: number): ProviderMetrics {
-    return {
-      providerId: record.providerId,
-      totalSignals: record.totalSignals,
-      winningSignals: record.winningSignals,
-      totalCopiers: record.totalCopiers,
-      activeCopiers: copierCount,
-      stakeAmount: Number(record.stakeAmount),
-      avgRating: Number(record.avgRating),
-      ratingCount: 0,
-      activeDays: 30,
-      activeDaysLast30: 20,
-    };
+  private getOutcomeDelta(event: SignalOutcomeEvent): { signalsDelta: number; winsDelta: number } {
+    switch (event.outcome) {
+      case 'success':
+        return { signalsDelta: 1, winsDelta: 1 };
+      case 'failure':
+        return { signalsDelta: 1, winsDelta: 0 };
+      case 'invalidated':
+        return { signalsDelta: -1, winsDelta: 0 };
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
   Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { ApiKeyScope } from '../enums/api-key-scope.enum';
 
 @Entity('api_keys')
 @Index(['userId', 'tenantId'])
@@ -29,7 +30,7 @@ export class ApiKey {
   keyHash!: string;
 
   @Column('simple-array')
-  scopes!: string[]; // e.g., ['tenant:123:read_trades', 'tenant:123:write_signals']
+  scopes!: ApiKeyScope[];
 
   @Column({ type: 'timestamp', nullable: true })
   lastUsed?: Date;
@@ -50,4 +51,3 @@ export class ApiKey {
   @JoinColumn({ name: 'userId' })
   user!: User;
 }
-

@@ -11,9 +11,11 @@ import { ErrorClassificationService } from "./common/error-classification";
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import {
   LoggingInterceptor,
-  TransformInterceptor,
   TimeoutInterceptor,
   SensitiveDataInterceptor,
+  ResponseEnvelopeInterceptor,
+  StellarMemoInterceptor,
+  StripInternalFieldsInterceptor,
 } from './common/interceptors';
 import { LoggerService } from './common/logger';
 import { CorrelationIdStore } from './common/correlation/correlation-id.store';
@@ -25,6 +27,7 @@ import { InstanceCoordinatorService } from './scaling/instance-coordinator.servi
 import { compressionConfig } from './common/config/compression.config';
 import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
 import { DeadlockRetryInterceptor } from './database/deadlock-retry.interceptor';
+import { NPlus1DetectionInterceptor } from './database/nplus1-detection.interceptor';
 import { initTracing } from './monitoring/tracing/jaeger.config';
 import { DocGeneratorService } from './documentation/doc-generator.service';
 import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
@@ -133,9 +136,12 @@ async function bootstrap() {
   app.useGlobalInterceptors(
     new LoggingInterceptor(logger, app.get(CorrelationIdStore), configService),
   );
-  app.useGlobalInterceptors(new TransformInterceptor());
+  app.useGlobalInterceptors(new ResponseEnvelopeInterceptor(app.get(Reflector)));
+  app.useGlobalInterceptors(new StripInternalFieldsInterceptor());
   app.useGlobalInterceptors(new SensitiveDataInterceptor());
+  app.useGlobalInterceptors(new StellarMemoInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
+  app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));
 
   // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
   const { document, json, yaml } = generateOpenApiDocument(app);

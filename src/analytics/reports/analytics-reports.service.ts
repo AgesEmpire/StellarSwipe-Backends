@@ -46,6 +46,7 @@ export class AnalyticsReportsService {
 
   async enqueueExport(params: AnalyticsExportJobData): Promise<{ jobId: string }> {
     const job = await this.queue.add(GENERATE_EXPORT_JOB, params, {
+      priority: 1000, // LOW — analytics processing
       attempts: 3,
       backoff: { type: 'exponential', delay: 5_000 },
       removeOnComplete: 20,

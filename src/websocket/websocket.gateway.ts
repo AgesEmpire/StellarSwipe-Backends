@@ -8,13 +8,13 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { Logger, UseGuards } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
 import { SocketManagerService } from './services/socket-manager.service';
 import { RoomSubscriptionDto, SocketRoom } from './dto/socket-event.dto';
-import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { WsJwtGuard } from './guards/ws-jwt.guard';
 
+@UseGuards(WsJwtGuard)
 @WebSocketGateway({
   cors: {
     origin: '*',
@@ -23,16 +23,17 @@ import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
   pingTimeout: 10000,
 })
 export class WebsocketGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server!: Server;
 
   private readonly logger = new Logger(WebsocketGateway.name);
 
   constructor(
-    private readonly jwtService: JwtService,
+    private readonly wsJwtGuard: WsJwtGuard,
     private readonly socketManager: SocketManagerService,
-  ) { }
+  ) {}
 
   afterInit(server: Server): void {
     this.socketManager.setServer(server);
@@ -40,26 +41,17 @@ export class WebsocketGateway
 
   async handleConnection(@ConnectedSocket() client: Socket): Promise<void> {
     try {
-      const token = this.extractToken(client);
-      if (!token) {
-        throw new UnauthorizedException('Missing token');
-      }
+      const user = this.wsJwtGuard.validateSocket(client);
 
-      const payload = this.jwtService.verify<JwtPayload>(token);
-      if (!payload?.sub) {
-        throw new UnauthorizedException('Invalid token');
-      }
-
-      client.data.walletAddress = payload.sub;
-      await client.join(this.socketManager.getUserRoom(payload.sub));
+      await client.join(this.socketManager.getUserRoom(user.sub));
       await client.join(SocketRoom.SIGNALS_FEED);
       await client.join(SocketRoom.LEADERBOARD_TOP100);
 
       this.socketManager.registerClient(client);
       this.logger.log(`Socket connected: ${client.id}`);
-    } catch (error) {
+    } catch {
       this.logger.warn(`Socket auth failed: ${client.id}`);
-      client.disconnect(true);
+      this.closeUnauthorized(client);
     }
   }
 
@@ -92,24 +84,34 @@ export class WebsocketGateway
     await client.leave(body.room);
   }
 
-  private extractToken(client: Socket): string | null {
-    const authToken = client.handshake.auth?.token;
-    if (typeof authToken === 'string' && authToken.length > 0) {
-      return authToken;
-    }
-
-    const header =
-      client.handshake.headers?.authorization ??
-      client.handshake.headers?.Authorization;
-    if (typeof header === 'string' && header.length > 0) {
-      return header.startsWith('Bearer ') ? header.slice(7) : header;
-    }
-
-    return null;
-  }
-
   private isAllowedRoom(room?: string): room is SocketRoom {
     return Object.values(SocketRoom).includes(room as SocketRoom);
+  }
+
+  private closeUnauthorized(client: Socket): void {
+    const rawSocket = this.getRawWebSocket(client);
+    if (rawSocket?.close) {
+      rawSocket.close(4001, 'Unauthorized');
+      return;
+    }
+
+    client.disconnect(true);
+  }
+
+  private getRawWebSocket(
+    client: Socket,
+  ): { close: (code?: number, reason?: string) => void } | null {
+    const transport = client.conn?.transport as
+      | {
+          socket?: { close?: (code?: number, reason?: string) => void };
+          ws?: { close?: (code?: number, reason?: string) => void };
+        }
+      | undefined;
+    const socket = transport?.socket ?? transport?.ws;
+
+    return typeof socket?.close === 'function'
+      ? { close: socket.close.bind(socket) }
+      : null;
   }
 
   emitToUser(userId: string, event: string, data: any): void {

@@ -31,4 +31,7 @@ export interface LeaderboardResponse<T extends LeaderboardEntry = LeaderboardEnt
   leaderboard: T[];
   period: LeaderboardPeriod;
   cachedAt: string;
+  page: number;
+  limit: number;
+  total: number;
 }

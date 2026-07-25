@@ -49,6 +49,15 @@ export class Webhook {
   @Column({ type: 'varchar', length: 255 })
   secret!: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  nextSecret?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  rotationStartedAt?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  rotationFinalizesAt?: Date;
+
   @Column({ default: true })
   active!: boolean;
 

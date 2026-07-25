@@ -36,6 +36,7 @@ import { SwipeController } from './swipe/swipe.controller';
 import { SwipeService } from './swipe/swipe.service';
 import { MarketOrderService } from './services/market-order.service';
 import { MarketOrderController } from './market-order.controller';
+import { BatchOrderService } from './batch-order.service';
 import { TradeRetryService } from './services/trade-retry.service';
 import { TradeRetryController } from './trade-retry.controller';
 import { TradeSagaOrchestrator } from './saga/trade-saga.orchestrator';
@@ -47,6 +48,8 @@ import {
   NotificationPreferencesClientService,
   NOTIFICATION_TCP_CLIENT,
 } from './services/notification-preferences-client.service';
+import { CanaryRoutingModule } from './canary/canary-routing.module';
+import { SlippageGuardService } from './services/slippage-guard.service';
 
 @Module({
   imports: [
@@ -60,6 +63,7 @@ import {
     WebsocketModule,
     AuditModule,
     NotificationsModule,
+    CanaryRoutingModule,
     ClientsModule.registerAsync([
       {
         name: NOTIFICATION_TCP_CLIENT,
@@ -78,6 +82,7 @@ import {
   providers: [
     TradesService,
     MarketOrderService,
+    BatchOrderService,
     RiskManagerService,
     TradeExecutorService,
     StellarConfigService,
@@ -96,6 +101,7 @@ import {
     TradeSagaStepsFactory,
     TradeSagaService,
     NotificationPreferencesClientService,
+    SlippageGuardService,
     ...TRADE_CQRS_HANDLERS,
   ],
   exports: [
@@ -113,6 +119,7 @@ import {
     TradeExecutorService,
     TradeSagaService,
     NotificationPreferencesClientService,
+    SlippageGuardService,
   ],
 })
 export class TradesModule {}

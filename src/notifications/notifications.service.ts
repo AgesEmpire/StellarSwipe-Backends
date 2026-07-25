@@ -51,10 +51,11 @@ export class NotificationsService {
 
     const savedNotification = await this.notificationRepository.save(notification);
 
-    // Queue the notification for processing
+    // Queue the notification for processing (NORMAL priority)
     await this.notificationQueue.add('send-notification', {
       notificationId: savedNotification.id,
     }, {
+      priority: 100, // NORMAL
       // Job options
       attempts: 3,
       backoff: {

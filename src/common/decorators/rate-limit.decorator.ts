@@ -18,6 +18,8 @@ export interface RateLimitConfig {
   keyBy?: string[];       // request body fields for per-account rate limiting
   accountLimit?: number;  // per-account limit (overrides tier default)
   accountWindow?: number; // per-account window in seconds (overrides tier default)
+  walletLimit?: number;   // per-wallet limit (overrides tier default)
+  walletWindow?: number;  // per-wallet window in seconds (overrides tier default)
 }
 
 export const RateLimit = (config: RateLimitConfig) =>

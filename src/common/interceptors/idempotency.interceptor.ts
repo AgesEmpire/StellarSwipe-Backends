@@ -5,34 +5,44 @@
  * execution when clients retry after a timeout. Callers opt in by sending an
  * `Idempotency-Key` header:
  *
- *   • The first request for a given key + route executes normally and its
- *     response is cached for a configurable TTL.
- *   • Subsequent requests with the same key return the cached response without
- *     re-running the handler.
- *   • Concurrent requests with the same key are serialised so only one
+ *   • The first request for a given (user, key, route) triple executes
+ *     normally and its response is cached for a configurable TTL.
+ *   • Subsequent requests with the same (user, key, route) and an identical
+ *     body return the cached response without re-running the handler.
+ *   • A request that reuses the same key with a different body is rejected
+ *     with HTTP 422 to prevent silent mismatches.
+ *   • Concurrent requests with the same cache key are serialised so only one
  *     execution happens; the others await and share its result.
  *
- * The cache is in-memory and per-instance, which is sufficient for a single
- * process; swap the store for a shared cache (e.g. Redis) for multi-instance
- * deployments.
+ * The cache is in-memory and per-instance. Swap the store for a shared cache
+ * (e.g. Redis) for multi-instance deployments.
  */
 import {
   BadRequestException,
   CallHandler,
+  ConflictException,
   ExecutionContext,
   Injectable,
   NestInterceptor,
 } from '@nestjs/common';
 import { Observable, firstValueFrom, from } from 'rxjs';
+import { createHash } from 'crypto';
 
 interface CacheEntry {
   response: unknown;
+  bodyHash: string;
   expiresAt: number;
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_KEY_LENGTH = 255;
+
+function hashBody(body: unknown): string {
+  const normalized =
+    body === null || body === undefined ? '' : JSON.stringify(body);
+  return createHash('sha256').update(normalized).digest('hex');
+}
 
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
@@ -65,21 +75,35 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     const route = request?.originalUrl ?? request?.url ?? '';
-    const cacheKey = `${method}:${route}:${key}`;
+    const userId: string =
+      request?.user?.id ?? request?.user?.walletAddress ?? 'anonymous';
+    const cacheKey = `${method}:${route}:${userId}:${key}`;
+    const bodyHash = hashBody(request?.body);
 
-    return from(this.resolve(cacheKey, next));
+    return from(this.resolve(cacheKey, bodyHash, next));
   }
 
-  private async resolve(cacheKey: string, next: CallHandler): Promise<unknown> {
+  private async resolve(
+    cacheKey: string,
+    bodyHash: string,
+    next: CallHandler,
+  ): Promise<unknown> {
     const cached = this.store.get(cacheKey);
     if (cached) {
-      if (cached.expiresAt > Date.now()) {
+      if (cached.expiresAt <= Date.now()) {
+        this.store.delete(cacheKey);
+      } else {
+        if (cached.bodyHash !== bodyHash) {
+          throw new ConflictException(
+            'Idempotency-Key reused with a different request payload. ' +
+              'Use a new key for a different operation.',
+          );
+        }
         return cached.response;
       }
-      this.store.delete(cacheKey);
     }
 
-    // Serialise concurrent requests for the same key onto one execution.
+    // Serialise concurrent requests with the same cache key.
     const existing = this.inFlight.get(cacheKey);
     if (existing) {
       return existing;
@@ -89,6 +113,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
       const response = await firstValueFrom(next.handle());
       this.store.set(cacheKey, {
         response,
+        bodyHash,
         expiresAt: Date.now() + this.ttlMs,
       });
       return response;

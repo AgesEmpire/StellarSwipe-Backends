@@ -6,6 +6,7 @@ import { RiskControlsService } from './risk-controls.service';
 import { RiskControlsController } from './risk-controls.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TradesModule } from '../trades/trades.module';
+import { PriceService } from '../shared/price.service';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { TradesModule } from '../trades/trades.module';
     TradesModule,
   ],
   controllers: [RiskControlsController],
-  providers: [RiskControlsService],
+  providers: [RiskControlsService, PriceService],
   exports: [RiskControlsService],
 })
 export class RiskControlsModule {}

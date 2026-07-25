@@ -7,11 +7,24 @@ import { ApiKeysController } from './api-keys.controller';
 import { ApiKey } from './entities/api-key.entity';
 import { ApiKeyAuthGuard } from './guards/api-key-auth.guard';
 import { TenantAwareApiKeyGuard } from './guards/tenant-aware-api-key.guard';
+import { ApiKeyScopesGuard } from './guards/api-key-scopes.guard';
 
 @Module({
   imports: [TypeOrmModule.forFeature([ApiKey]), CacheModule],
   controllers: [ApiKeysController],
-  providers: [ApiKeysService, TenantAwareApiKeysService, ApiKeyAuthGuard, TenantAwareApiKeyGuard],
-  exports: [ApiKeysService, TenantAwareApiKeysService, ApiKeyAuthGuard, TenantAwareApiKeyGuard],
+  providers: [
+    ApiKeysService,
+    TenantAwareApiKeysService,
+    ApiKeyAuthGuard,
+    TenantAwareApiKeyGuard,
+    ApiKeyScopesGuard,
+  ],
+  exports: [
+    ApiKeysService,
+    TenantAwareApiKeysService,
+    ApiKeyAuthGuard,
+    TenantAwareApiKeyGuard,
+    ApiKeyScopesGuard,
+  ],
 })
 export class ApiKeysModule {}

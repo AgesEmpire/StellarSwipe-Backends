@@ -42,6 +42,9 @@ export class Asset {
   @Column({ type: 'text', nullable: true })
   logoUrl!: string | null;
 
+  @Column({ type: 'boolean', default: true })
+  isActive!: boolean;
+
   @Column({ type: 'boolean', default: false })
   isVerified!: boolean;
 

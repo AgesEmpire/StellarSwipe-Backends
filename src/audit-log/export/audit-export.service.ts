@@ -16,7 +16,7 @@ export class AuditExportService {
     await this.exportQueue.add({
       jobId,
       ...dto,
-    });
+    }, { priority: 100 }); // NORMAL
     return {
       jobId,
       status: 'PENDING',

@@ -1,10 +1,21 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Signal, SignalStatus, SignalType } from './entities/signal.entity';
 import { CacheService, CachePrefix } from '../cache/cache.service';
 import { SignalQuotaService } from './quota/signal-quota.service';
 import { CreateSignalDto } from './dto';
+
+export interface PaginatedSignalsDto {
+  data: Signal[];
+  total: number;
+  limit: number;
+  offset: number;
+  page: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
 
 @Injectable()
 export class SignalsService {
@@ -75,9 +86,70 @@ export class SignalsService {
     );
   }
 
-  async updateSignalStatus(id: string, status: SignalStatus): Promise<Signal | null> {
-    await this.signalRepository.update(id, { status });
-    // Invalidate stale cache entries on write
+  /**
+   * Paginated signal feed with eager-loaded provider relation
+   * to prevent N+1 queries when controllers access signal.provider.
+   *
+   * Uses skip/take for backward-compatible offset pagination.
+   */
+  async findPaginated(
+    page = 1,
+    limit = 20,
+    sortBy: 'createdAt' | 'confidenceScore' | 'successRate' = 'createdAt',
+    asset?: string,
+  ): Promise<PaginatedSignalsDto> {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const offset = (Math.max(page, 1) - 1) * safeLimit;
+
+    const qb = this.signalRepository
+      .createQueryBuilder('signal')
+      .leftJoinAndSelect('signal.provider', 'provider')
+      .orderBy(`signal.${sortBy}`, 'DESC');
+
+    if (asset) {
+      qb.where('signal.base_asset = :asset OR signal.counter_asset = :asset', { asset });
+    }
+
+    const [data, total] = await qb.skip(offset).take(safeLimit).getManyAndCount();
+    const totalPages = Math.ceil(total / safeLimit);
+
+    return {
+      data,
+      total,
+      limit: safeLimit,
+      offset,
+      page,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    };
+  }
+
+  /**
+   * Batch-load signals by IDs in a single query.
+   * Use with BatchLoaderService to prevent N+1 when resolving signal relations.
+   */
+  async findByIds(ids: string[]): Promise<Signal[]> {
+    if (ids.length === 0) return [];
+    return this.signalRepository
+      .createQueryBuilder('signal')
+      .leftJoinAndSelect('signal.provider', 'provider')
+      .where('signal.id IN (:...ids)', { ids })
+      .getMany();
+  }
+
+  async updateSignalStatus(id: string, status: SignalStatus, currentVersion?: number): Promise<Signal | null> {
+    if (currentVersion !== undefined) {
+      const result = await this.signalRepository.update(
+        { id, version: currentVersion },
+        { status, version: currentVersion + 1 },
+      );
+      if (result.affected === 0) {
+        throw new ConflictException('Signal was updated by another request. Please retry with the latest version.');
+      }
+    } else {
+      await this.signalRepository.update(id, { status });
+    }
     await Promise.all([
       this.cacheService.del(`${CachePrefix.SIGNAL}${id}`),
       this.cacheService.del(SignalsService.FEED_KEY),

@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager } from 'typeorm';
+import { Repository, EntityManager, IsNull } from 'typeorm';
 import { EventEmitterService } from './event-emitter.service';
 import { BaseEvent } from './base.event';
 import { OutboxEvent } from './entities/outbox-event.entity';
+
+const MAX_DELIVERY_ATTEMPTS = 5;
 
 @Injectable()
 export class OutboxService {
@@ -30,14 +32,12 @@ export class OutboxService {
 
   async publishPending(limit = 50): Promise<void> {
     const pendingEvents = await this.outboxRepository.find({
-      where: { publishedAt: null },
+      where: { publishedAt: IsNull(), deadAt: IsNull() },
       order: { createdAt: 'ASC' },
       take: limit,
     });
 
-    if (!pendingEvents.length) {
-      return;
-    }
+    if (!pendingEvents.length) return;
 
     for (const eventRow of pendingEvents) {
       try {
@@ -51,16 +51,25 @@ export class OutboxService {
 
         eventRow.publishedAt = new Date();
         eventRow.attempts = (eventRow.attempts ?? 0) + 1;
-
         await this.outboxRepository.save(eventRow);
         this.logger.log(`Published outbox event ${eventRow.eventName} (id=${eventRow.id})`);
       } catch (error) {
         eventRow.attempts = (eventRow.attempts ?? 0) + 1;
+
+        if (eventRow.attempts >= MAX_DELIVERY_ATTEMPTS) {
+          eventRow.deadAt = new Date();
+          this.logger.error(
+            `Outbox event ${eventRow.eventName} (id=${eventRow.id}) marked DEAD after ${MAX_DELIVERY_ATTEMPTS} attempts`,
+            (error as Error).stack,
+          );
+        } else {
+          this.logger.error(
+            `Outbox publish failed for ${eventRow.eventName} (id=${eventRow.id}), attempt ${eventRow.attempts}`,
+            (error as Error).stack,
+          );
+        }
+
         await this.outboxRepository.save(eventRow);
-        this.logger.error(
-          `Outbox publish failed for ${eventRow.eventName} (id=${eventRow.id})`,
-          (error as Error).stack,
-        );
       }
     }
   }

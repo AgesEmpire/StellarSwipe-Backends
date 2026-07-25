@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { APP_FILTER } from '@nestjs/core';
 import { StellarConfigService } from '../config/stellar.service';
 import { CacheModule } from '../cache/cache.module';
 import { AccountManagerService } from './account/account-manager.service';
@@ -21,6 +22,7 @@ import { OnChainSyncJob } from './on-chain-sync.job';
 import { FeeBumpModule } from './fee-bump/fee-bump.module';
 import { ClaimableBalanceModule } from './claimable-balance/claimable-balance.module';
 import { SponsoredReservesModule } from './sponsored-reserves/sponsored-reserves.module';
+import { HorizonExceptionFilter } from './errors/horizon-error.filter';
 
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { SponsoredReservesModule } from './sponsored-reserves/sponsored-reserves
     WalletBalanceSyncJob,
     OnChainSyncService,
     OnChainSyncJob,
+    { provide: APP_FILTER, useClass: HorizonExceptionFilter },
   ],
   exports: [
     StellarConfigService,

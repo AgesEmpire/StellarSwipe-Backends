@@ -99,7 +99,7 @@ export class DocGeneratorService implements OnModuleInit {
   }
 
   async scheduleRegeneration(reason = 'manual'): Promise<void> {
-    await this.regenQueue.add('regenerate', { reason }, { attempts: 3, backoff: 5000 });
+    await this.regenQueue.add('regenerate', { reason }, { priority: 1000, attempts: 3, backoff: 5000 }); // LOW
     this.logger.log(`Queued doc regeneration: ${reason}`);
   }
 

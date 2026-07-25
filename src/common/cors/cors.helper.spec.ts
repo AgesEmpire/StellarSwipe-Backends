@@ -7,7 +7,6 @@ describe('createCorsOptions', () => {
 
   it('allows explicit origin', (done) => {
     const opts = createCorsOptions(['https://example.com'], true, 'mainnet');
-    // originChecker is function in opts.origin
     const checker = opts.origin as any;
     checker('https://example.com', (err: any, allow: boolean) => {
       expect(err).toBeNull();
@@ -22,6 +21,29 @@ describe('createCorsOptions', () => {
     checker('https://bar.com', (err: any, allow: boolean) => {
       expect(err).toBeInstanceOf(Error);
       expect(allow).toBeUndefined();
+      done();
+    });
+  });
+
+  it('includes required methods and allowedHeaders', () => {
+    const opts = createCorsOptions(['https://example.com'], true, 'production');
+    expect(opts.methods).toEqual(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+    expect(opts.allowedHeaders).toContain('Authorization');
+    expect(opts.allowedHeaders).toContain('X-Correlation-ID');
+    expect(opts.allowedHeaders).toContain('Idempotency-Key');
+  });
+
+  it('sets credentials: true for listed origins', () => {
+    const opts = createCorsOptions(['https://example.com'], true, 'production');
+    expect(opts.credentials).toBe(true);
+  });
+
+  it('allows non-browser requests (no origin)', (done) => {
+    const opts = createCorsOptions(['https://example.com'], true, 'production');
+    const checker = opts.origin as any;
+    checker(undefined, (err: any, allow: boolean) => {
+      expect(err).toBeNull();
+      expect(allow).toBe(true);
       done();
     });
   });

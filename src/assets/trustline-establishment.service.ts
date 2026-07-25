@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { Asset, AssetType } from './entities/asset.entity';
+import { PlatformTrustline, TrustlineStatus } from './entities/platform-trustline.entity';
 import { AuditAction } from '../audit-log/audit-log.entity';
 import { AuditService } from '../audit-log/audit.service';
 
@@ -13,6 +14,8 @@ export class TrustlineEstablishmentService {
   constructor(
     @InjectRepository(Asset)
     private readonly assetRepo: Repository<Asset>,
+    @InjectRepository(PlatformTrustline)
+    private readonly trustlineRepo: Repository<PlatformTrustline>,
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
   ) {}
@@ -40,6 +43,7 @@ export class TrustlineEstablishmentService {
         }
 
         await this.createTrustline(account, asset);
+        await this.recordTrustline(account, assetId);
         this.logger.log(`Trustline established for ${account} and ${asset.code}`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -76,10 +80,28 @@ export class TrustlineEstablishmentService {
   }
 
   private async checkExistingTrustline(account: string, asset: Asset): Promise<boolean> {
-    return false;
+    const existing = await this.trustlineRepo.findOne({
+      where: { platformAccount: account, assetId: asset.id },
+    });
+    return existing !== null;
   }
 
   private async createTrustline(account: string, asset: Asset): Promise<void> {
     this.logger.log(`Creating trustline for ${account} to ${asset.code}:${asset.issuer}`);
+  }
+
+  private async recordTrustline(platformAccount: string, assetId: string): Promise<void> {
+    const existing = await this.trustlineRepo.findOne({
+      where: { platformAccount, assetId },
+    });
+    if (existing) {
+      existing.status = TrustlineStatus.ACTIVE;
+      existing.flaggedAt = undefined;
+      await this.trustlineRepo.save(existing);
+    } else {
+      await this.trustlineRepo.save(
+        this.trustlineRepo.create({ platformAccount, assetId, status: TrustlineStatus.ACTIVE }),
+      );
+    }
   }
 }

@@ -22,6 +22,7 @@ import { SignalPerformance } from './entities/signal-performance.entity';
 import { AnalyzeSignalDecayJob } from './decay-analysis/jobs/analyze-signal-decay.job';
 import { CacheModule } from '../cache/cache.module';
 import { SignalQuotaService } from './quota/signal-quota.service';
+import { SignalStatusSubscriber } from '../common/subscribers/signal-status.subscriber';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { SignalQuotaService } from './quota/signal-quota.service';
     SdexPriceService,
     AnalyzeSignalDecayJob,
     SignalQuotaService,
+    SignalStatusSubscriber,
   ],
   controllers: [SignalsController, SignalVersionController],
   exports: [

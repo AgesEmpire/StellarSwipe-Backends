@@ -9,6 +9,7 @@ import {
   Min,
   Max,
   IsObject,
+  IsBoolean,
 } from 'class-validator';
 import { SignalType, SignalStatus, SignalOutcome } from '../entities/signal.entity';
 

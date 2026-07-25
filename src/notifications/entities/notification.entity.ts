@@ -33,7 +33,17 @@ export enum NotificationType {
   PRICE_ALERT = 'PRICE_ALERT',
   LOW_BALANCE = 'LOW_BALANCE',
   SYSTEM = 'SYSTEM',
+  MARKETING = 'MARKETING',
 }
+
+/**
+ * Notification types subject to marketing consent (GDPR/CAN-SPAM opt-out).
+ * Everything else — trade confirmations, security/system alerts, etc. — is
+ * mandatory and always delivered regardless of marketing consent state.
+ */
+export const CONSENT_GATED_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
+  NotificationType.MARKETING,
+]);
 
 @Index('idx_notifications_user_id', ['userId'])
 @Index('idx_notifications_user_read', ['userId', 'status'])

@@ -5,7 +5,41 @@ import {
   PermissionAuditService,
   PermissionAuditLog,
   AuditAction,
+  diffObjects,
 } from './permission-audit.service';
+
+describe('diffObjects', () => {
+  it('returns null when objects are identical (no-op update)', () => {
+    expect(diffObjects({ name: 'admin', isActive: true }, { name: 'admin', isActive: true })).toBeNull();
+  });
+
+  it('captures a single changed field', () => {
+    const diff = diffObjects({ name: 'admin' }, { name: 'super-admin' });
+    expect(diff).not.toBeNull();
+    expect(diff!.before).toEqual({ name: 'admin' });
+    expect(diff!.after).toEqual({ name: 'super-admin' });
+  });
+
+  it('captures multiple changed fields and ignores unchanged ones', () => {
+    const diff = diffObjects(
+      { name: 'admin', isActive: true, priority: 1 },
+      { name: 'super-admin', isActive: false, priority: 1 },
+    );
+    expect(Object.keys(diff!.before)).toHaveLength(2);
+    expect(diff!.before).not.toHaveProperty('priority');
+  });
+
+  it('captures fields added in after state', () => {
+    const diff = diffObjects({ name: 'admin' }, { name: 'admin', extra: 'value' });
+    expect(diff!.after).toHaveProperty('extra', 'value');
+    expect(diff!.before).toHaveProperty('extra', undefined);
+  });
+
+  it('captures fields removed in after state', () => {
+    const diff = diffObjects({ name: 'admin', extra: 'x' }, { name: 'admin' });
+    expect(diff!.before).toHaveProperty('extra', 'x');
+  });
+});
 
 describe('PermissionAuditService', () => {
   let service: PermissionAuditService;
@@ -62,6 +96,8 @@ describe('PermissionAuditService', () => {
         targetUserId: dto.targetUserId,
         action: dto.action,
         resourceName: dto.resourceName,
+        beforeState: null,
+        afterState: null,
         metadata: dto.metadata,
       });
       expect(mockRepository.save).toHaveBeenCalledWith(mockEntry);
@@ -83,6 +119,26 @@ describe('PermissionAuditService', () => {
 
       expect(mockRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({ targetUserId: 'actor-1' }),
+      );
+    });
+
+    it('should persist beforeState and afterState when provided', async () => {
+      const dto = {
+        actorId: 'admin-1',
+        targetUserId: 'user-1',
+        action: AuditAction.ROLE_UPDATED,
+        resourceName: 'editor',
+        beforeState: { name: 'editor' },
+        afterState: { name: 'super-editor' },
+      };
+      const mockEntry = { id: 'log-x', ...dto, createdAt: new Date() };
+      mockRepository.create.mockReturnValue(mockEntry);
+      mockRepository.save.mockResolvedValue(mockEntry);
+
+      await service.log(dto);
+
+      expect(mockRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ beforeState: { name: 'editor' }, afterState: { name: 'super-editor' } }),
       );
     });
 

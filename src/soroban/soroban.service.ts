@@ -23,6 +23,11 @@ import {
   ContractResult,
 } from './interfaces/contract-result.interface';
 import { SorobanDiagnosticService } from './soroban-diagnostic.service';
+import { MaxCallDepthService } from '../common/services/max-call-depth.service';
+import { SorobanFeeTrackerService } from '../common/services/soroban-fee-tracker.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
+import { EntrypointKilledException } from '../feature-flags/exceptions/entrypoint-killed.exception';
+import { SorobanRpcResilienceService } from './soroban-rpc-resilience.service';
 
 // Optional import for monitoring - will be injected if available
 interface SorobanMonitoringService {
@@ -57,6 +62,10 @@ export class SorobanService implements OnModuleInit {
     private readonly stellarConfig: StellarConfigService,
     private readonly sorobanMonitoring?: SorobanMonitoringService,
     private readonly diagnosticService: SorobanDiagnosticService,
+    private readonly maxCallDepthService?: MaxCallDepthService,
+    private readonly feeTrackerService?: SorobanFeeTrackerService,
+    private readonly featureFlagsService?: FeatureFlagsService,
+    private readonly resilience: SorobanRpcResilienceService,
   ) {
     this.server = new SorobanRpc.Server(this.stellarConfig.sorobanRpcUrl);
   }
@@ -65,7 +74,7 @@ export class SorobanService implements OnModuleInit {
     try {
       const startTime = Date.now();
       const health = await this.withTimeout(
-        this.server.getHealth(),
+        () => this.server.getHealth(),
         'warmup',
         5000,
       );
@@ -103,12 +112,23 @@ export class SorobanService implements OnModuleInit {
       );
     }
 
+    if (this.featureFlagsService) {
+      const accessCheck = await this.featureFlagsService.checkEntrypointAccess(
+        contractId,
+        method,
+      );
+      if (!accessCheck.allowed) {
+        throw new EntrypointKilledException(contractId, method);
+      }
+    }
+
+    let sendResponse: { status?: string; hash?: string } | undefined;
     try {
       const sourceKeypair = Keypair.fromSecret(options.sourceSecret);
       const sourceAccount =
         options.sourceAccount || sourceKeypair.publicKey();
       const account = await this.withTimeout(
-        this.server.getAccount(sourceAccount),
+        () => this.server.getAccount(sourceAccount),
         'getAccount',
         options.timeoutMs,
       );
@@ -127,16 +147,27 @@ export class SorobanService implements OnModuleInit {
         .build();
 
       const simulation = await this.simulateTransaction(transaction);
+
+      if (this.maxCallDepthService) {
+        const depthInfo = this.maxCallDepthService.extractCallDepthFromSimulation(simulation);
+        this.maxCallDepthService.validateDepth(
+          depthInfo.depth,
+          this.stellarConfig.maxCallDepth ?? 5,
+          this.stellarConfig.maxCallDepthViolationPolicy ?? 'reject',
+          `${contractId}.${method}`,
+        );
+      }
+
       const prepared = await this.withTimeout(
-        this.server.prepareTransaction(transaction),
+        () => this.server.prepareTransaction(transaction),
         'prepareTransaction',
         options.timeoutMs,
       );
 
       prepared.sign(sourceKeypair);
 
-      const sendResponse = await this.withTimeout(
-        this.server.sendTransaction(prepared),
+      sendResponse = await this.withTimeout(
+        () => this.server.sendTransaction(prepared),
         'sendTransaction',
         options.timeoutMs,
       );
@@ -168,6 +199,17 @@ export class SorobanService implements OnModuleInit {
 
       const success = confirmed.status === 'SUCCESS';
 
+      if (this.feeTrackerService && simulation?.minResourceFee && confirmed.feeCharged) {
+        const feeEstimate = this.feeTrackerService.calculateFeeEstimate(
+          simulation.minResourceFee,
+          confirmed.feeCharged.toString(),
+          contractId,
+          method,
+          sendResponse.hash,
+        );
+        this.feeTrackerService.logFeeComparison(feeEstimate);
+      }
+
       return {
         success,
         hash: sendResponse.hash,
@@ -184,16 +226,17 @@ export class SorobanService implements OnModuleInit {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown Soroban error';
-      
+
       // Parse and log diagnostic events if available
+      const txHash = sendResponse?.hash;
       const diagnosticEvents = this.diagnosticService.parseDiagnosticEvents(
         (error as Record<string, unknown>)?.events as Array<Record<string, unknown>> || [],
-        sendResponse.hash,
+        txHash,
       );
       this.diagnosticService.logDiagnosticEvents(diagnosticEvents, {
         contractId,
         method,
-        txHash: sendResponse.hash,
+        txHash,
       });
       
       this.logger.error(
@@ -229,7 +272,7 @@ export class SorobanService implements OnModuleInit {
     transaction: Transaction,
   ): Promise<SorobanRpc.Api.SimulateTransactionResponse> {
     const simulation = await this.withTimeout(
-      this.server.simulateTransaction(transaction),
+      () => this.server.simulateTransaction(transaction),
       'simulateTransaction',
     );
 
@@ -250,7 +293,7 @@ export class SorobanService implements OnModuleInit {
     }
 
     const transaction = await this.withTimeout(
-      this.server.getTransaction(txHash),
+      () => this.server.getTransaction(txHash),
       'getTransaction',
     );
 
@@ -276,9 +319,10 @@ export class SorobanService implements OnModuleInit {
       simulation.minResourceFee || '0',
     );
     const feeStats = await this.withTimeout(
-      typeof (this.server as any).getFeeStats === 'function'
-        ? (this.server as any).getFeeStats()
-        : Promise.resolve({}),
+      () =>
+        typeof (this.server as any).getFeeStats === 'function'
+          ? (this.server as any).getFeeStats()
+          : Promise.resolve({}),
       'getFeeStats',
     );
     const inclusionFee = this.resolveInclusionFee(feeStats || {});
@@ -375,7 +419,7 @@ export class SorobanService implements OnModuleInit {
 
     while (Date.now() < deadline) {
       const response = await this.withTimeout(
-        this.server.getTransaction(txHash),
+        () => this.server.getTransaction(txHash),
         'getTransaction',
         timeoutMs,
       );
@@ -427,8 +471,23 @@ export class SorobanService implements OnModuleInit {
     return BigInt(String(value));
   }
 
+  /**
+   * Runs `fn` under a per-attempt timeout, through SorobanRpcResilienceService's
+   * retry-with-backoff and circuit breaker (issue #852).
+   */
   private async withTimeout<T>(
-    promise: Promise<T>,
+    fn: () => Promise<T>,
+    label: string,
+    timeoutMs?: number,
+  ): Promise<T> {
+    return this.resilience.execute(
+      () => this.runWithTimeout(fn, label, timeoutMs),
+      label,
+    );
+  }
+
+  private async runWithTimeout<T>(
+    fn: () => Promise<T>,
     label: string,
     timeoutMs?: number,
   ): Promise<T> {
@@ -446,7 +505,7 @@ export class SorobanService implements OnModuleInit {
     });
 
     try {
-      return await Promise.race([promise, timeoutPromise]);
+      return await Promise.race([fn(), timeoutPromise]);
     } finally {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);

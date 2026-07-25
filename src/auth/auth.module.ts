@@ -25,6 +25,8 @@ import { SessionFingerprintService } from './session/session-fingerprint.service
 import { LoginFingerprint } from './session/entities/login-fingerprint.entity';
 import { EmailModule } from '../email/email.module';
 import { AnomalousLoginListener } from './session/anomalous-login.listener';
+import { RefreshToken } from './entities/refresh-token.entity';
+import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 
 @Module({
   imports: [
@@ -41,7 +43,7 @@ import { AnomalousLoginListener } from './session/anomalous-login.listener';
     }),
     CacheModule,
     AuditModule,
-    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint]),
+    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint, RefreshToken]),
     UsersModule,
     EmailModule,
   ],
@@ -58,6 +60,7 @@ import { AnomalousLoginListener } from './session/anomalous-login.listener';
     SessionCleanupService,
     SessionFingerprintService,
     AnomalousLoginListener,
+    RefreshTokenCleanupService,
   ],
   exports: [
     AuthService,
@@ -68,6 +71,7 @@ import { AnomalousLoginListener } from './session/anomalous-login.listener';
     AuthAuditService,
     SessionManagerService,
     SessionFingerprintService,
+    RefreshTokenCleanupService,
   ],
 })
 export class AuthModule {}

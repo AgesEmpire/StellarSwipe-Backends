@@ -33,7 +33,7 @@ export class SignalsService {
     private readonly metadataService: AssetPairMetadataService,
   ) {}
 
-  async getFeed(query: SignalFeedQueryDto): Promise<SignalFeedResponseDto> {
+  async getFeed(query: SignalFeedQueryDto, mutedProviderIds: string[] = []): Promise<SignalFeedResponseDto> {
     const { cursor, page, limit = 20, asset, provider, sortBy = SortBy.RANKED } = query;
 
     const cacheKey = `feed:${sortBy}:${cursor ?? page ?? 1}:${limit}:${asset ?? '*'}:${provider ?? '*'}`;
@@ -53,6 +53,10 @@ export class SignalsService {
 
     if (provider) {
       qb.andWhere('s.provider_id = :provider', { provider });
+    }
+
+    if (mutedProviderIds.length > 0) {
+      qb.andWhere('s.provider_id NOT IN (:...mutedProviderIds)', { mutedProviderIds });
     }
 
     // For RANKED we fetch a larger window, rank in-memory, then paginate

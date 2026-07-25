@@ -1,4 +1,4 @@
-import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, TooManyRequestsException } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject } from '@nestjs/common';
 import { Cache } from 'cache-manager';
@@ -33,12 +33,13 @@ const CACHE_PREFIX = 'signal_quota:';
 @Injectable()
 export class SignalQuotaService {
   private readonly logger = new Logger(SignalQuotaService.name);
+  private readonly locks = new Map<string, Promise<void>>();
 
   constructor(@Inject(CACHE_MANAGER) private readonly cache: Cache) {}
 
   /**
    * Check and increment quota for a provider.
-   * Throws ForbiddenException when quota is exceeded.
+   * Throws TooManyRequestsException when quota is exceeded.
    */
   async checkAndConsume(
     providerId: string,
@@ -48,39 +49,40 @@ export class SignalQuotaService {
     const config = this.resolveConfig(tier, isStaked);
     const key = this.cacheKey(providerId, tier);
 
-    const current = (await this.cache.get<number>(key)) ?? 0;
+    return this.withQuotaLock(key, async () => {
+      const current = (await this.cache.get<number>(key)) ?? 0;
 
-    if (current >= config.limit) {
+      if (current >= config.limit) {
+        const resetAt = await this.getResetAt(providerId, tier, config);
+        this.logger.warn(
+          `Quota exceeded for provider ${providerId} (tier=${tier}): ${current}/${config.limit}`,
+        );
+        throw new TooManyRequestsException({
+          message: 'errors.QUOTA_EXCEEDED',
+          resetAt: resetAt.toISOString(),
+          used: current,
+          limit: config.limit,
+        });
+      }
+
+      const next = current + 1;
+      // Only set TTL on first write so the window is anchored to first submission
+      if (current === 0) {
+        await this.cache.set(key, next, config.windowSeconds * 1000);
+      } else {
+        await this.cache.set(key, next);
+      }
+
       const resetAt = await this.getResetAt(providerId, tier, config);
-      this.logger.warn(
-        `Quota exceeded for provider ${providerId} (tier=${tier}): ${current}/${config.limit}`,
-      );
-      throw new ForbiddenException({
-        message: 'errors.QUOTA_EXCEEDED',
-        resetAt: resetAt.toISOString(),
-        used: current,
+      return {
+        providerId,
+        used: next,
         limit: config.limit,
-      });
-    }
-
-    const next = current + 1;
-    // Only set TTL on first write so the window is anchored to first submission
-    if (current === 0) {
-      await this.cache.set(key, next, config.windowSeconds * 1000);
-    } else {
-      await this.cache.set(key, next);
-    }
-
-    const resetAt = await this.getResetAt(providerId, tier, config);
-    return {
-      providerId,
-      used: next,
-      limit: config.limit,
-      remaining: config.limit - next,
-      resetAt,
-    };
+        remaining: config.limit - next,
+        resetAt,
+      };
+    });
   }
-
   async getStatus(
     providerId: string,
     tier: string = 'basic',
@@ -135,5 +137,25 @@ export class SignalQuotaService {
     const resetAt = Date.now() + config.windowSeconds * 1000;
     await this.cache.set(rKey, resetAt, config.windowSeconds * 1000);
     return new Date(resetAt);
+  }
+  private async withQuotaLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chained = previous.then(() => current);
+
+    this.locks.set(key, chained);
+
+    await previous.catch(() => undefined);
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.locks.get(key) === chained) {
+        this.locks.delete(key);
+      }
+    }
   }
 }

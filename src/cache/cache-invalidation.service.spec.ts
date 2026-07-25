@@ -4,6 +4,8 @@ import {
   UserCacheKeys,
   SignalCacheKeys,
   LeaderboardCacheKeys,
+  AnalyticsCacheKeys,
+  MarketCacheKeys,
 } from './cache-invalidation.service';
 import { CacheService, CachePrefix } from './cache.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';

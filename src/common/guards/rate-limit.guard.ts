@@ -42,6 +42,17 @@ const DEFAULT_ACCOUNT_TIER_LIMITS: Record<RateLimitTier, { limit: number; window
   [RateLimitTier.ADMIN]: { limit: 5000, window: 15 * 60 },
 };
 
+// Default per-wallet limit/window (seconds) per tier.
+// Override via RATE_LIMIT_<TIER>_WALLET_LIMIT / RATE_LIMIT_<TIER>_WALLET_WINDOW env vars.
+const DEFAULT_WALLET_TIER_LIMITS: Record<RateLimitTier, { limit: number; window: number }> = {
+  [RateLimitTier.PUBLIC]: { limit: 60, window: 15 * 60 },
+  [RateLimitTier.AUTH]: { limit: 8, window: 300 },
+  [RateLimitTier.AUTHENTICATED]: { limit: 600, window: 15 * 60 },
+  [RateLimitTier.TRADE]: { limit: 8, window: 60 },
+  [RateLimitTier.SIGNAL]: { limit: 8, window: 24 * 60 * 60 },
+  [RateLimitTier.ADMIN]: { limit: 6000, window: 15 * 60 },
+};
+
 // Violation count thresholds for abuse pattern escalation within a 1-hour window.
 const ABUSE_WARN_THRESHOLD = 3;
 const ABUSE_ERROR_THRESHOLD = 10;
@@ -52,6 +63,7 @@ export class RateLimitGuard implements CanActivate {
   private readonly logger = new Logger(RateLimitGuard.name);
   private readonly limits: Record<RateLimitTier, { limit: number; window: number }>;
   private readonly accountLimits: Record<RateLimitTier, { limit: number; window: number }>;
+  private readonly walletLimits: Record<RateLimitTier, { limit: number; window: number }>;
 
   constructor(
     private reflector: Reflector,
@@ -61,6 +73,7 @@ export class RateLimitGuard implements CanActivate {
   ) {
     this.limits = this.buildTierLimits();
     this.accountLimits = this.buildAccountTierLimits();
+    this.walletLimits = this.buildWalletTierLimits();
   }
 
   private buildTierLimits(): Record<RateLimitTier, { limit: number; window: number }> {
@@ -89,6 +102,19 @@ export class RateLimitGuard implements CanActivate {
     }, {} as Record<RateLimitTier, { limit: number; window: number }>);
   }
 
+  private buildWalletTierLimits(): Record<RateLimitTier, { limit: number; window: number }> {
+    const tiers = Object.values(RateLimitTier) as RateLimitTier[];
+    return tiers.reduce((acc, tier) => {
+      const envPrefix = `RATE_LIMIT_${tier.toUpperCase()}_WALLET`;
+      const defaults = DEFAULT_WALLET_TIER_LIMITS[tier];
+      acc[tier] = {
+        limit: this.getEnvNumber(`${envPrefix}_LIMIT`, defaults.limit),
+        window: this.getEnvNumber(`${envPrefix}_WINDOW`, defaults.window),
+      };
+      return acc;
+    }, {} as Record<RateLimitTier, { limit: number; window: number }>);
+  }
+
   private getEnvNumber(key: string, fallback: number): number {
     const raw = this.configService?.get<string | number>(key);
     const parsed = Number(raw);
@@ -106,6 +132,18 @@ export class RateLimitGuard implements CanActivate {
 
     // Per-IP check
     await this.checkRateLimit(context, effectiveTier, config?.limit, config?.window);
+
+    // Per-wallet check when the request has an authenticated wallet address
+    const walletAddress = this.extractWalletAddress(context);
+    if (walletAddress) {
+      await this.checkWalletLimit(
+        context,
+        effectiveTier,
+        walletAddress,
+        config?.walletLimit,
+        config?.walletWindow,
+      );
+    }
 
     // Per-account check when keyBy is specified
     if (config?.keyBy?.length) {
@@ -260,6 +298,62 @@ export class RateLimitGuard implements CanActivate {
     response.setHeader('X-RateLimit-Limit', finalLimit);
     response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
     response.setHeader('X-RateLimit-Reset', info.resetTime);
+  }
+
+  private extractWalletAddress(context: ExecutionContext): string | null {
+    const request = context.switchToHttp().getRequest();
+    const wallet = request.user?.walletAddress ?? request.user?.wallet ?? null;
+    return typeof wallet === 'string' && wallet.length > 0 ? wallet.toLowerCase() : null;
+  }
+
+  private async checkWalletLimit(
+    context: ExecutionContext,
+    tier: RateLimitTier,
+    walletAddress: string,
+    customLimit?: number,
+    customWindow?: number,
+  ): Promise<void> {
+    const response = context.switchToHttp().getResponse();
+    const { limit: defaultLimit, window: defaultWindow } = this.walletLimits[tier];
+    const finalLimit = customLimit ?? defaultLimit;
+    const finalWindow = customWindow ?? defaultWindow;
+
+    const key = `rate_limit:wallet:${tier}:${walletAddress}`;
+    const info = await this.getRateLimitInfo(key);
+
+    const now = Date.now();
+    const windowMs = finalWindow * 1000;
+
+    if (info.resetTime <= now) {
+      info.count = 0;
+      info.resetTime = now + windowMs;
+    }
+
+    info.count++;
+
+    if (info.count > finalLimit) {
+      const retryAfter = Math.ceil((info.resetTime - now) / 1000);
+
+      response.setHeader('X-RateLimit-Limit', finalLimit);
+      response.setHeader('X-RateLimit-Remaining', 0);
+      response.setHeader('X-RateLimit-Reset', info.resetTime);
+      response.setHeader('Retry-After', retryAfter);
+
+      this.logViolation(`wallet:${walletAddress}`, tier, finalLimit);
+
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: 'Too many requests',
+          error: 'Too Many Requests',
+          retryAfter,
+          guidance: `Wallet rate limit of ${finalLimit} requests per ${finalWindow}s exceeded. Retry after ${retryAfter}s.`,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    await this.setRateLimitInfo(key, info, finalWindow);
   }
 
   private extractAccountIdentifier(request: any, keyBy: string[]): string | null {

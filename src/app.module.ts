@@ -15,15 +15,20 @@ import { xaiConfig } from './config/xai.config';
 import { appConfig, sentryConfig } from './config/app.config';
 import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
-import configuration from './config/configuration';
+import { configuration } from './config/configuration';
+import { nplus1DetectionConfig } from './config/nplus1.config';
 import { configSchema } from './config/schemas/config.schema';
 import { StellarConfigService } from './config/stellar.service';
+import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
 
 import { LoggerModule } from './common/logger';
 import { CorrelationModule } from './common/correlation';
 import { SentryModule } from './common/sentry';
 import { ErrorClassificationModule } from './common/error-classification/error-classification.module';
 import { CacheModule } from './cache/cache.module';
+import { MaxCallDepthModule } from './common/max-call-depth.module';
+import { IdempotentModule } from './common/idempotent.module';
+import { BullCorrelationModule } from './common/bull/bull-correlation.module';
 
 import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -49,6 +54,7 @@ import { KycModule } from './kyc/kyc.module';
 import { ProductAnalyticsModule } from './analytics/product-analytics.module';
 import { BackupModule } from './backup/backup.module';
 import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
+import { AdminModule } from './admin/admin.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { DrModule } from './disaster-recovery/dr.module';
@@ -87,6 +93,8 @@ import { SwapModule } from './swap/swap.module';
 import { RiskControlsModule } from './risk-controls/risk-controls.module';
 import { WalletModule } from './wallet/wallet.module';
 import { FreighterModule } from './freighter/freighter.module';
+import { WatchlistModule } from './watchlist/watchlist.module';
+import { PrivacyModule } from './privacy/privacy.module';
 
 @Module({
   imports: [
@@ -104,6 +112,7 @@ import { FreighterModule } from './freighter/freighter.module';
         connectionPoolConfig,
         connectionPoolReplicaConfig,
         configuration,
+        nplus1DetectionConfig,
       ],
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
@@ -141,7 +150,11 @@ import { FreighterModule } from './freighter/freighter.module';
         logging: configService.get<boolean>('database.logging'),
         entities: ['dist/**/*.entity{.ts,.js}'],
         migrations: ['dist/migrations/*{.ts,.js}'],
-        subscribers: ['dist/subscribers/*{.ts,.js}', 'dist/common/subscribers/*{.ts,.js}'],
+        subscribers: [
+          'dist/subscribers/*{.ts,.js}',
+          'dist/common/subscribers/*{.ts,.js}',
+          'dist/database/subscribers/*{.ts,.js}',
+        ],
         ssl: configService.get<boolean>('database.ssl') ?? false,
         extra: {
           min: configService.get<number>('connectionPool.min') ?? 10,
@@ -164,8 +177,7 @@ import { FreighterModule } from './freighter/freighter.module';
       useFactory: (configService: ConfigService) => ({
         type: 'postgres' as const,
         host: configService.get<string>('database.replica.host'),
-        port: configService.get<number>('database.replica.port'),
-        username: configService.get<string>('database.replica.username'),
+        port: configService.get<number>('database.replica.port'),n        username: configService.get<string>('database.replica.username'),
         password: configService.get<string>('database.replica.password'),
         database: configService.get<string>('database.replica.database'),
         synchronize: false,
@@ -206,6 +218,9 @@ import { FreighterModule } from './freighter/freighter.module';
     LoggerModule,
     SentryModule,
     ErrorClassificationModule,
+    MaxCallDepthModule,
+    IdempotentModule,
+    BullCorrelationModule,
     UsersModule,
     SignalsModule,
     TradesModule,
@@ -216,6 +231,7 @@ import { FreighterModule } from './freighter/freighter.module';
     ApiMonetizationModule,
     SlaModule,
     ProvidersModule,
+    WatchlistModule,
     LeaderboardModule,
     MlModule,
     ScalingModule,
@@ -234,9 +250,9 @@ import { FreighterModule } from './freighter/freighter.module';
     ProductAnalyticsModule,
     BackupModule,
     AdminAnalyticsModule,
-    MonitoringModule,
-    WebhooksModule,
-    DrModule,
+    AdminModule,
+    MetadataExtractorService,
+    NPlus1DetectionInterceptor,
     MarketIntelligenceModule,
     DocumentationModule,
     CompetitionsModule,
@@ -270,6 +286,8 @@ import { FreighterModule } from './freighter/freighter.module';
     RiskControlsModule,
     WalletModule,
     FreighterModule,
+    HorizonBulkheadModule,
+    PrivacyModule,
   ],
   providers: [StellarConfigService, RateLimitMiddleware],
   exports: [StellarConfigService],

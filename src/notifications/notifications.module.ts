@@ -5,6 +5,9 @@ import { Notification } from './entities/notification.entity';
 import { NotificationPreference } from './preferences/entities/notification-preference.entity';
 import { NotificationTemplate } from './entities/notification-template.entity';
 import { UserConsent } from './entities/user-consent.entity';
+import {
+  NotificationDeliveryAuditLog,
+} from './entities/notification-delivery-audit-log.entity';
 import { ConsentService } from './consent.service';
 import { ConsentController } from './consent.controller';
 import { PreferencesService } from './preferences/preferences.service';
@@ -21,7 +24,7 @@ import { JobsModule } from '../jobs/jobs.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate, UserConsent]),
+    TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate, UserConsent, NotificationDeliveryAuditLog]),
     BullModule.registerQueue({ name: NOTIFICATION_QUEUE }),
     JobsModule,
   ],

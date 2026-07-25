@@ -25,6 +25,7 @@ export class ExecuteScheduledTradesJob implements OnModuleInit {
         'evaluate',
         {},
         {
+          priority: 10, // HIGH — DCA interval / scheduled trades
           jobId: 'evaluate-scheduled-trades',
           repeat: { every: 60 * 1000 },
           removeOnComplete: true,

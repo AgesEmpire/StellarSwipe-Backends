@@ -47,6 +47,14 @@ export class PermissionAuditLog {
   @Column({ type: 'varchar', length: 255 })
   resourceName: string;
 
+  /** Snapshot of the role/permission state before the change (only changed fields) */
+  @Column({ name: 'before_state', type: 'jsonb', nullable: true })
+  beforeState: Record<string, unknown> | null;
+
+  /** Snapshot of the role/permission state after the change (only changed fields) */
+  @Column({ name: 'after_state', type: 'jsonb', nullable: true })
+  afterState: Record<string, unknown> | null;
+
   /** Optional free-form context (role id, permission ids, reason, etc.) */
   @Column({ type: 'jsonb', nullable: true })
   metadata: Record<string, unknown>;
@@ -64,7 +72,33 @@ export interface LogPermissionChangeDto {
   targetUserId?: string;
   action: AuditAction;
   resourceName: string;
+  /** State before the change — only include fields that changed */
+  beforeState?: Record<string, unknown>;
+  /** State after the change — only include fields that changed */
+  afterState?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+}
+
+/** Computes a diff between two plain objects, returning only keys that differ. */
+export function diffObjects(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): { before: Record<string, unknown>; after: Record<string, unknown> } | null {
+  const changedBefore: Record<string, unknown> = {};
+  const changedAfter: Record<string, unknown> = {};
+
+  const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of allKeys) {
+    const bVal = JSON.stringify(before[key]);
+    const aVal = JSON.stringify(after[key]);
+    if (bVal !== aVal) {
+      changedBefore[key] = before[key];
+      changedAfter[key] = after[key];
+    }
+  }
+
+  if (Object.keys(changedBefore).length === 0) return null; // no-op
+  return { before: changedBefore, after: changedAfter };
 }
 
 export interface AuditQueryDto {
@@ -91,7 +125,7 @@ export class PermissionAuditService {
   ) {}
 
   /**
-   * Record a single RBAC / permission change event.
+   * Record a single RBAC / permission change event with optional before/after diff.
    */
   async log(dto: LogPermissionChangeDto): Promise<PermissionAuditLog> {
     const entry = this.auditRepository.create({
@@ -99,6 +133,8 @@ export class PermissionAuditService {
       targetUserId: dto.targetUserId ?? dto.actorId,
       action: dto.action,
       resourceName: dto.resourceName,
+      beforeState: dto.beforeState ?? null,
+      afterState: dto.afterState ?? null,
       metadata: dto.metadata ?? {},
     });
 

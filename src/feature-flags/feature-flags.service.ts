@@ -209,32 +209,54 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
     return this.assignmentRepository.find({ where: { userId } });
   }
 
-  /**
-   * Startup validation — Issue #897.
-   * Ensures every required flag exists in the DB with a sensible default.
-   * Env overrides (FEATURE_FLAGS_OVERRIDES) take precedence at evaluation
-   * time, so this only seeds missing DB records.
-   */
-  async onApplicationBootstrap(): Promise<void> {
-    const missing: string[] = [];
+  async isEntrypointKilled(contractId: string, method: string): Promise<boolean> {
+    const cacheKey = `entrypoint:${contractId}:${method}:killed`;
+    const cached = await this.cacheManager.get<boolean>(cacheKey);
+    if (cached !== undefined) return cached;
 
-    for (const def of REQUIRED_FLAGS) {
-      const exists = await this.flagRepository.findOne({ where: { name: def.name } });
-      if (!exists) {
-        missing.push(def.name);
-        await this.flagRepository.save(
-          this.flagRepository.create({ ...def, type: 'boolean', config: {} }),
-        );
+    const flag = await this.flagRepository.findOne({
+      where: {
+        contractId,
+        method,
+        type: 'boolean',
+        enabled: true,
+        retired: false,
+      },
+    });
+
+    const isKilled = !flag;
+
+    await this.cacheManager.set(cacheKey, isKilled, 60000);
+    return isKilled;
+  }
+
+  async checkEntrypointAccess(
+    contractId: string,
+    method: string,
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    if (this.envOverrides.has(`ENTRYPOINT_KILL_${contractId}_${method}`)) {
+      const isKilled = this.envOverrides.get(
+        `ENTRYPOINT_KILL_${contractId}_${method}`,
+      )!;
+      if (isKilled) {
+        return {
+          allowed: false,
+          reason: `Entrypoint ${contractId}.${method} is temporarily disabled`,
+        };
       }
     }
 
-    if (missing.length) {
+    const isKilled = await this.isEntrypointKilled(contractId, method);
+    if (isKilled) {
       this.logger.warn(
-        `[FeatureFlags] Auto-seeded ${missing.length} missing required flag(s): ${missing.join(', ')}. ` +
-          'Review defaults in feature-flags.service.ts → REQUIRED_FLAGS.',
+        `[FeatureFlag] Entrypoint ${contractId}.${method} is killed`,
       );
-    } else {
-      this.logger.log('[FeatureFlags] All required feature flags are present.');
+      return {
+        allowed: false,
+        reason: `Entrypoint ${contractId}.${method} is temporarily disabled`,
+      };
     }
+
+    return { allowed: true };
   }
 }

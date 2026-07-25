@@ -47,6 +47,7 @@ export class ContractJobService {
         options: { sourceSecret, sourceAccount, timeoutMs },
       },
       {
+        priority: 10, // HIGH — contract interactions / limit orders
         attempts: CONTRACT_JOB_MAX_ATTEMPTS,
         backoff: { type: 'exponential', delay: CONTRACT_JOB_BACKOFF_MS },
         removeOnComplete: false,

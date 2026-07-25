@@ -31,6 +31,9 @@ export class OutboxEvent {
   @Column({ name: 'published_at', type: 'timestamp', nullable: true })
   publishedAt?: Date;
 
+  @Column({ name: 'dead_at', type: 'timestamp', nullable: true })
+  deadAt?: Date;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

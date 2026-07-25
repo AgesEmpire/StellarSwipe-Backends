@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { TooManyRequestsException } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { SignalQuotaService } from './signal-quota.service';
 
@@ -52,7 +52,7 @@ describe('SignalQuotaService', () => {
         await service.checkAndConsume('provider-3', 'basic');
       }
       await expect(service.checkAndConsume('provider-3', 'basic')).rejects.toBeInstanceOf(
-        ForbiddenException,
+        TooManyRequestsException,
       );
     });
 
@@ -68,6 +68,24 @@ describe('SignalQuotaService', () => {
       }
     });
 
+
+    it('serializes concurrent submissions so only one succeeds at the limit', async () => {
+      for (let i = 0; i < 9; i++) {
+        await service.checkAndConsume('provider-race', 'basic');
+      }
+
+      const results = await Promise.allSettled([
+        service.checkAndConsume('provider-race', 'basic'),
+        service.checkAndConsume('provider-race', 'basic'),
+      ]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      await expect(service.getStatus('provider-race', 'basic')).resolves.toMatchObject({
+        used: 10,
+        remaining: 0,
+      });
+    });
     it('applies higher limit for premium tier', async () => {
       const status = await service.checkAndConsume('provider-5', 'premium');
       expect(status.limit).toBe(500);

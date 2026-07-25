@@ -15,6 +15,8 @@ describe('TracingService (#367)', () => {
   afterEach(() => {
     delete process.env.TRACING_ENABLED;
     delete process.env.TRACING_SERVICE_NAME;
+    delete process.env.TRACING_SAMPLE_RATE;
+    delete process.env.OTEL_TRACES_SAMPLER_ARG;
   });
 
   it('isEnabled is true when TRACING_ENABLED=true', () => {
@@ -47,6 +49,19 @@ describe('TracingService (#367)', () => {
 
   it('serviceName falls back to default', () => {
     expect(new TracingService(makeConfig()).serviceName).toBe('stellarswipe-backend');
+  });
+  it('updates and clamps the runtime sampling rate', () => {
+    const svc = new TracingService(makeConfig());
+    expect(svc.setSamplingRate(2)).toEqual({ sampleRate: 1 });
+    expect(svc.setSamplingRate(-1)).toEqual({ sampleRate: 0 });
+    expect(process.env.OTEL_TRACES_SAMPLER_ARG).toBe('0');
+  });
+
+  it('propagates correlation ID as outbound baggage', () => {
+    const svc = new TracingService(makeConfig());
+    const headers = svc.outboundHeaders('trace-xyz', 'corr-123');
+    expect(headers['x-correlation-id']).toBe('corr-123');
+    expect(headers.baggage).toBe('x-correlation-id=corr-123');
   });
 });
 

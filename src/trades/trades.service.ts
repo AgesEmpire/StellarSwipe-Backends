@@ -30,6 +30,7 @@ import {
   TradeLatencyService,
   TradeStage,
 } from './services/trade-latency.service';
+import { SlippageGuardService } from './services/slippage-guard.service';
 
 interface SignalData {
   id: string;
@@ -54,6 +55,7 @@ export class TradesService {
     private readonly velocityRiskManager: VelocityRiskManager,
     private readonly complianceRuleEngine: ComplianceRuleEngineService,
     private readonly tradeLatency: TradeLatencyService,
+    private readonly slippageGuard: SlippageGuardService,
   ) {}
 
   async executeTrade(dto: ExecuteTradeDto): Promise<TradeResultDto> {
@@ -114,6 +116,27 @@ export class TradesService {
             0,
             0,
             parseFloat(userBalance.available),
+          );
+
+          // Slippage Guard Check
+          const sellingAsset = dto.side === TradeSide.BUY ? signal.counterAsset : signal.baseAsset;
+          const buyingAsset = dto.side === TradeSide.BUY ? signal.baseAsset : signal.counterAsset;
+          
+          let referencePrice = parseFloat(signal.entryPrice);
+          if (dto.side === TradeSide.SELL) {
+            // Orderbook price for SELL is base / counter, so we invert the entry price (which is counter / base)
+            referencePrice = 1 / referencePrice;
+          }
+          
+          // Slippage tolerance from DTO is in percentage, guard expects basis points
+          // e.g., 0.5% * 100 = 50 bps. So we multiply by 100 if provided.
+          const overrideBps = dto.slippageTolerance !== undefined ? dto.slippageTolerance * 100 : undefined;
+          
+          await this.slippageGuard.verifySlippage(
+            sellingAsset,
+            buyingAsset,
+            referencePrice,
+            overrideBps,
           );
 
           return { signal, userBalance };

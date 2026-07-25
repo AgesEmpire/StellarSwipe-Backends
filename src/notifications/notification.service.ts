@@ -74,8 +74,9 @@ export class NotificationService {
     });
     const saved = await this.notificationRepository.save(notification);
 
-    // Enqueue for async delivery
+    // Enqueue for async delivery (NORMAL priority)
     await this.notificationQueue.add('deliver', { notificationId: saved.id }, {
+      priority: 100, // NORMAL
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
     });

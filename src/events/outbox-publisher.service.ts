@@ -8,7 +8,7 @@ export class OutboxPublisherService {
 
   constructor(private readonly outboxService: OutboxService) {}
 
-  @Cron(CronExpression.EVERY_10_SECONDS)
+  @Cron(CronExpression.EVERY_SECOND)
   async handlePendingEvents(): Promise<void> {
     try {
       await this.outboxService.publishPending();

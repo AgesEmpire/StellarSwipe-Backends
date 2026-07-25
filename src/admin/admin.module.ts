@@ -2,12 +2,14 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
 import { AdminManagementService } from './admin.service';
+import { AdminAuditController } from './admin-audit.controller';
 import { User } from '../users/entities/user.entity';
 import { Signal } from '../signals/entities/signal.entity';
 import { AuditLog } from '../audit-log/audit-log.entity';
 import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
-// The auth modules normally needed to protect these routes
-// import { AuthModule } from '../auth/auth.module';
+import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
+import { TracingModule } from '../tracing/tracing.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
     imports: [
@@ -15,12 +17,14 @@ import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
             User,
             Signal,
             AuditLog,
+            PermissionAuditLog,
         ]),
         AdminAnalyticsModule,
-        // AuthModule
+        TracingModule,
+        QueueModule,
     ],
-    controllers: [AdminController],
-    providers: [AdminManagementService],
+    controllers: [AdminController, AdminAuditController],
+    providers: [AdminManagementService, PermissionAuditService],
     exports: [AdminManagementService],
 })
 export class AdminModule { }

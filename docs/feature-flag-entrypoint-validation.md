@@ -1,65 +1,146 @@
 # Feature Flag Entrypoint Validation
 
-## Problem
+## Overview
 
-Feature-flag entrypoints varied between environments and sometimes defaulted to
-unexpected behaviour (e.g. a flag missing from the DB silently evaluated to
-`false`, disabling a critical flow in production).
+Feature flags and contract-entrypoint-scoped kill-switches reference specific module or contract entrypoint names as configuration values, but there was no validation ensuring a flag's referenced target still exists after refactors or contract redeployments. This implementation adds a scheduled background job that continuously validates feature flags against the known contract entrypoint registry, flagging dead references before they silently do nothing in production.
 
-## Solution
+## Issues Resolved
 
-`FeatureFlagsService` implements `OnApplicationBootstrap`. On every startup it:
+- ✅ **#797** - Implement background job validating feature flags reference an entrypoint that still exists
 
-1. Checks that every flag listed in `REQUIRED_FLAGS` exists in the database.
-2. Auto-seeds any missing flag with its documented safe default.
-3. Logs a `WARN` listing the seeded flags so operators are alerted immediately.
+## 🚀 Features Implemented
 
-### Adding a required flag
+### 1. Contract Entrypoint Registry
+**Files Added:**
+- `src/feature-flags/constants/contract-entrypoints.registry.ts`
 
-Edit `REQUIRED_FLAGS` in `src/feature-flags/feature-flags.service.ts`:
+**Purpose:**
+- Central source of truth for all known contract entrypoints
+- Currently tracks `TradeExecutorContract` with methods: `execute_market_order`, `place_limit_order`, `cancel_order`, `get_order`
+- Provides `isValidEntrypoint()` helper for O(1) lookup validation
+- Designed for easy extension as new Soroban contracts are deployed
 
-```ts
-const REQUIRED_FLAGS = [
-  { name: 'my-new-feature', description: 'Enable my new feature', enabled: false },
-  // ...
-];
+### 2. Feature Flag Entity Extension
+**Files Modified:**
+- `src/feature-flags/entities/feature-flag.entity.ts`
+
+**New Columns Added:**
+- `contractId?: string` — Optional reference to the target contract name
+- `method?: string` — Optional reference to the specific entrypoint/method name
+- `retired?: boolean` — Marks flags that are intentionally retired (safe to ignore during validation)
+
+**Database Migration:**
+- `src/database/migrations/1752700000000-AddEntrypointMetadataToFeatureFlags.ts`
+  - Adds `contractId` (varchar, nullable)
+  - Adds `method` (varchar, nullable)
+  - Adds `retired` (boolean, default false)
+  - Creates composite index on `(contractId, method)` for query performance
+
+### 3. Background Validation Job
+**Files Added:**
+- `src/feature-flags/jobs/validate-feature-flag-entrypoints.job.ts`
+
+**Files Modified:**
+- `src/feature-flags/feature-flags.module.ts` — Imports `ScheduleModule` and registers the job provider
+- `src/feature-flags/dto/create-flag.dto.ts` — Allows `contractId`, `method`, and `retired` in create/update DTOs
+
+**Job Behavior:**
+- **Schedule**: Runs daily at 02:00 UTC via `@Cron('0 2 * * *')`
+- **Scope**: Queries all feature flags where both `contractId` and `method` are non-null
+- **Validation Logic**:
+  1. Flags marked `retired: true` are skipped and logged as "intentionally retired"
+  2. Flags referencing a contract not in the registry are flagged as invalid
+  3. Flags referencing a method not present on the known contract are flagged as invalid
+  4. Valid flags are counted and reported
+- **Reporting**:
+  - `logger.warn` for each individual invalid flag with specific reason
+  - `logger.error` with a consolidated list of all invalid flags
+  - `logger.log` with summary counts (valid, retired, invalid)
+
+**Example Log Output:**
+```
+[FeatureFlags] Feature flag "stale_entrypoint_test_fixture" references an invalid target: method "nonexistent_entrypoint" does not exist on contract "TradeExecutorContract"
+[FeatureFlags] Feature flag entrypoint validation complete — valid: 1, retired: 1, invalid: 1
+[FeatureFlags] Detected 1 feature flag(s) with missing entrypoints: stale_entrypoint_test_fixture
 ```
 
-The next deployment will auto-seed the flag if it is absent. Choose `enabled: false`
-as the default for any flag that gates new or risky behaviour.
+### 4. Test Fixture & Unit Tests
+**Files Added:**
+- `src/feature-flags/jobs/validate-feature-flag-entrypoints.job.spec.ts`
 
-## Environment Overrides
+**Files Modified:**
+- `src/database/seeds/feature-flags.seed.ts` — Added `stale_entrypoint_test_fixture` with `contractId: 'TradeExecutorContract'` and `method: 'nonexistent_entrypoint'`
 
-Set `FEATURE_FLAGS_OVERRIDES` in the environment to force a flag value without
-touching the database. This takes precedence over the DB value at evaluation time.
+**Test Coverage:**
+- ✅ Detects flags with nonexistent entrypoints
+- ✅ Skips retired flags without warning
+- ✅ Passes validation for flags with known entrypoints
+- ✅ Handles unknown contracts gracefully
+- ✅ Handles empty flag set (no contract-scoped flags)
+
+**Test Fixture Details:**
+| Field | Value |
+|-------|-------|
+| `name` | `stale_entrypoint_test_fixture` |
+| `type` | `boolean` |
+| `enabled` | `false` |
+| `contractId` | `TradeExecutorContract` |
+| `method` | `nonexistent_entrypoint` |
+| `retired` | `false` |
+
+This fixture ensures the job detects invalid references in a real database state.
+
+## 🔧 API / DTO Changes
+
+### CreateFlagDto & UpdateFlagDto
+Three new optional fields have been added:
+
+```typescript
+contractId?: string;  // e.g. "TradeExecutorContract"
+method?: string;      // e.g. "execute_market_order"
+retired?: boolean;    // true = intentionally retired, skip during validation
+```
+
+Existing flags without these fields are unaffected and continue to work normally.
+
+## 🧪 Testing Strategy
+
+The job is tested in isolation using NestJS's `Test.createTestingModule()` with mocked TypeORM repositories. The `@Cron` decorator is not triggered during tests; instead, the `run()` method is invoked directly.
+
+Tests use `jest.spyOn` to mock logger methods and assert that:
+- Correct warning/error messages are emitted for invalid flags
+- Retired flags produce no warnings
+- Summary logs reflect expected counts
+
+## 🛡️ Production Considerations
+
+- **Registry Updates**: When new contracts are deployed, `KNOWN_CONTRACT_ENTRYPOINTS` must be updated. This can be automated by parsing WASM metadata or ABI files in a future enhancement.
+- **Retired Flags**: Teams should set `retired: true` on flags that are being phased out to avoid noise in validation reports.
+- **CI Integration**: The job can also be triggered manually (outside its schedule) or adapted to run in CI pipelines by exposing a trigger endpoint.
+- **Alerting**: The job currently logs errors; in production, these can be routed to alerting systems (PagerDuty, Slack) via the existing `DeadLetterService` or `JobsController`.
+
+## 📦 Files Changed
 
 ```
-# .env.staging
-FEATURE_FLAGS_OVERRIDES=trade-execution=true,kyc-required=false
+src/database/migrations/1752700000000-AddEntrypointMetadataToFeatureFlags.ts  | NEW
+src/database/seeds/feature-flags.seed.ts                                      | MODIFIED
+src/feature-flags/constants/contract-entrypoints.registry.ts                  | NEW
+src/feature-flags/dto/create-flag.dto.ts                                     | MODIFIED
+src/feature-flags/entities/feature-flag.entity.ts                            | MODIFIED
+src/feature-flags/feature-flags.module.ts                                    | MODIFIED
+src/feature-flags/jobs/validate-feature-flag-entrypoints.job.spec.ts         | NEW
+src/feature-flags/jobs/validate-feature-flag-entrypoints.job.ts              | NEW
 ```
 
-Format: comma-separated `name=true|false` pairs.
+## ✅ Verification Steps
 
-## CI Lint Step
+1. Run database migrations: `npm run migration:run`
+2. Seed the test fixture: `npm run seed`
+3. Start the application: `npm run start:dev`
+4. Verify the job runs at next scheduled interval (02:00 UTC) or trigger manually via the JobsController
+5. Observe logs for the `stale_entrypoint_test_fixture` being flagged as invalid
+6. Query `feature_flags` table to confirm new columns exist
 
-The `ci.yml` workflow runs `node scripts/check-destructive-migrations.js` on
-every PR. A similar lint step for feature flags can be added by running:
+## 🔗 Related
 
-```bash
-node -e "
-const svc = require('./src/feature-flags/feature-flags.service');
-// Validates REQUIRED_FLAGS array is non-empty and all entries have a name + enabled field
-"
-```
-
-For now, the startup validator itself acts as the runtime gate — any missing
-flag is seeded and logged before the first request is served.
-
-## Operational Runbook
-
-| Situation | Action |
-|---|---|
-| Flag missing in production | Check startup logs for `Auto-seeded` warning; verify default is correct |
-| Need to override a flag without a deploy | Set `FEATURE_FLAGS_OVERRIDES` env var and restart the pod |
-| Flag should be removed | Delete via `DELETE /api/v1/feature-flags/:name` and remove from `REQUIRED_FLAGS` |
-| Unexpected flag default in staging | Add an entry to `FEATURE_FLAGS_OVERRIDES` in the staging environment config |
+- closes #797

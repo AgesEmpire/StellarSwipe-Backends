@@ -83,4 +83,33 @@ export class WebhooksController {
   ) {
     return this.webhooksService.retryDelivery(req.user.id, deliveryId);
   }
+
+  @Post('deliveries/:deliveryId/replay/:webhookId')
+  @HttpCode(HttpStatus.ACCEPTED)
+  replayToSubscriber(
+    @Request() req: { user: { id: string } },
+    @Param('deliveryId', ParseUUIDPipe) deliveryId: string,
+    @Param('webhookId', ParseUUIDPipe) webhookId: string,
+  ) {
+    return this.webhooksService.replayToSubscriber(req.user.id, deliveryId, webhookId);
+  }
+
+  @Post(':id/secret-rotation/initiate')
+  @HttpCode(HttpStatus.OK)
+  initiateSecretRotation(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('rotationWindowMs', new DefaultValuePipe(3600000), ParseIntPipe) rotationWindowMs: number,
+  ) {
+    return this.webhooksService.initiateSecretRotation(req.user.id, id, rotationWindowMs);
+  }
+
+  @Post(':id/secret-rotation/finalize')
+  @HttpCode(HttpStatus.OK)
+  finalizeSecretRotation(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.webhooksService.finalizeSecretRotation(req.user.id, id);
+  }
 }

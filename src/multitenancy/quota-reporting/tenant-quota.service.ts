@@ -43,10 +43,15 @@ export class TenantQuotaService {
   async generateReport(
     requester: TenantQuotaRequester,
     request: QuotaReportRequestDto = {},
+    targetTenantId?: string,
   ): Promise<QuotaReportDto> {
-    this.assertTenantAdmin(requester);
+    if (targetTenantId && targetTenantId !== (requester.tenantId ?? requester.id)) {
+      this.assertPlatformAdmin(requester);
+    } else {
+      this.assertTenantAdmin(requester);
+    }
 
-    const tenantId = requester.tenantId ?? requester.id;
+    const tenantId = targetTenantId ?? requester.tenantId ?? requester.id;
     const periodStart = request.periodStart ? new Date(request.periodStart) : this.defaultPeriodStart();
     const periodEnd = request.periodEnd ? new Date(request.periodEnd) : new Date();
     const forecastDays = request.forecastDays ?? this.deriveForecastDays(periodStart, periodEnd);
@@ -149,10 +154,28 @@ export class TenantQuotaService {
     const roles = (requester.roles ?? []).map((role) => role.toLowerCase());
     const isTenantAdmin =
       roles.includes('tenant-admin') ||
-      roles.includes('tenant_admin');
+      roles.includes('tenant_admin') ||
+      this.isPlatformAdmin(roles);
 
     if (!isTenantAdmin) {
       throw new ForbiddenException('Only tenant admins can access quota reports');
     }
+  }
+
+  private assertPlatformAdmin(requester: TenantQuotaRequester): void {
+    const roles = (requester.roles ?? []).map((role) => role.toLowerCase());
+    if (!this.isPlatformAdmin(roles)) {
+      throw new ForbiddenException(
+        'Viewing another tenant\'s quota report requires platform admin privileges',
+      );
+    }
+  }
+
+  private isPlatformAdmin(roles: string[]): boolean {
+    return (
+      roles.includes('admin') ||
+      roles.includes('super_admin') ||
+      roles.includes('platform_admin')
+    );
   }
 }
