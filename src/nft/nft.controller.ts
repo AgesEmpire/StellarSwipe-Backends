@@ -11,6 +11,7 @@ import {
 import { NftMinterService } from './nft-minter.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { NftTransferDto } from './dto/nft-transfer.dto';
+import { CreateCollectionDto } from './dto/create-collection.dto';
 
 @Controller('nft')
 export class NftController {
@@ -22,7 +23,7 @@ export class NftController {
   }
 
   @Post('collections')
-  createCollection(@Body() body: { name: string; symbol: string; contractId?: string; maxSupply?: number }) {
+  createCollection(@Body() body: CreateCollectionDto) {
     return this.nftMinterService.createCollection(body);
   }
 
