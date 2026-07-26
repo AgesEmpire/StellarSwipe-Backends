@@ -24,8 +24,8 @@ import {
   ResolveAlertDto,
   SecurityAlertQueryDto,
   SecurityDashboardDto,
+  UpdateIncidentStatusDto,
 } from './dto/security-alert.dto';
-import { IncidentStatus } from './entities/security-incident.entity';
 
 // Replace with your actual guards
 // import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -86,7 +86,7 @@ export class SecurityDashboardController {
   @ApiOperation({ summary: 'Update incident status' })
   async updateIncidentStatus(
     @Param('id', ParseUUIDPipe) incidentId: string,
-    @Body() body: { status: IncidentStatus; actorId: string; note?: string },
+    @Body() body: UpdateIncidentStatusDto,
   ) {
     return this.alertManager.updateIncidentStatus(
       incidentId,

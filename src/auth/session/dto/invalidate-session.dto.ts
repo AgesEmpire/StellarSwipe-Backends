@@ -18,6 +18,15 @@ export class InvalidateSessionDto {
   reason?: string;
 }
 
+export class AdminSessionActionDto {
+  @IsUUID()
+  adminId: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
 export class InvalidateSessionResponseDto {
   invalidatedCount: number;
   sessionIds: string[];

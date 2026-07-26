@@ -11,6 +11,7 @@ import { SessionInvalidationService } from './session-invalidation.service';
 import {
   InvalidateSessionDto,
   InvalidateSessionResponseDto,
+  AdminSessionActionDto,
 } from './dto/invalidate-session.dto';
 
 @Controller('auth/sessions')
@@ -30,7 +31,7 @@ export class SessionController {
   @HttpCode(200)
   invalidateBySessionId(
     @Param('sessionId') sessionId: string,
-    @Body() body: { adminId: string; reason?: string },
+    @Body() body: AdminSessionActionDto,
   ): Promise<InvalidateSessionResponseDto> {
     return this.sessionInvalidationService.invalidateBySessionId(
       sessionId,
@@ -43,7 +44,7 @@ export class SessionController {
   @HttpCode(200)
   invalidateByUserId(
     @Param('userId') userId: string,
-    @Body() body: { adminId: string; reason?: string },
+    @Body() body: AdminSessionActionDto,
   ): Promise<InvalidateSessionResponseDto> {
     return this.sessionInvalidationService.invalidateByUserId(
       userId,
