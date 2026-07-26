@@ -27,6 +27,7 @@ import { EmailModule } from '../email/email.module';
 import { AnomalousLoginListener } from './session/anomalous-login.listener';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
     SessionFingerprintService,
     AnomalousLoginListener,
     RefreshTokenCleanupService,
+    DistributedLockService,
   ],
   exports: [
     AuthService,
