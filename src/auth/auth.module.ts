@@ -47,6 +47,7 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint, RefreshToken]),
     UsersModule,
     EmailModule,
+    AuthorizationModule,
   ],
   controllers: [AuthController, SocialAuthController, TwoFactorController, WebauthnController],
   providers: [

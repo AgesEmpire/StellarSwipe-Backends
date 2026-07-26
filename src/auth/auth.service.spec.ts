@@ -4,7 +4,7 @@ import { AuthService } from './auth.service';
 import { JwtService } from '@nestjs/jwt';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Keypair } from '@stellar/stellar-sdk';
-import { UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
 import { AuthAuditService } from './auth-audit.service';
@@ -38,6 +38,12 @@ describe('AuthService', () => {
 
         usersServiceSpec = {
             findOrCreateByWalletAddress: jest.fn().mockResolvedValue({ id: 'user-uuid' }),
+            findByWalletAddress: jest.fn().mockResolvedValue({
+                id: 'user-uuid',
+                email: 'test@example.com',
+                username: 'testuser',
+                displayName: 'Test User',
+            }),
             findByEmail: jest.fn(),
             createUser: jest.fn().mockResolvedValue({
                 id: 'user-uuid',
@@ -55,6 +61,7 @@ describe('AuthService', () => {
         authAuditServiceSpec = {
             logLoginFailed: jest.fn().mockResolvedValue(undefined),
             logLogin: jest.fn().mockResolvedValue(undefined),
+            logAuthEvent: jest.fn().mockResolvedValue(undefined),
         };
 
         sessionManagerSpec = {
@@ -292,6 +299,81 @@ describe('AuthService', () => {
                 message: fakeMessage,
                 signature,
             })).rejects.toThrow(UnauthorizedException);
+        });
+    });
+
+    describe('account lockout', () => {
+        async function failVerification(publicKey: string) {
+            const { message } = await service.generateChallenge(publicKey);
+            const otherKp = Keypair.random();
+            const badSignature = otherKp.sign(Buffer.from(message)).toString('base64');
+            await expect(
+                service.verifySignature({ publicKey, signature: badSignature, message }),
+            ).rejects.toThrow(UnauthorizedException);
+        }
+
+        it('allows attempts under the failure threshold', async () => {
+            const kp = Keypair.random();
+            for (let i = 0; i < 4; i++) {
+                await failVerification(kp.publicKey());
+            }
+
+            expect(mockCacheStore.has(`auth_lockout:${kp.publicKey()}`)).toBeFalsy();
+        });
+
+        it('locks the account after 5 failed attempts and notifies by email', async () => {
+            const kp = Keypair.random();
+            for (let i = 0; i < 5; i++) {
+                await failVerification(kp.publicKey());
+            }
+
+            expect(mockCacheStore.has(`auth_lockout:${kp.publicKey()}`)).toBeTruthy();
+            expect(emailServiceSpec.sendEmail).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    to: 'test@example.com',
+                    template: 'security-alert',
+                }),
+            );
+        });
+
+        it('rejects further attempts once locked, even with a valid signature', async () => {
+            const kp = Keypair.random();
+            for (let i = 0; i < 5; i++) {
+                await failVerification(kp.publicKey());
+            }
+
+            const { message } = await service.generateChallenge(kp.publicKey());
+            const validSignature = kp.sign(Buffer.from(message)).toString('base64');
+
+            await expect(
+                service.verifySignature({ publicKey: kp.publicKey(), signature: validSignature, message }),
+            ).rejects.toThrow(ForbiddenException);
+        });
+
+        it('resets the failed-attempt count after a successful verification', async () => {
+            const kp = Keypair.random();
+            await failVerification(kp.publicKey());
+            await failVerification(kp.publicKey());
+
+            const { message } = await service.generateChallenge(kp.publicKey());
+            const validSignature = kp.sign(Buffer.from(message)).toString('base64');
+            await service.verifySignature({ publicKey: kp.publicKey(), signature: validSignature, message });
+
+            expect(mockCacheStore.has(`auth_failed_attempts:${kp.publicKey()}`)).toBeFalsy();
+        });
+
+        it('unlockAccount clears lockout and failed-attempt state', async () => {
+            const kp = Keypair.random();
+            for (let i = 0; i < 5; i++) {
+                await failVerification(kp.publicKey());
+            }
+            expect(mockCacheStore.has(`auth_lockout:${kp.publicKey()}`)).toBeTruthy();
+
+            const result = await service.unlockAccount(kp.publicKey());
+
+            expect(result.message).toBe('Account unlocked');
+            expect(mockCacheStore.has(`auth_lockout:${kp.publicKey()}`)).toBeFalsy();
+            expect(mockCacheStore.has(`auth_failed_attempts:${kp.publicKey()}`)).toBeFalsy();
         });
     });
 });
