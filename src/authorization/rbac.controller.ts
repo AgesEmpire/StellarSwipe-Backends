@@ -22,6 +22,7 @@ import {
   RejectRequestDto,
   AccessRequestQueryDto,
 } from './dto/access-request.dto';
+import { AssignRoleDto } from './dto/assign-role.dto';
 import { RequirePermissions, RequireWorkflowApproval } from './decorators/require-permissions.decorator';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
@@ -86,7 +87,7 @@ export class RbacController {
   async assignRoleToUser(
     @Param('userId') userId: string,
     @Param('roleId') roleId: string,
-    @Body() body: { teamId?: string; organizationId?: string; expiresAt?: Date },
+    @Body() body: AssignRoleDto,
     @Request() req: any,
   ) {
     return this.rbacService.assignRoleToUser(userId, roleId, req.user.id, body);
