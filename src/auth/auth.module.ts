@@ -27,6 +27,7 @@ import { EmailModule } from '../email/email.module';
 import { AnomalousLoginListener } from './session/anomalous-login.listener';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
+import { AuthorizationModule } from '../authorization/authorization.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
     TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint, RefreshToken]),
     UsersModule,
     EmailModule,
+    AuthorizationModule,
   ],
   controllers: [AuthController, SocialAuthController, TwoFactorController, WebauthnController],
   providers: [

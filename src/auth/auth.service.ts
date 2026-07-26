@@ -3,6 +3,7 @@ import {
   Inject,
   UnauthorizedException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -16,6 +17,7 @@ import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { UsersService } from '../users/users.service';
 import { AuthAuditService } from './auth-audit.service';
+import { AuditAction, AuditStatus } from '../audit-log/entities/audit-log.entity';
 import { SessionManagerService } from './session/session-manager.service';
 import { SessionFingerprintService } from './session/session-fingerprint.service';
 import { EmailService } from '../email/email.service';
@@ -27,6 +29,11 @@ export class AuthService {
   // Non-existent-user requests are padded up to this floor so response timing
   // cannot be used to enumerate registered emails.
   private static readonly FORGOT_PASSWORD_RESPONSE_FLOOR_MS = 150;
+
+  // Account lockout thresholds for failed challenge/verify attempts.
+  private static readonly MAX_FAILED_ATTEMPTS = 5;
+  private static readonly FAILED_ATTEMPTS_WINDOW_MS = 15 * 60 * 1000;
+  private static readonly LOCKOUT_DURATION_MS = 30 * 60 * 1000;
 
   constructor(
     private jwtService: JwtService,
@@ -54,6 +61,14 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
     const { publicKey, signature, message } = dto;
 
+    // 0. Reject outright if the account is currently locked out
+    if (await this.isAccountLocked(publicKey)) {
+      if (req) await this.authAuditService.logLoginFailed(req, 'Account locked');
+      throw new ForbiddenException(
+        'Account temporarily locked due to too many failed attempts. Please try again later.',
+      );
+    }
+
     // 1. Retrieve challenge from Redis
     const storedMessage = await this.cacheManager.get<string>(
       `auth_challenge:${publicKey}`,
@@ -65,6 +80,7 @@ export class AuthService {
           req,
           'Challenge expired or not found',
         );
+      await this.recordFailedAttempt(publicKey);
       throw new UnauthorizedException(
         'Challenge expired or not found. Please request a new challenge.',
       );
@@ -73,6 +89,7 @@ export class AuthService {
     if (storedMessage !== message) {
       if (req)
         await this.authAuditService.logLoginFailed(req, 'Message mismatch');
+      await this.recordFailedAttempt(publicKey);
       throw new UnauthorizedException(
         'Message mismatch. Please sign the correct challenge.',
       );
@@ -97,11 +114,15 @@ export class AuthService {
           req,
           'Signature verification failed',
         );
+      await this.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Signature verification failed');
     }
 
     // 3. Clear challenge after successful verification (prevent replay)
     await this.cacheManager.del(`auth_challenge:${publicKey}`);
+
+    // Successful verification: clear any accumulated failed-attempt count
+    await this.resetFailedAttempts(publicKey);
 
     // 4. Find or create user
     const user = await this.usersService.findOrCreateByWalletAddress(publicKey);
@@ -262,5 +283,89 @@ export class AuthService {
     await this.cacheManager.del(`pwd_reset:${token}`);
 
     return { message: 'Password has been successfully reset' };
+  }
+
+  private async isAccountLocked(publicKey: string): Promise<boolean> {
+    const lockedUntil = await this.cacheManager.get<number>(
+      `auth_lockout:${publicKey}`,
+    );
+    return !!lockedUntil;
+  }
+
+  private async recordFailedAttempt(publicKey: string): Promise<void> {
+    const key = `auth_failed_attempts:${publicKey}`;
+    const attempts = (await this.cacheManager.get<number>(key)) ?? 0;
+    const nextAttempts = attempts + 1;
+
+    if (nextAttempts >= AuthService.MAX_FAILED_ATTEMPTS) {
+      await this.lockAccount(publicKey);
+      await this.cacheManager.del(key);
+      return;
+    }
+
+    await this.cacheManager.set(
+      key,
+      nextAttempts,
+      AuthService.FAILED_ATTEMPTS_WINDOW_MS,
+    );
+  }
+
+  private async resetFailedAttempts(publicKey: string): Promise<void> {
+    await this.cacheManager.del(`auth_failed_attempts:${publicKey}`);
+  }
+
+  private async lockAccount(publicKey: string): Promise<void> {
+    await this.cacheManager.set(
+      `auth_lockout:${publicKey}`,
+      Date.now() + AuthService.LOCKOUT_DURATION_MS,
+      AuthService.LOCKOUT_DURATION_MS,
+    );
+
+    this.authAuditService
+      .logAuthEvent({
+        action: AuditAction.ACCOUNT_LOCKED,
+        endpoint: '/auth/verify',
+        method: 'POST',
+        status: AuditStatus.SUCCESS,
+        metadata: { publicKey },
+      })
+      .catch(() => undefined);
+
+    try {
+      const user = await this.usersService.findByWalletAddress(publicKey);
+      if (user.email) {
+        await this.emailService.sendEmail({
+          to: user.email,
+          subject: 'Your account has been locked',
+          template: 'security-alert',
+          variables: {
+            name: user.displayName || user.username || 'there',
+            alertType: 'Account locked after repeated failed sign-in attempts',
+            occurredAt: new Date(),
+            link: 'https://stellarswipe.com/support',
+          },
+        });
+      }
+    } catch (error) {
+      // User may not exist yet, or may have no email on file. Never let
+      // notification failures block the lockout itself.
+    }
+  }
+
+  async unlockAccount(publicKey: string): Promise<{ message: string }> {
+    await this.cacheManager.del(`auth_lockout:${publicKey}`);
+    await this.cacheManager.del(`auth_failed_attempts:${publicKey}`);
+
+    await this.authAuditService
+      .logAuthEvent({
+        action: AuditAction.ACCOUNT_UNLOCKED,
+        endpoint: '/auth/unlock',
+        method: 'POST',
+        status: AuditStatus.SUCCESS,
+        metadata: { publicKey },
+      })
+      .catch(() => undefined);
+
+    return { message: 'Account unlocked' };
   }
 }
