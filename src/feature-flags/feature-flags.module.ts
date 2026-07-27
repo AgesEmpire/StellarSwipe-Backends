@@ -9,6 +9,7 @@ import { FeatureFlag } from './entities/feature-flag.entity';
 import { FlagAssignment } from './entities/flag-assignment.entity';
 import { FeatureFlagGuard } from './guards/feature-flag.guard';
 import { ValidateFeatureFlagEntrypointsJob } from './jobs/validate-feature-flag-entrypoints.job';
+import { TenantConfigService } from '../config/tenant-config.service';
 
 @Module({
   imports: [
@@ -18,7 +19,13 @@ import { ValidateFeatureFlagEntrypointsJob } from './jobs/validate-feature-flag-
     ScheduleModule,
   ],
   controllers: [FeatureFlagsController],
-  providers: [FeatureFlagsService, FeatureFlagGuard, ValidateFeatureFlagEntrypointsJob],
-  exports: [FeatureFlagsService, FeatureFlagGuard],
+  providers: [
+    FeatureFlagsService,
+    FeatureFlagGuard,
+    ValidateFeatureFlagEntrypointsJob,
+    // #943 — tenant-aware feature flag overrides, consulted by FeatureFlagsService.
+    TenantConfigService,
+  ],
+  exports: [FeatureFlagsService, FeatureFlagGuard, TenantConfigService],
 })
 export class FeatureFlagsModule {}

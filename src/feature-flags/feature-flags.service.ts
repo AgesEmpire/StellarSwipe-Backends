@@ -4,6 +4,7 @@ import {
   Inject,
   Logger,
   OnApplicationBootstrap,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -15,6 +16,7 @@ import { FeatureFlag } from './entities/feature-flag.entity';
 import { FlagAssignment } from './entities/flag-assignment.entity';
 import { CreateFlagDto, UpdateFlagDto } from './dto/create-flag.dto';
 import { FlagEvaluationResult } from './dto/evaluate-flag.dto';
+import { TenantConfigService } from '../config/tenant-config.service';
 
 /**
  * Required flags that must exist at startup.
@@ -46,6 +48,11 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
     @Inject(CACHE_MANAGER)
     private cacheManager: Cache,
     private readonly config: ConfigService,
+    // Optional so existing tests/modules that don't provide a
+    // TenantConfigService keep working unchanged — tenant overrides simply
+    // resolve to undefined (no-op) in that case.
+    @Optional()
+    private readonly tenantConfig?: TenantConfigService,
   ) {
     this.envOverrides = this.loadEnvOverrides();
   }
@@ -103,6 +110,18 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
   }
 
   async evaluateFlag(flagName: string, userId: string): Promise<FlagEvaluationResult> {
+    // Tenant override takes highest precedence — an explicit per-tenant
+    // decision (#943) should win over both the env override and the flag's
+    // own configuration. Falls through (undefined) when there's no active
+    // tenant context or no override configured for this tenant/flag.
+    const tenantOverride = this.tenantConfig?.resolveFeatureFlagOverride(flagName);
+    if (tenantOverride !== undefined) {
+      this.logger.log(
+        `[FeatureFlag] '${flagName}' resolved via tenant override → ${tenantOverride} (userId=${userId})`,
+      );
+      return { enabled: tenantOverride };
+    }
+
     // Env override takes precedence — log when it affects the request path
     if (this.envOverrides.has(flagName)) {
       const overrideValue = this.envOverrides.get(flagName)!;

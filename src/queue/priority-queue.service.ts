@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
+import { ConfigService } from '@nestjs/config';
 import { Queue, Job, JobOptions } from 'bull';
 
 export const PRIORITY_QUEUE = 'priority-queue';
@@ -46,6 +47,7 @@ export class PriorityQueueService {
     private readonly criticalQueue: Queue<PriorityJobData>,
     @InjectQueue(LOW_PRIORITY_QUEUE)
     private readonly lowPriorityQueue: Queue<PriorityJobData>,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -83,12 +85,21 @@ export class PriorityQueueService {
       createdAt: new Date(),
     };
 
+    const defaultAttempts =
+      this.configService.get<number>('queueRetry.attempts') ?? 3;
+    const defaultBackoffType =
+      this.configService.get<'fixed' | 'exponential'>(
+        'queueRetry.backoffType',
+      ) ?? 'exponential';
+    const defaultBackoffDelay =
+      this.configService.get<number>('queueRetry.backoffDelay') ?? 2000;
+
     const jobOptions: JobOptions = {
       priority,
-      attempts: 3,
+      attempts: defaultAttempts,
       backoff: {
-        type: 'exponential',
-        delay: 2000,
+        type: defaultBackoffType,
+        delay: defaultBackoffDelay,
       },
       removeOnComplete: 50,
       removeOnFail: 10,
