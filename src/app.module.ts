@@ -17,9 +17,11 @@ import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
+import { queueRetryConfig } from './queue/queue-retry.config';
 import { configSchema } from './config/schemas/config.schema';
 import { StellarConfigService } from './config/stellar.service';
 import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
+import { TenancyModule } from './tenancy/tenancy.module';
 
 import { LoggerModule } from './common/logger';
 import { CorrelationModule } from './common/correlation';
@@ -117,6 +119,7 @@ import { SearchModule } from './search/search.module';
         connectionPoolReplicaConfig,
         configuration,
         nplus1DetectionConfig,
+        queueRetryConfig,
       ],
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
@@ -293,9 +296,7 @@ import { SearchModule } from './search/search.module';
     HorizonBulkheadModule,
     PrivacyModule,
     TracingModule,
-    PaymentsModule,
-    FeatureFlagsModule,
-    SearchModule,
+    TenancyModule,
   ],
   providers: [StellarConfigService, RateLimitMiddleware],
   exports: [StellarConfigService],

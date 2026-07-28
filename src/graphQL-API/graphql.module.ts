@@ -3,11 +3,21 @@ import { GraphQLModule as NestGraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { APP_FILTER } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import { join } from 'path';
 import { fieldExtensionsEstimator, simpleEstimator, getComplexity } from 'graphql-query-complexity';
 import { GraphQLSchema } from 'graphql';
 import { Reflector } from '@nestjs/core';
 import { PubSub } from 'graphql-subscriptions';
+
+// ─── Subscription (WS) authentication ────────────────────────────────────────
+// Enforces auth at graphql-ws handshake time (see `subscriptions` config
+// below) instead of only at the HTTP `context` factory, which never runs for
+// WS connections.
+import { createGraphqlWsAuthHandlers } from './ws-subscription-auth';
+import { AuthModule } from '../auth/auth.module';
+import { SessionManagerService } from '../auth/session/session-manager.service';
+import { UsersService } from '../users/users.service';
 
 // ─── Scalars ─────────────────────────────────────────────────────────────────
 import { DateTimeScalar } from './scalars/datetime.scalar';
@@ -63,14 +73,41 @@ import { AssetsService } from '../assets/assets.service';
     UsersModule,
     AuthorizationModule,
 
+    // AuthModule → SessionManagerService (session-revocation check reused by
+    // the subscription handshake authenticator below).
+    AuthModule,
+    // Own JwtModule registration (same `jwt.secret` config key AuthModule's
+    // JwtStrategy/JwtModule use) so `JwtService` can verify the token sent
+    // via `connectionParams` on a `graphql-ws` `connection_init` message.
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('jwt.secret'),
+        signOptions: {
+          expiresIn: configService.get('jwt.expiresIn'),
+        },
+      }),
+    }),
+
     NestGraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      inject: [ProvidersService, SignalsService, ConfigService, AssetsService],
+      inject: [
+        ProvidersService,
+        SignalsService,
+        ConfigService,
+        AssetsService,
+        JwtService,
+        UsersService,
+        SessionManagerService,
+      ],
       useFactory: (
         providersService: ProvidersService,
         signalsService: SignalsService,
         configService: ConfigService,
         assetsService: AssetsService,
+        jwtService: JwtService,
+        usersService: UsersService,
+        sessionManager: SessionManagerService,
       ) => ({
         /** Code-first schema — NestJS generates schema.gql automatically. */
         autoSchemaFile: join(process.cwd(), 'src/graphql/schema.gql'),
@@ -126,9 +163,26 @@ import { AssetsService } from '../assets/assets.service';
         /** Expose playground in non-production environments */
         playground: configService.get<string>('NODE_ENV') !== 'production',
 
-        /** Subscriptions over WS */
+        /**
+         * Subscriptions over WS.
+         *
+         * `onConnect` runs once per WS connection at `connection_init`
+         * (handshake) time — it validates the bearer token the client sends
+         * via `connectionParams` and *throws* to refuse the connection
+         * before any subscription can be created if it's missing/invalid.
+         * `context` runs once per subscription operation on an already
+         * accepted connection and merges the authenticated user resolved
+         * during the handshake into `context.user`, so `@Subscription()`
+         * resolvers and `GqlAuthGuard` can read it (there is no HTTP `req`
+         * for WS connections, unlike the `context` factory above).
+         */
         subscriptions: {
-          'graphql-ws': true,
+          'graphql-ws': createGraphqlWsAuthHandlers({
+            jwtService,
+            configService,
+            usersService,
+            sessionManager,
+          }),
         },
 
         /** Format errors before returning to client */

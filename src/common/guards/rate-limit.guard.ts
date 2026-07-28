@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
 import { RATE_LIMIT_KEY, RateLimitConfig, RateLimitTier } from '../decorators/rate-limit.decorator';
 import { SubscriptionsService } from '../../subscriptions/subscriptions.service';
+import { TenantConfigService } from '../../config/tenant-config.service';
 
 interface RateLimitInfo {
   count: number;
@@ -70,6 +71,9 @@ export class RateLimitGuard implements CanActivate {
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @Optional() private configService?: ConfigService,
     @Optional() private subscriptionsService?: SubscriptionsService,
+    // #943 — tenant-specific rate-limit overrides. Optional so existing
+    // tests/wiring that don't provide one keep working (no-op fallback).
+    @Optional() private tenantConfig?: TenantConfigService,
   ) {
     this.limits = this.buildTierLimits();
     this.accountLimits = this.buildAccountTierLimits();
@@ -119,6 +123,26 @@ export class RateLimitGuard implements CanActivate {
     const raw = this.configService?.get<string | number>(key);
     const parsed = Number(raw);
     return raw !== undefined && raw !== null && !Number.isNaN(parsed) ? parsed : fallback;
+  }
+
+  /**
+   * #943 — Layers a tenant-specific override (if any, for the currently
+   * active tenant) on top of the already-resolved limit/window (tier
+   * default merged with any per-endpoint decorator override). `scope`
+   * namespaces the override lookup so IP-level, per-account, and per-wallet
+   * limits for the same tier can be overridden independently — mirroring
+   * how RATE_LIMIT_<TIER>, RATE_LIMIT_<TIER>_ACCOUNT and
+   * RATE_LIMIT_<TIER>_WALLET env vars are already kept independent above.
+   */
+  private resolveEffectiveLimits(
+    scope: string,
+    base: { limit: number; window: number },
+  ): { limit: number; window: number } {
+    const resolved = this.tenantConfig?.resolveRateLimit(scope, base) ?? base;
+    return {
+      limit: resolved.limit ?? base.limit,
+      window: resolved.window ?? base.window,
+    };
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
