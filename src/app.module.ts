@@ -96,6 +96,9 @@ import { FreighterModule } from './freighter/freighter.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TracingModule } from './tracing/tracing.module';
+import { PaymentsModule } from './payments/payments.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -290,6 +293,9 @@ import { TracingModule } from './tracing/tracing.module';
     HorizonBulkheadModule,
     PrivacyModule,
     TracingModule,
+    PaymentsModule,
+    FeatureFlagsModule,
+    SearchModule,
   ],
   providers: [StellarConfigService, RateLimitMiddleware],
   exports: [StellarConfigService],

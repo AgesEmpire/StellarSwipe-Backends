@@ -136,6 +136,7 @@ export class SecretsLoaderService {
       'stellar.sponsor_secret_key': ['STELLAR_SPONSOR_SECRET_KEY'],
       'redis.password': ['REDIS_PASSWORD'],
       'encryption.key': ['ENCRYPTION_KEY'],
+      'encryption.previous_keys': ['ENCRYPTION_KEY_PREVIOUS'],
       'sendgrid.api_key': ['SENDGRID_API_KEY'],
       'twilio.auth_token': ['TWILIO_AUTH_TOKEN'],
       'sentry.dsn': ['SENTRY_DSN'],

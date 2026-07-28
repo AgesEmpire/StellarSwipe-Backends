@@ -97,6 +97,9 @@ export const configSchema = Joi.object({
 
   // ─── Encryption — required ──────────────────────────────────────────────────
   ENCRYPTION_KEY: Joi.string().min(32).required(),
+  // Comma-separated list of retired keys, kept so ciphertext written before a
+  // rotation can still be decrypted. Optional — only set during/after a rotation.
+  ENCRYPTION_KEY_PREVIOUS: Joi.string().optional().allow(''),
 
   // ─── N+1 Detection (development mode only) ────────────────────────────────────
   // Default: 25 queries

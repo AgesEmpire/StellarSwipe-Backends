@@ -27,6 +27,11 @@ const REQUIRED_FLAGS: Array<{ name: string; description: string; enabled: boolea
   { name: 'copy-trading', description: 'Enable copy-trading feature', enabled: true },
   { name: 'provider-onboarding', description: 'Enable provider onboarding flow', enabled: false },
   { name: 'kyc-required', description: 'Enforce KYC before trading', enabled: false },
+  {
+    name: 'search-index-refresh',
+    description: 'Enable automatic search-index refresh hooks after signal/provider/content writes',
+    enabled: true,
+  },
 ];
 
 @Injectable()
@@ -159,6 +164,29 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
     await this.saveAssignment(userId, flagName, result);
     await this.cacheManager.set(cacheKey, result, 60000);
     return result;
+  }
+
+  /**
+   * System-level flag check for backend behaviors that aren't scoped to a
+   * specific user (background jobs, event listeners, internal toggles).
+   * Unlike evaluateFlag(), this does not perform per-user targeting/A-B
+   * assignment — it simply resolves whether the flag is "on", honoring the
+   * same env-override mechanism (FEATURE_FLAGS_OVERRIDES) as evaluateFlag().
+   * Missing flags resolve to false (fail closed) so new/experimental
+   * behaviors default off until explicitly enabled.
+   */
+  async isFlagEnabled(flagName: string): Promise<boolean> {
+    if (this.envOverrides.has(flagName)) {
+      return this.envOverrides.get(flagName)!;
+    }
+
+    try {
+      const flag = await this.getFlag(flagName);
+      return flag.enabled;
+    } catch {
+      this.logger.warn(`[FeatureFlag] '${flagName}' not found — defaulting to disabled`);
+      return false;
+    }
   }
 
   private hashUser(userId: string, flagName: string): number {
