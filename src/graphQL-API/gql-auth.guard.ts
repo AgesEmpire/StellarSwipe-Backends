@@ -31,6 +31,27 @@ export class GqlAuthGuard extends AuthGuard('jwt') {
     ]);
     if (isPublic) return true;
 
+    const gqlContext = GqlExecutionContext.create(context).getContext<{
+      req?: Request;
+      user?: unknown;
+    }>();
+
+    // Subscriptions delivered over `graphql-ws` have no HTTP `req` — that
+    // shape only exists for query/mutation operations that go through the
+    // Apollo HTTP `context` factory. WS connections are authenticated once,
+    // at handshake time, in `GraphqlModule`'s `subscriptions['graphql-ws']`
+    // `onConnect` hook, which stashes the verified user on the per-operation
+    // context as `context.user`. Here we just enforce that it's present,
+    // instead of (incorrectly) trying to run the Passport `jwt` strategy
+    // again against a request object that doesn't exist for this transport.
+    if (!gqlContext.req) {
+      if (!gqlContext.user) {
+        this.logger.warn('GQL subscription auth failed: no authenticated user on WS context');
+        throw new UnauthorizedException('Unauthorized');
+      }
+      return true;
+    }
+
     return super.canActivate(context);
   }
 
