@@ -1,10 +1,12 @@
 import {
     Injectable,
+    Logger,
     NotFoundException,
     ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from './entities/user.entity';
 import { UserPreference } from './entities/user-preference.entity';
 import { Session } from './entities/session.entity';
@@ -14,6 +16,8 @@ import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 
 @Injectable()
 export class UsersService {
+    private readonly logger = new Logger(UsersService.name);
+
     constructor(
         @InjectRepository(User)
         private readonly userRepository: Repository<User>,
@@ -22,6 +26,7 @@ export class UsersService {
         @InjectRepository(Session)
         private readonly sessionRepository: Repository<Session>,
         private readonly cacheInvalidation: CacheInvalidationService,
+        private readonly eventEmitter: EventEmitter2,
     ) { }
 
     async createUser(createUserDto: CreateUserDto): Promise<User> {
@@ -48,7 +53,21 @@ export class UsersService {
         });
         await this.preferenceRepository.save(preference);
 
-        return this.findById(savedUser.id);
+        const created = await this.findById(savedUser.id);
+        this.emitSafely('provider.created', created);
+        return created;
+    }
+
+    /**
+     * Fire an entity-change event without letting a listener failure (e.g. a
+     * search-index refresh error) break the write path that triggered it.
+     */
+    private emitSafely(event: string, payload: unknown): void {
+        try {
+            this.eventEmitter.emit(event, payload);
+        } catch (error) {
+            this.logger.warn(`Failed to emit '${event}' event`, (error as Error).message);
+        }
     }
 
     async findById(id: string): Promise<User> {

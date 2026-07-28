@@ -1,6 +1,7 @@
-import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Signal, SignalStatus, SignalType } from './entities/signal.entity';
 import { CacheService, CachePrefix } from '../cache/cache.service';
 import { SignalQuotaService } from './quota/signal-quota.service';
@@ -21,12 +22,14 @@ export interface PaginatedSignalsDto {
 export class SignalsService {
 
   private static readonly FEED_KEY = `${CachePrefix.SIGNAL}feed`;
+  private readonly logger = new Logger(SignalsService.name);
 
   constructor(
     @InjectRepository(Signal)
     private readonly signalRepository: Repository<Signal>,
     private readonly cacheService: CacheService,
     private readonly quotaService: SignalQuotaService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(createSignalDto: CreateSignalDto): Promise<Signal> {
@@ -66,7 +69,9 @@ export class SignalsService {
       metadata: createSignalDto.metadata || null,
     } as any);
 
-    return this.signalRepository.save(signal as any);
+    const saved = await this.signalRepository.save(signal as any);
+    this.emitSafely('signal.created', saved);
+    return saved;
   }
 
   async findOne(id: string): Promise<Signal | null> {
@@ -154,6 +159,20 @@ export class SignalsService {
       this.cacheService.del(`${CachePrefix.SIGNAL}${id}`),
       this.cacheService.del(SignalsService.FEED_KEY),
     ]);
-    return this.signalRepository.findOneBy({ id });
+    const updated = await this.signalRepository.findOneBy({ id });
+    if (updated) this.emitSafely('signal.updated', updated);
+    return updated;
+  }
+
+  /**
+   * Fire an entity-change event without letting a listener failure (e.g. a
+   * search-index refresh error) break the write path that triggered it.
+   */
+  private emitSafely(event: string, payload: unknown): void {
+    try {
+      this.eventEmitter.emit(event, payload);
+    } catch (error) {
+      this.logger.warn(`Failed to emit '${event}' event`, (error as Error).message);
+    }
   }
 }
