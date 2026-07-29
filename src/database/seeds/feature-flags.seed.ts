@@ -68,6 +68,16 @@ export async function seedFeatureFlags(dataSource: DataSource): Promise<void> {
         ],
       },
     },
+    {
+      name: 'stale_entrypoint_test_fixture',
+      description: 'Test fixture: flag referencing a nonexistent contract entrypoint (used by validate-feature-flag-entrypoints job)',
+      type: 'boolean' as const,
+      enabled: false,
+      contractId: 'TradeExecutorContract',
+      method: 'nonexistent_entrypoint',
+      retired: false,
+      config: {},
+    },
   ];
 
   for (const flagData of flags) {

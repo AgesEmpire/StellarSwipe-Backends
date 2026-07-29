@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 export class GdprReportGenerator {
   constructor(private userDataExporter: UserDataExporterService) {}
 
-  async generateGdprExport(userId: string): Promise<{ data: any; encrypted: boolean }> {
+  async generateGdprExport(userId: string): Promise<any> {
     const userData = await this.userDataExporter.exportUserData(userId);
 
     return {

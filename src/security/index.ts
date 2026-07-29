@@ -3,3 +3,5 @@ export { CspMiddleware } from './csp/csp.middleware';
 export { CspReporterController } from './csp/csp-reporter.controller';
 export { cspConfig } from './config/csp.config';
 export type { CspDirectives } from './config/csp.config';
+export { EncryptionService } from './encryption.service';
+export { EncryptedColumnTransformer, encryptedColumn } from './encrypted-column.transformer';

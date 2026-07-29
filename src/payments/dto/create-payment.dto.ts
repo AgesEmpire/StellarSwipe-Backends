@@ -1,55 +1,18 @@
-import { IsString, IsNumber, IsOptional, IsUUID, IsEnum, ValidateNested, Type } from 'class-validator';
-import { PaymentMethod } from '../interfaces/payment-provider.interface';
+import { IsNumber, IsString, IsOptional, IsEnum, Min } from 'class-validator';
+import { PaymentGatewayType } from '../gateways/payment-gateway.factory';
 
 export class CreatePaymentDto {
-  @IsUUID()
-  userId: string;
-
   @IsNumber()
-  amount: number;
-
-  @IsString()
-  currency: string; // 'USD', 'EUR', etc.
-
-  @IsString()
-  description: string;
-
-  @IsEnum(PaymentMethod)
-  paymentMethod: PaymentMethod;
-
-  @IsString()
-  @IsOptional()
-  returnUrl?: string;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => Object)
-  metadata?: Record<string, any>;
-}
-
-export class CreatePaymentResponse {
-  @IsString()
-  paymentId: string;
-
-  @IsString()
-  status: string;
-
-  @IsNumber()
+  @Min(0.01)
   amount: number;
 
   @IsString()
   currency: string;
 
-  @IsString()
+  @IsEnum(PaymentGatewayType)
   @IsOptional()
-  redirectUrl?: string;
-
-  @IsString()
-  @IsOptional()
-  clientSecret?: string;
+  gateway?: PaymentGatewayType;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => Object)
   metadata?: Record<string, any>;
 }

@@ -17,6 +17,8 @@ import {
   ApiOkResponse,
   ApiParam,
 } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminRoleGuard } from '../admin/guards/admin-role.guard';
 import { AuditService, AuditLogPage } from './audit.service';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { AuditLog } from './entities/audit-log.entity';
@@ -24,16 +26,18 @@ import { AuditLog } from './entities/audit-log.entity';
 /**
  * Audit Controller — read-only query surface for audit logs.
  * Mutating operations (create / update / delete) are intentionally absent.
+ * All endpoints require admin authentication (issue #481).
  */
 @ApiTags('Audit Logs')
 @ApiBearerAuth()
+@UseGuards(JwtAuthGuard, AdminRoleGuard)
 @Controller('audit')
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
-  @Get()
+  @Get('logs')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Query audit logs with filtering and pagination' })
+  @ApiOperation({ summary: 'Query audit logs with filtering and pagination (admin only)' })
   @ApiOkResponse({ description: 'Paginated audit log results' })
   async query(@Query() dto: AuditQueryDto): Promise<AuditLogPage> {
     return this.auditService.query(dto);

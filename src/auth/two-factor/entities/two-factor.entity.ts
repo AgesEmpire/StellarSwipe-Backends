@@ -28,6 +28,9 @@ export class TwoFactor {
   @Column({ type: 'timestamp', nullable: true })
   enabledAt?: Date;
 
+  @Column({ type: 'timestamp', nullable: true })
+  lastSecurityChangeAt?: Date;
+
   @CreateDateColumn()
   createdAt!: Date;
 

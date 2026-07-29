@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  VersionColumn,
   Index,
 } from 'typeorm';
 import { TradeSide } from '../../trades/entities/trade.entity';
@@ -45,6 +46,9 @@ export class Position {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
+
+  @VersionColumn({ name: 'version', default: 1 })
+  version!: number;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

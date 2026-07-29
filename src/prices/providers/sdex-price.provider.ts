@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'stellar-sdk';
 import { PriceSourceResult } from '../dto/price-data.dto';
+import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
-export class SdexPriceProvider {
+export class SdexPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(SdexPriceProvider.name);
   private readonly server: Server;
 

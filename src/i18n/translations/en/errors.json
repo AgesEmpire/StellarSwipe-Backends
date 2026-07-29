@@ -18,5 +18,22 @@
     "INTERNAL_ERROR": "An internal server error occurred",
     "VALIDATION_FAILED": "Validation failed",
     "RATE_LIMIT_EXCEEDED": "Too many requests, please try again later",
-    "FORBIDDEN": "You do not have permission to perform this action"
+    "FORBIDDEN": "You do not have permission to perform this action",
+    "TRANSACTION_LIMIT_EXCEEDED": "Transaction limit exceeded for your account tier",
+    "DAILY_LIMIT_REACHED": "Daily transaction limit of {limit} {currency} has been reached",
+    "WITHDRAWAL_LIMIT_EXCEEDED": "Withdrawal limit exceeded. Maximum allowed: {limit} {currency}",
+    "PAYMENT_FAILED": "Payment processing failed. Please try again",
+    "PAYMENT_GATEWAY_ERROR": "Payment gateway error: {message}",
+    "INVALID_PAYMENT_METHOD": "Invalid payment method",
+    "PAYMENT_DECLINED": "Payment was declined by the payment provider",
+    "INSUFFICIENT_FUNDS": "Insufficient funds for this transaction",
+    "TRADE_NOT_FOUND": "Trade not found",
+    "TRADE_ACCESS_DENIED": "You do not have access to this trade",
+    "PREMIUM_SUBSCRIPTION_REQUIRED": "A premium subscription is required to access this signal",
+    "PREMIUM_SUBSCRIPTION_EXPIRED": "Your premium subscription has expired",
+    "SIGNAL_NOT_PREMIUM": "This signal is not a premium signal",
+    "STALE_PRICE": "Price data is stale and cannot be used for trade execution",
+    "INSUFFICIENT_LIQUIDITY": "Insufficient liquidity for this trade. Minimum required: {minimum}",
+    "PRICE_VALIDATION_FAILED": "Price validation failed: {reason}",
+    "QUOTE_DEPTH_TOO_LOW": "Order book depth is too low for this trade size"
 }

@@ -1,19 +1,24 @@
 import {
     Injectable,
+    Logger,
     NotFoundException,
     ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from './entities/user.entity';
 import { UserPreference } from './entities/user-preference.entity';
 import { Session } from './entities/session.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdatePreferenceDto } from './dto/update-preference.dto';
 import { restoreOrThrow } from '../common/services/soft-delete.helper';
+import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 
 @Injectable()
 export class UsersService {
+    private readonly logger = new Logger(UsersService.name);
+
     constructor(
         @InjectRepository(User)
         private readonly userRepository: Repository<User>,
@@ -21,6 +26,8 @@ export class UsersService {
         private readonly preferenceRepository: Repository<UserPreference>,
         @InjectRepository(Session)
         private readonly sessionRepository: Repository<Session>,
+        private readonly cacheInvalidation: CacheInvalidationService,
+        private readonly eventEmitter: EventEmitter2,
     ) { }
 
     async createUser(createUserDto: CreateUserDto): Promise<User> {
@@ -47,7 +54,21 @@ export class UsersService {
         });
         await this.preferenceRepository.save(preference);
 
-        return this.findById(savedUser.id);
+        const created = await this.findById(savedUser.id);
+        this.emitSafely('provider.created', created);
+        return created;
+    }
+
+    /**
+     * Fire an entity-change event without letting a listener failure (e.g. a
+     * search-index refresh error) break the write path that triggered it.
+     */
+    private emitSafely(event: string, payload: unknown): void {
+        try {
+            this.eventEmitter.emit(event, payload);
+        } catch (error) {
+            this.logger.warn(`Failed to emit '${event}' event`, (error as Error).message);
+        }
     }
 
     async findById(id: string): Promise<User> {
@@ -76,6 +97,32 @@ export class UsersService {
         return user;
     }
 
+    async findByEmail(email: string): Promise<User> {
+        const user = await this.userRepository.findOne({
+            where: { email },
+            relations: ['preference', 'sessions'],
+        });
+
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        return user;
+    }
+
+    async findByUsername(username: string): Promise<User> {
+        const user = await this.userRepository.findOne({
+            where: { username },
+            relations: ['preference', 'sessions'],
+        });
+
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        return user;
+    }
+
     async findOrCreateByWalletAddress(walletAddress: string): Promise<User> {
         try {
             return await this.findByWalletAddress(walletAddress);
@@ -92,24 +139,27 @@ export class UsersService {
     ): Promise<UserPreference> {
         const user = await this.findByWalletAddress(walletAddress);
 
+        let result: UserPreference;
         if (!user.preference) {
             const preference = this.preferenceRepository.create({
                 userId: user.id,
                 ...updatePreferenceDto,
             });
-            return this.preferenceRepository.save(preference);
+            result = await this.preferenceRepository.save(preference);
+        } else {
+            await this.preferenceRepository.update(user.preference.id, updatePreferenceDto);
+            const updatedPreference = await this.preferenceRepository.findOne({
+                where: { id: user.preference.id },
+            });
+            if (!updatedPreference) {
+                throw new NotFoundException('Preference not found');
+            }
+            result = updatedPreference;
         }
 
-        await this.preferenceRepository.update(user.preference.id, updatePreferenceDto);
-        const updatedPreference = await this.preferenceRepository.findOne({
-            where: { id: user.preference.id },
-        });
-
-        if (!updatedPreference) {
-            throw new NotFoundException('Preference not found');
-        }
-
-        return updatedPreference;
+        // Write-through invalidation: evict stale user profile cache
+        await this.cacheInvalidation.invalidateUserPreferences(user.id);
+        return result;
     }
 
     async getPreferences(walletAddress: string): Promise<UserPreference> {
@@ -205,6 +255,13 @@ export class UsersService {
         }
 
         user.walletAddress = walletAddress;
-        return this.userRepository.save(user);
+        const saved = await this.userRepository.save(user);
+        // Invalidation hook: evict profile cache after wallet update
+        await this.cacheInvalidation.invalidateUserProfile(userId);
+        return saved;
+    }
+
+    async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+        await this.userRepository.update(userId, { password: hashedPassword });
     }
 }

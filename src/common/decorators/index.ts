@@ -1,6 +1,19 @@
 export { IsPublic, PUBLIC_ROUTE } from './public.decorator';
 export {
   RateLimit,
-  RATE_LIMIT,
-  type RateLimitOptions,
+  RATE_LIMIT_KEY,
+  RateLimitTier,
+  type RateLimitConfig,
 } from './rate-limit.decorator';
+export {
+  MaxCallDepth,
+  MAX_CALL_DEPTH_KEY,
+  type MaxCallDepthConfig,
+} from './max-call-depth.decorator';
+export {
+  CurrentWallet,
+  type CurrentWalletOptions,
+} from './current-wallet.decorator';
+export { Transactional, TRANSACTIONAL_KEY } from './transactional.decorator';
+export { Internal, INTERNAL_FIELD_KEY } from './internal.decorator';
+export { UseAuth } from './use-auth.decorator';

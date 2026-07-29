@@ -38,6 +38,18 @@ export class StellarConfigService {
     return this.configService.get<number>('stellar.maxRetries') ?? 3;
   }
 
+  get maxCallDepth(): number | undefined {
+    return this.configService.get<number>('stellar.maxCallDepth') ?? 5;
+  }
+
+  get maxCallDepthViolationPolicy(): 'reject' | 'warn' | undefined {
+    const policy = this.configService.get<string>('stellar.maxCallDepthViolationPolicy');
+    if (policy === 'warn' || policy === 'reject') {
+      return policy;
+    }
+    return 'reject';
+  }
+
   isTestnet(): boolean {
     return this.network === 'testnet';
   }

@@ -10,6 +10,7 @@ import {
 import { PortfolioService } from './portfolio.service';
 import { RebalancingService } from './services/rebalancing.service';
 import { PositionDetailDto } from './dto/position-detail.dto';
+import { applySparseFieldset } from '../common/utils/field-selection.util';
 import { PortfolioSummaryDto } from './dto/portfolio-summary.dto';
 import { SetTargetAllocationDto, TargetAllocationResponseDto } from './dto/target-allocation.dto';
 import {
@@ -21,6 +22,9 @@ import { ApiOperation, ApiResponse, ApiTags, ApiBearerAuth } from '@nestjs/swagg
 import { ExportQueryDto } from './dto/export-query.dto';
 import { ExportService } from './services/export.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AddTransactionDto } from './dto/add-transaction.dto';
+import { Transactional } from '../common/decorators/transactional.decorator';
+import { PortfolioSnapshotService } from './services/portfolio-snapshot.service';
 
 @ApiTags('portfolio')
 @ApiBearerAuth()
@@ -30,14 +34,20 @@ export class PortfolioController {
   constructor(
     private readonly portfolioService: PortfolioService,
     private readonly exportService: ExportService,
+    private readonly portfolioSnapshotService: PortfolioSnapshotService,
   ) { }
 
   @Get('positions')
-  async getPositions(@Query('userId') userId: string): Promise<PositionDetailDto[]> {
+  async getPositions(
+    @Query('userId') userId: string,
+    @Query('fields') fields?: string,
+  ): Promise<PositionDetailDto[]> {
     if (!userId) {
       throw new BadRequestException('userId is required');
     }
-    return this.portfolioService.getPositions(userId);
+
+    const positions = await this.portfolioService.getPositions(userId);
+    return applySparseFieldset(positions, fields);
   }
 
   @Get('history')
@@ -45,6 +55,7 @@ export class PortfolioController {
     @Query('userId') userId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('fields') fields?: string,
   ): Promise<{ data: Trade[]; total: number; page: number; limit: number; totalPages: number }> {
     if (!userId) {
       throw new BadRequestException('userId is required');
@@ -54,17 +65,36 @@ export class PortfolioController {
     }
 
     const result = await this.portfolioService.getHistory(userId, page, limit);
-    return {
+    const response = {
       ...result,
       page,
       limit,
       totalPages: Math.ceil(result.total / limit),
     };
+
+    return applySparseFieldset(response, fields);
   }
 
   @Get('performance')
-  async getPerformance(@Request() req: any): Promise<PortfolioSummaryDto> {
-    return this.portfolioService.getPerformance(req.user.id);
+  async getPerformance(
+    @Request() req: any,
+    @Query('fields') fields?: string,
+  ): Promise<PortfolioSummaryDto> {
+    const performance = await this.portfolioService.getPerformance(req.user.id);
+    return applySparseFieldset(performance, fields);
+  }
+
+  @Get('summary/:walletAddress')
+  @ApiOperation({ summary: 'Get portfolio summary by Stellar wallet address' })
+  @ApiResponse({ status: 200, description: 'Portfolio summary including holdings, positions, unrealized P&L, and NAV' })
+  @ApiResponse({ status: 400, description: 'Invalid wallet address format' })
+  @ApiResponse({ status: 404, description: 'No account found for wallet' })
+  async getWalletSummary(
+    @Param('walletAddress') walletAddress: string,
+    @Query('fields') fields?: string,
+  ): Promise<PortfolioSummaryDto & { walletAddress: string }> {
+    const summary = await this.portfolioService.getWalletSummary(walletAddress);
+    return applySparseFieldset(summary, fields);
   }
 
   @Get('export')
@@ -72,6 +102,36 @@ export class PortfolioController {
   @ApiResponse({ status: 200, description: 'Export initiated or completed' })
   async exportHistory(@Request() req: any, @Query() query: ExportQueryDto) {
     return this.exportService.exportTrades(req.user.id, query);
+  }
+
+  @Post('add-transaction')
+  @ApiOperation({ summary: 'Record a new portfolio transaction' })
+  @ApiResponse({ status: 201, description: 'Transaction recorded', type: Trade })
+  async addTransaction(
+    @Request() req: any,
+    @Body() dto: AddTransactionDto,
+  ): Promise<Trade> {
+    return this.portfolioService.addTransaction(req.user.id, dto);
+  }
+
+  @Get('snapshot/latest')
+  @ApiOperation({ summary: 'Get the latest cached portfolio P&L snapshot' })
+  @ApiResponse({ status: 200, description: 'Latest portfolio snapshot' })
+  async getLatestSnapshot(@Request() req: any, @Query('fields') fields?: string) {
+    const snapshot = await this.portfolioSnapshotService.getLatestSnapshot(req.user.id);
+    return applySparseFieldset(snapshot, fields);
+  }
+
+  @Get('chart')
+  @ApiOperation({ summary: 'Get historical portfolio PnL chart data' })
+  @ApiResponse({ status: 200, description: 'Chart data points' })
+  async getChartData(
+    @Request() req: any,
+    @Query('days', new DefaultValuePipe(30), ParseIntPipe) days: number,
+    @Query('fields') fields?: string,
+  ) {
+    const chartData = await this.portfolioService.getChartData(req.user.id, days);
+    return applySparseFieldset(chartData, fields);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -165,6 +225,7 @@ export class PortfolioController {
    * Approve and execute a specific pending rebalancing plan.
    */
   @Put('rebalancing/plans/:planId/approve')
+  @Transactional()
   async approvePlan(
     @Query('userId') userId: string,
     @Param('planId') planId: string,

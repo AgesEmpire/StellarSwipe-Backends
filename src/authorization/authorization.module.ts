@@ -11,7 +11,9 @@ import { ApprovalAction } from './entities/approval-workflow.entity';
 import { PermissionChecker } from './utils/permission-checker';
 import { PolicyEvaluator } from './utils/policy-evaluator';
 import { PermissionsGuard } from './guards/permissions.guard';
+import { RolesGuard } from './guards/roles.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
+import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
 
 @Module({
   imports: [
@@ -22,6 +24,7 @@ import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
       ApprovalWorkflow,
       ApprovalRequest,
       ApprovalAction,
+      PermissionAuditLog,
     ]),
   ],
   controllers: [RbacController],
@@ -30,14 +33,18 @@ import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
     PermissionChecker,
     PolicyEvaluator,
     PermissionsGuard,
+    RolesGuard,
     WorkflowApprovalGuard,
+    PermissionAuditService,
   ],
   exports: [
     RbacService,
     PermissionChecker,
     PolicyEvaluator,
     PermissionsGuard,
+    RolesGuard,
     WorkflowApprovalGuard,
+    PermissionAuditService,
     TypeOrmModule,
   ],
 })

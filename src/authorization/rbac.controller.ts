@@ -22,6 +22,7 @@ import {
   RejectRequestDto,
   AccessRequestQueryDto,
 } from './dto/access-request.dto';
+import { AssignRoleDto } from './dto/assign-role.dto';
 import { RequirePermissions, RequireWorkflowApproval } from './decorators/require-permissions.decorator';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
@@ -40,8 +41,8 @@ export class RbacController {
 
   @Put('roles/:id')
   @RequirePermissions('roles:update')
-  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-    return this.rbacService.updateRole(id, dto);
+  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto, @Request() req: any) {
+    return this.rbacService.updateRole(id, dto, req.user?.id);
   }
 
   @Delete('roles/:id')
@@ -69,8 +70,8 @@ export class RbacController {
   // Permission Management Endpoints
   @Post('permissions/assign')
   @RequirePermissions('permissions:assign')
-  async assignPermissionsToRole(@Body() dto: AssignPermissionDto) {
-    return this.rbacService.assignPermissionsToRole(dto);
+  async assignPermissionsToRole(@Body() dto: AssignPermissionDto, @Request() req: any) {
+    return this.rbacService.assignPermissionsToRole(dto, req.user?.id);
   }
 
   @Get('permissions')
@@ -86,7 +87,7 @@ export class RbacController {
   async assignRoleToUser(
     @Param('userId') userId: string,
     @Param('roleId') roleId: string,
-    @Body() body: { teamId?: string; organizationId?: string; expiresAt?: Date },
+    @Body() body: AssignRoleDto,
     @Request() req: any,
   ) {
     return this.rbacService.assignRoleToUser(userId, roleId, req.user.id, body);
@@ -94,8 +95,12 @@ export class RbacController {
 
   @Delete('users/:userId/roles/:roleId')
   @RequirePermissions('user-roles:revoke')
-  async revokeRoleFromUser(@Param('userId') userId: string, @Param('roleId') roleId: string) {
-    await this.rbacService.revokeRoleFromUser(userId, roleId);
+  async revokeRoleFromUser(
+    @Param('userId') userId: string,
+    @Param('roleId') roleId: string,
+    @Request() req: any,
+  ) {
+    await this.rbacService.revokeRoleFromUser(userId, roleId, req.user?.id);
     return { message: 'Role revoked successfully' };
   }
 

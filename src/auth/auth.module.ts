@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { WsJwtAuthGuard } from './guards/ws-jwt-auth.guard';
 import { CacheModule } from '@nestjs/cache-manager';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity';
@@ -16,6 +17,17 @@ import { UsersModule } from '../users/users.module';
 import { TwoFactor } from './two-factor/entities/two-factor.entity';
 import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
+import { AuthAuditService } from './auth-audit.service';
+import { AuditModule } from '../audit-log/audit.module';
+import { SessionManagerService } from './session/session-manager.service';
+import { SessionCleanupService } from './session/session-cleanup.service';
+import { SessionFingerprintService } from './session/session-fingerprint.service';
+import { LoginFingerprint } from './session/entities/login-fingerprint.entity';
+import { EmailModule } from '../email/email.module';
+import { AnomalousLoginListener } from './session/anomalous-login.listener';
+import { RefreshToken } from './entities/refresh-token.entity';
+import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -31,17 +43,38 @@ import { TwoFactorController } from './two-factor/two-factor.controller';
       }),
     }),
     CacheModule,
-    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor]),
+    AuditModule,
+    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint, RefreshToken]),
     UsersModule,
+    EmailModule,
+    AuthorizationModule,
   ],
-  controllers: [AuthController, SocialAuthController, TwoFactorController],
+  controllers: [AuthController, SocialAuthController, TwoFactorController, WebauthnController],
   providers: [
     AuthService,
     JwtStrategy,
     JwtAuthGuard,
+    WsJwtAuthGuard,
     TwitterOauthService,
     TwoFactorService,
+    AuthAuditService,
+    SessionManagerService,
+    SessionCleanupService,
+    SessionFingerprintService,
+    AnomalousLoginListener,
+    RefreshTokenCleanupService,
+    DistributedLockService,
   ],
-  exports: [AuthService, JwtAuthGuard, TwitterOauthService, TwoFactorService],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+    WsJwtAuthGuard,
+    TwitterOauthService,
+    TwoFactorService,
+    AuthAuditService,
+    SessionManagerService,
+    SessionFingerprintService,
+    RefreshTokenCleanupService,
+  ],
 })
 export class AuthModule {}

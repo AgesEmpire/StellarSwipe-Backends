@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Role } from './entities/role.entity';
 import { Permission } from './entities/permission.entity';
-import { UserRole } from './entities/user-role.entity';
+import { UserRole, AssignmentStatus } from './entities/user-role.entity';
 import { ApprovalWorkflow, ApprovalRequest, ApprovalAction, WorkflowType, ApprovalStatus } from './entities/approval-workflow.entity';
 import { PermissionChecker } from './utils/permission-checker';
 import { PolicyEvaluator } from './utils/policy-evaluator';
@@ -12,6 +12,7 @@ import { AssignPermissionDto, CheckPermissionDto } from './dto/assign-permission
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow-config.dto';
 import { CreateAccessRequestDto, ApproveRequestDto, RejectRequestDto } from './dto/access-request.dto';
 import { IPermissionContext } from './interfaces/permission.interface';
+import { PermissionAuditService, AuditAction, diffObjects } from '../auth/permission-audit.service';
 
 @Injectable()
 export class RbacService {
@@ -31,6 +32,7 @@ export class RbacService {
     private permissionChecker: PermissionChecker,
     private policyEvaluator: PolicyEvaluator,
     private dataSource: DataSource,
+    private permissionAuditService: PermissionAuditService,
   ) {}
 
   // Role Management
@@ -45,10 +47,17 @@ export class RbacService {
       role.permissions = permissions;
     }
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    await this.permissionAuditService.log({
+      actorId: createdBy,
+      action: AuditAction.ROLE_CREATED,
+      resourceName: saved.name,
+      metadata: { roleId: saved.id, permissionIds: dto.permissionIds },
+    });
+    return saved;
   }
 
-  async updateRole(id: string, dto: UpdateRoleDto): Promise<Role> {
+  async updateRole(id: string, dto: UpdateRoleDto, updatedBy?: string): Promise<Role> {
     const role = await this.roleRepository.findOne({
       where: { id },
       relations: ['permissions'],
@@ -58,6 +67,17 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    // Capture before state for diffing
+    const beforeSnapshot: Record<string, unknown> = {
+      name: role.name,
+      description: role.description,
+      type: role.type,
+      scope: role.scope,
+      isActive: role.isActive,
+      priority: role.priority,
+      permissionIds: role.permissions?.map((p) => p.id) ?? [],
+    };
+
     Object.assign(role, dto);
 
     if (dto.permissionIds) {
@@ -65,7 +85,32 @@ export class RbacService {
       role.permissions = permissions;
     }
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+
+    if (updatedBy) {
+      const afterSnapshot: Record<string, unknown> = {
+        name: saved.name,
+        description: saved.description,
+        type: saved.type,
+        scope: saved.scope,
+        isActive: saved.isActive,
+        priority: saved.priority,
+        permissionIds: saved.permissions?.map((p) => p.id) ?? [],
+      };
+
+      const diff = diffObjects(beforeSnapshot, afterSnapshot);
+      if (diff) {
+        await this.permissionAuditService.log({
+          actorId: updatedBy,
+          action: AuditAction.ROLE_UPDATED,
+          resourceName: saved.name,
+          beforeState: diff.before,
+          afterState: diff.after,
+          metadata: { roleId: id },
+        });
+      }
+    }
+    return saved;
   }
 
   async deleteRole(id: string): Promise<void> {
@@ -83,6 +128,12 @@ export class RbacService {
     }
 
     await this.roleRepository.remove(role);
+    await this.permissionAuditService.log({
+      actorId: 'system',
+      action: AuditAction.ROLE_DELETED,
+      resourceName: role.name,
+      metadata: { roleId: id },
+    });
   }
 
   async getRole(id: string): Promise<Role> {
@@ -127,7 +178,7 @@ export class RbacService {
     return this.permissionRepository.save(permission);
   }
 
-  async assignPermissionsToRole(dto: AssignPermissionDto): Promise<Role> {
+  async assignPermissionsToRole(dto: AssignPermissionDto, actorId?: string): Promise<Role> {
     const role = await this.roleRepository.findOne({
       where: { id: dto.roleId },
       relations: ['permissions'],
@@ -137,10 +188,30 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    const previousPermissionIds = role.permissions?.map((p) => p.id) ?? [];
+
     const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
     role.permissions = permissions;
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+
+    if (actorId) {
+      const diff = diffObjects(
+        { permissionIds: previousPermissionIds },
+        { permissionIds: dto.permissionIds },
+      );
+      if (diff) {
+        await this.permissionAuditService.log({
+          actorId,
+          action: AuditAction.PERMISSION_GRANTED,
+          resourceName: role.name,
+          beforeState: diff.before,
+          afterState: diff.after,
+          metadata: { roleId: dto.roleId },
+        });
+      }
+    }
+    return saved;
   }
 
   async getPermissions(): Promise<Permission[]> {
@@ -166,6 +237,9 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    // Capture the user's active role set before the change for diffing (issue #820)
+    const beforeRoleIds = await this.getActiveRoleIds(userId);
+
     const userRole = this.userRoleRepository.create({
       userId,
       roleId,
@@ -175,10 +249,25 @@ export class RbacService {
       expiresAt: options?.expiresAt,
     });
 
-    return this.userRoleRepository.save(userRole);
+    const saved = await this.userRoleRepository.save(userRole);
+
+    const afterRoleIds = await this.getActiveRoleIds(userId);
+    const diff = diffObjects({ roleIds: beforeRoleIds }, { roleIds: afterRoleIds });
+    if (diff) {
+      await this.permissionAuditService.log({
+        actorId: assignedBy,
+        targetUserId: userId,
+        action: AuditAction.ROLE_ASSIGNED,
+        resourceName: role.name,
+        beforeState: diff.before,
+        afterState: diff.after,
+        metadata: { roleId, teamId: options?.teamId, organizationId: options?.organizationId },
+      });
+    }
+    return saved;
   }
 
-  async revokeRoleFromUser(userId: string, roleId: string): Promise<void> {
+  async revokeRoleFromUser(userId: string, roleId: string, revokedBy?: string): Promise<void> {
     const userRole = await this.userRoleRepository.findOne({
       where: { userId, roleId },
     });
@@ -187,8 +276,38 @@ export class RbacService {
       throw new NotFoundException('Role assignment not found');
     }
 
+    // Capture the user's active role set before the change for diffing (issue #820)
+    const beforeRoleIds = await this.getActiveRoleIds(userId);
+
     userRole.status = 'revoked' as any;
     await this.userRoleRepository.save(userRole);
+
+    const afterRoleIds = await this.getActiveRoleIds(userId);
+    const role = await this.roleRepository.findOne({ where: { id: roleId } });
+
+    const diff = diffObjects({ roleIds: beforeRoleIds }, { roleIds: afterRoleIds });
+    if (diff) {
+      await this.permissionAuditService.log({
+        actorId: revokedBy ?? 'system',
+        targetUserId: userId,
+        action: AuditAction.ROLE_REVOKED,
+        resourceName: role?.name ?? roleId,
+        beforeState: diff.before,
+        afterState: diff.after,
+        metadata: { roleId },
+      });
+    }
+  }
+
+  /**
+   * Returns the sorted list of role IDs currently active for a user.
+   * Used to diff role-set changes for audit logging (issue #820).
+   */
+  private async getActiveRoleIds(userId: string): Promise<string[]> {
+    const activeAssignments = await this.userRoleRepository.find({
+      where: { userId, status: AssignmentStatus.ACTIVE },
+    });
+    return activeAssignments.map((ur) => ur.roleId).sort();
   }
 
   async getUserRoles(userId: string): Promise<UserRole[]> {

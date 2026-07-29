@@ -6,15 +6,21 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { SentryService } from '../sentry';
+import { CORRELATION_ID_HEADER } from '../correlation/correlation-id.store';
+import { ErrorResponseDto } from '../dto/error-response.dto';
 import { StellarException, SorobanException } from '../exceptions';
+import { ErrorClassificationService } from '../error-classification/error-classification.service';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   constructor(
     private readonly logger: LoggerService,
     private readonly sentry: SentryService,
+    private readonly errorClassifier: ErrorClassificationService,
+    private readonly configService: ConfigService,
   ) {
     this.logger.setContext(GlobalExceptionFilter.name);
   }
@@ -24,109 +30,38 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Internal server error';
-    let error = 'InternalServerError';
-    let details: any = {};
+    const classification = this.errorClassifier.classify(exception);
 
-    // Handle HTTP exceptions
-    if (exception instanceof HttpException) {
-      status = exception.getStatus();
-      const exceptionResponse = exception.getResponse();
-
-      if (typeof exceptionResponse === 'object') {
-        const responseObj = exceptionResponse as any;
-        message = responseObj.message || exception.message;
-        error = responseObj.error || exception.name;
-        details = responseObj;
-      } else {
-        message = exceptionResponse;
-        error = exception.name;
-      }
-
-      // Special handling for Stellar exceptions
-      if (exception instanceof StellarException) {
-        error = 'StellarError';
-        this.logger.error('Stellar blockchain error', exception, {
-          stellarError: (exception as StellarException).stellarError,
-          path: request.url,
-          method: request.method,
-        });
-      }
-      // Special handling for Soroban exceptions
-      else if (exception instanceof SorobanException) {
-        error = 'SorobanError';
-        const sorobanEx = exception as SorobanException;
-        this.logger.error('Soroban contract error', exception, {
-          contractId: sorobanEx.contractId,
-          method: sorobanEx.method,
-          sorobanError: sorobanEx.sorobanError,
-          path: request.url,
-          httpMethod: request.method,
-        });
-      }
-      // Other HTTP exceptions
-      else {
-        this.logger.warn(`HTTP ${status} error`, {
-          message,
-          path: request.url,
-          method: request.method,
-          statusCode: status,
-        });
-      }
-    }
-    // Handle standard errors
-    else if (exception instanceof Error) {
-      message = exception.message;
-      error = exception.name;
-      details = { name: exception.name, stack: exception.stack };
-
-      this.logger.error('Unhandled error', exception, {
-        path: request.url,
-        method: request.method,
-      });
-
-      // Report to Sentry for non-HTTP exceptions
-      this.sentry.captureException(exception, {
-        path: request.url,
-        method: request.method,
-        userAgent: request.get('user-agent'),
-      });
-    }
-    // Handle unknown exceptions
-    else {
-      this.logger.error('Unknown exception type', undefined, {
-        exception: String(exception),
-        path: request.url,
-        method: request.method,
-      });
-
-      this.sentry.captureException(
-        new Error(`Unknown exception: ${String(exception)}`),
-        {
-          path: request.url,
-          method: request.method,
-        },
-      );
-    }
-
-    // Build error response
-    const errorResponse: any = {
-      statusCode: status,
-      message,
-      error,
+    this.errorClassifier.logError({
+      classification: classification.classification,
+      code: classification.code,
       timestamp: new Date().toISOString(),
       path: request.url,
+      method: request.method,
+      originalError: classification.originalError,
+    });
+
+    // Build error response
+    const errorResponse: ErrorResponseDto = {
+      statusCode: classification.httpStatus,
+      errorCode: classification.code,
+      message: classification.message,
+      path: request.url,
+      timestamp: new Date().toISOString(),
+      requestId: (request.headers[CORRELATION_ID_HEADER] as string) || undefined,
     };
 
     // Include details in development mode
     if (
-      process.env.NODE_ENV === 'development' &&
-      Object.keys(details).length > 0
+      this.configService.get<string>('NODE_ENV') === 'development' &&
+      classification.originalError
     ) {
-      errorResponse.details = details;
+      errorResponse.details = {
+        name: classification.originalError.name,
+        retryable: classification.isRetryable,
+      };
     }
 
-    response.status(status).json(errorResponse);
+    response.status(classification.httpStatus).json(errorResponse);
   }
 }

@@ -13,6 +13,22 @@ import { Signal } from '../../signals/entities/signal.entity';
 import { Trade } from '../../trades/entities/trade.entity';
 import { UserPreference } from './user-preference.entity';
 import { Session } from './session.entity';
+import { encryptedColumn } from '../../security/encrypted-column.transformer';
+import { Internal } from '../../common/decorators';
+
+export enum UserTier {
+  BASIC = 'basic',
+  SILVER = 'silver',
+  GOLD = 'gold',
+  PLATINUM = 'platinum',
+}
+
+export enum KycStatus {
+  NONE = 'none',
+  PENDING = 'pending',
+  VERIFIED = 'verified',
+  REJECTED = 'rejected',
+}
 
 @Entity('users')
 export class User {
@@ -22,26 +38,57 @@ export class User {
   @Column({ unique: true })
   username!: string;
 
-  @Column({ unique: true, nullable: true })
+  /** Encrypted at rest — PII (email address). */
+  @Column({ unique: true, nullable: true, transformer: encryptedColumn() })
   email?: string;
+
+  @Column({ nullable: true, select: false })
+  password?: string;
 
   @Column({ unique: true, nullable: true, length: 56 })
   walletAddress?: string;
 
-  @Column({ nullable: true, length: 100 })
+  /** Encrypted at rest — PII (display name). */
+  @Column({ nullable: true, length: 500, transformer: encryptedColumn() })
   displayName?: string;
 
-  @Column({ nullable: true })
+  /** Encrypted at rest — PII (user bio). */
+  @Column({ nullable: true, type: 'text', transformer: encryptedColumn() })
   bio?: string;
 
   @Column({ default: true })
   isActive!: boolean;
 
+  @Column({ name: 'email_verified', default: false })
+  emailVerified!: boolean;
+
+  @Column({
+    type: 'enum',
+    enum: UserTier,
+    default: UserTier.BASIC,
+  })
+  tier!: UserTier;
+
+  @Column({
+    type: 'enum',
+    enum: KycStatus,
+    default: KycStatus.NONE,
+  })
+  kycStatus!: KycStatus;
+
   @Column({ default: 0 })
   reputationScore!: number;
 
+  @Column({ default: 0, nullable: true })
+  @Internal()
+  internalRiskScore?: number;
+
   @Column({ name: 'referred_by', type: 'uuid', nullable: true })
   referredBy?: string;
+
+  @Index('idx_users_referral_code')
+  @Column({ name: 'referral_code', type: 'varchar', length: 8, nullable: true, unique: true })
+  referralCode?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   lastLoginAt?: Date;

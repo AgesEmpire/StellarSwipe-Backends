@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { BullModule } from '@nestjs/bull';
 import { AnalyticsController } from './analytics.controller';
 import { AnalyticsService } from './analytics.service';
 import { UserEvent } from './entities/user-event.entity';
@@ -10,23 +11,46 @@ import { StatisticalAnalysisService } from './services/statistical-analysis.serv
 import { AttributionService } from './services/attribution.service';
 import { Trade } from '../trades/entities/trade.entity';
 import { Signal } from '../signals/entities/signal.entity';
+import { User } from '../users/entities/user.entity';
 import { PriceService } from '../shared/price.service';
 import { CorrelationService } from './services/correlation.service';
 import { PriceHistory } from '../prices/entities/price-history.entity';
 import { AssetPair } from '../assets/entities/asset-pair.entity';
 import { TradePatternsModule } from './trade-patterns/trade-patterns.module';
- feature/ltv-calculator
-
+import { JobsModule } from '../jobs/jobs.module';
+import { FunnelTrackerService } from './funnels/funnel-tracker.service';
+import { FunnelController } from './funnels/funnel.controller';
+import { AnalyzeFunnelsJob } from './funnels/jobs/analyze-funnels.job';
+import { Funnel } from './funnels/entities/funnel.entity';
+import { FunnelStep } from './funnels/entities/funnel-step.entity';
+import { UserFunnelProgress } from './funnels/entities/user-funnel-progress.entity';
 import { AbTestAnalyzerService } from './ab-testing/ab-test-analyzer.service';
 import { AbTestController } from './ab-testing/ab-test.controller';
 import { ExperimentResult } from './ab-testing/entities/experiment-result.entity';
 import { VariantPerformance } from './ab-testing/entities/variant-performance.entity';
- main
 import { LtvCalculatorService } from './ltv/ltv-calculator.service';
 import { LtvController } from './ltv/ltv.controller';
 import { UserLtv } from './ltv/entities/user-ltv.entity';
 import { LtvSegment } from './ltv/entities/ltv-segment.entity';
 import { CalculateLtvJob } from './ltv/jobs/calculate-ltv.job';
+import { CohortController } from './cohort-analysis/cohort.controller';
+import { CohortAnalyzerService } from './cohort-analysis/cohort-analyzer.service';
+import { CalculateCohortsJob } from './cohort-analysis/jobs/calculate-cohorts.job';
+import { Cohort } from './cohort-analysis/entities/cohort.entity';
+import { CohortMetric } from './cohort-analysis/entities/cohort-metric.entity';
+import { BehaviorTrackingService } from './behavior-tracking.service';
+import { BehaviorTrackingController } from './behavior-tracking.controller';
+import { UserSessionAnalytics } from './entities/user-session.entity';
+import { UserPreference } from '../users/entities/user-preference.entity';
+import { DriftDetectorService } from './drift-detection/drift-detector.service';
+import { DetectDataDriftJob } from './drift-detection/jobs/detect-data-drift.job';
+import { DriftFinding } from './drift-detection/entities/drift-finding.entity';
+import { AnalyticsReportsController } from './reports/analytics-reports.controller';
+import {
+  AnalyticsReportsService,
+  ANALYTICS_REPORTS_QUEUE,
+} from './reports/analytics-reports.service';
+import { AnalyticsReportsProcessor } from './reports/analytics-reports.processor';
 
 @Module({
   imports: [
@@ -35,24 +59,37 @@ import { CalculateLtvJob } from './ltv/jobs/calculate-ltv.job';
       MetricSnapshot,
       Trade,
       Signal,
+      User,
       PriceHistory,
       AssetPair,
- feature/ltv-calculator
-
       ExperimentResult,
       VariantPerformance,
- main
       UserLtv,
       LtvSegment,
+      Funnel,
+      FunnelStep,
+      UserFunnelProgress,
+      Cohort,
+      CohortMetric,
+      UserSessionAnalytics,
+      UserPreference,
+      DriftFinding,
     ]),
+    TypeOrmModule.forFeature([UserEvent, MetricSnapshot, Trade, Signal, User], 'replica'),
     ScheduleModule.forRoot(),
     TradePatternsModule,
+    JobsModule,
+    BullModule.registerQueue({ name: ANALYTICS_REPORTS_QUEUE }),
   ],
- feature/ltv-calculator
-  controllers: [AnalyticsController, LtvController],
-
-  controllers: [AnalyticsController, AbTestController, LtvController],
- main
+  controllers: [
+    AnalyticsController,
+    AbTestController,
+    LtvController,
+    FunnelController,
+    CohortController,
+    BehaviorTrackingController,
+    AnalyticsReportsController,
+  ],
   providers: [
     AnalyticsService,
     RiskMetricsService,
@@ -60,12 +97,18 @@ import { CalculateLtvJob } from './ltv/jobs/calculate-ltv.job';
     AttributionService,
     CorrelationService,
     PriceService,
-feature/ltv-calculator
-
     AbTestAnalyzerService,
-main
     LtvCalculatorService,
     CalculateLtvJob,
+    FunnelTrackerService,
+    AnalyzeFunnelsJob,
+    CohortAnalyzerService,
+    CalculateCohortsJob,
+    BehaviorTrackingService,
+    DriftDetectorService,
+    DetectDataDriftJob,
+    AnalyticsReportsService,
+    AnalyticsReportsProcessor,
   ],
   exports: [
     AnalyticsService,
@@ -73,11 +116,12 @@ main
     AttributionService,
     CorrelationService,
     StatisticalAnalysisService,
- feature/ltv-calculator
-
     AbTestAnalyzerService,
- main
     LtvCalculatorService,
+    FunnelTrackerService,
+    CohortAnalyzerService,
+    BehaviorTrackingService,
+    DriftDetectorService,
   ],
 })
 export class AnalyticsModule {}

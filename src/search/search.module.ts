@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ElasticsearchModule } from '@nestjs/elasticsearch';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 import { ElasticsearchConfigService } from './services/elasticsearch.service';
@@ -40,6 +41,7 @@ import {
       }),
       inject: [ConfigService],
     }),
+    FeatureFlagsModule,
   ],
   controllers: [SearchController],
   providers: [

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from '../users/entities/user.entity';
 import { Signal, SignalStatus } from '../signals/entities/signal.entity';
 import { AuditLog, AuditAction, AuditStatus } from '../audit-log/audit-log.entity';
@@ -16,6 +17,7 @@ export class AdminManagementService {
         private readonly signalRepository: Repository<Signal>,
         @InjectRepository(AuditLog)
         private readonly auditLogRepository: Repository<AuditLog>,
+        private readonly eventEmitter: EventEmitter2,
     ) { }
 
     // USER MANAGEMENT
@@ -76,6 +78,9 @@ export class AdminManagementService {
             durationDays: dto.durationDays
         });
 
+        // Suspended users shouldn't surface in provider search results.
+        this.eventEmitter.emit('provider.deleted', userId);
+
         return user;
     }
 
@@ -90,6 +95,9 @@ export class AdminManagementService {
         await this.userRepository.save(user);
 
         await this.logAdminAction(adminId, AuditAction.USER_REINSTATED, 'User', userId);
+
+        // Reinstated users should become searchable again.
+        this.eventEmitter.emit('provider.updated', user);
 
         return user;
     }

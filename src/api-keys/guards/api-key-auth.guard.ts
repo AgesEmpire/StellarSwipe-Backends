@@ -4,14 +4,23 @@ import {
   ExecutionContext,
   UnauthorizedException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ApiKeysService } from '../api-keys.service';
+import { API_KEY_SCOPES_METADATA } from '../decorators/require-scopes.decorator';
 
-export const API_KEY_SCOPES = 'api_key_scopes';
+/**
+ * @deprecated For scope-based access control, prefer using ApiKeyScopesGuard
+ * together with the @RequireScopes() decorator. This guard handles authentication
+ * (key validation + rate limiting) only.
+ */
+export const API_KEY_SCOPES = API_KEY_SCOPES_METADATA;
 
 @Injectable()
 export class ApiKeyAuthGuard implements CanActivate {
+  private readonly logger = new Logger(ApiKeyAuthGuard.name);
+
   constructor(
     private readonly apiKeysService: ApiKeysService,
     private readonly reflector: Reflector,
@@ -34,28 +43,18 @@ export class ApiKeyAuthGuard implements CanActivate {
     );
 
     if (!allowed) {
+      this.logger.warn(`Rate limit exceeded for API key ${apiKey.id}`);
       throw new ForbiddenException('Rate limit exceeded');
     }
 
-    const requiredScopes = this.reflector.get<string[]>(
-      API_KEY_SCOPES,
-      context.getHandler(),
-    );
-
-    if (requiredScopes?.length) {
-      const hasScope = requiredScopes.some((scope) =>
-        apiKey.scopes.includes(scope),
-      );
-      if (!hasScope) {
-        throw new ForbiddenException('Insufficient permissions');
-      }
-    }
-
+    // Attach the key to the request so ApiKeyScopesGuard can read it.
     request.apiKey = apiKey;
     request.userId = apiKey.userId;
 
     const endpoint = `${request.method}:${request.path}`;
     await this.apiKeysService.trackUsage(apiKey.id, endpoint, false);
+
+    this.logger.debug(`API key ${apiKey.id} authenticated for ${endpoint}`);
 
     return true;
   }

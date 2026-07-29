@@ -25,10 +25,14 @@ const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
 const TOTP_WINDOW = 1; // ±1 period (30s each side)
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
+// Minimum seconds between consecutive sensitive security-setting changes.
+// Configurable via TWO_FACTOR_CHANGE_COOLDOWN_SECONDS env var; default 300s.
+const DEFAULT_SECURITY_CHANGE_COOLDOWN_SECONDS = 300;
 
 @Injectable()
 export class TwoFactorService {
   private readonly encryptionKey: Buffer;
+  private readonly changeCooldownMs: number;
 
   constructor(
     @InjectRepository(TwoFactor)
@@ -43,6 +47,11 @@ export class TwoFactorService {
       );
     }
     this.encryptionKey = Buffer.from(key, 'hex');
+
+    const cooldownSeconds =
+      this.configService.get<number>('TWO_FACTOR_CHANGE_COOLDOWN_SECONDS') ??
+      DEFAULT_SECURITY_CHANGE_COOLDOWN_SECONDS;
+    this.changeCooldownMs = cooldownSeconds * 1000;
   }
 
   // ─── Encryption Helpers ──────────────────────────────────────────────────────
@@ -99,6 +108,33 @@ export class TwoFactorService {
 
   private async clearRateLimit(userId: string): Promise<void> {
     await this.cacheManager.del(`2fa_attempts:${userId}`);
+  }
+
+  // ─── Security Change Cool-down ───────────────────────────────────────────────
+
+  /**
+   * Throws if the user changed a security setting too recently.
+   * The very first change (lastSecurityChangeAt is null) is always allowed.
+   */
+  private assertChangeCooldown(record: TwoFactor): void {
+    if (!record.lastSecurityChangeAt) return; // first-ever change — exempt
+
+    const msSinceLastChange =
+      Date.now() - record.lastSecurityChangeAt.getTime();
+
+    if (msSinceLastChange < this.changeCooldownMs) {
+      const remainingSeconds = Math.ceil(
+        (this.changeCooldownMs - msSinceLastChange) / 1000,
+      );
+      throw new BadRequestException(
+        `Security settings were changed recently. Please wait ${remainingSeconds}s before making another change.`,
+      );
+    }
+  }
+
+  private async stampSecurityChange(record: TwoFactor): Promise<void> {
+    record.lastSecurityChangeAt = new Date();
+    await this.twoFactorRepo.save(record);
   }
 
   // ─── Enrollment ──────────────────────────────────────────────────────────────
@@ -167,6 +203,7 @@ export class TwoFactorService {
       throw new BadRequestException('2FA is already enabled.');
     }
 
+    this.assertChangeCooldown(record);
     await this.checkRateLimit(userId);
 
     const secret = this.decrypt(record.secret);
@@ -194,6 +231,7 @@ export class TwoFactorService {
     record.backupCodes = hashedCodes;
     record.enabled = true;
     record.enabledAt = new Date();
+    record.lastSecurityChangeAt = new Date();
     await this.twoFactorRepo.save(record);
 
     // Return plaintext codes only once — user must save them immediately
@@ -278,10 +316,13 @@ export class TwoFactorService {
     const record = await this.twoFactorRepo.findOne({ where: { userId } });
     if (!record) return;
 
+    this.assertChangeCooldown(record);
+
     record.enabled = false;
     record.enabledAt = undefined;
     record.secret = '';
     record.backupCodes = [];
+    record.lastSecurityChangeAt = new Date();
     await this.twoFactorRepo.save(record);
   }
 
@@ -299,10 +340,13 @@ export class TwoFactorService {
       throw new BadRequestException('2FA is not enabled.');
     }
 
+    this.assertChangeCooldown(record);
+
     const plaintextCodes = this.generateBackupCodes();
     record.backupCodes = await Promise.all(
       plaintextCodes.map((code) => bcrypt.hash(code, BCRYPT_ROUNDS)),
     );
+    record.lastSecurityChangeAt = new Date();
     await this.twoFactorRepo.save(record);
 
     return { backupCodes: plaintextCodes };

@@ -73,7 +73,7 @@ export class BackupManagerService {
 
     this.logger.log('Starting full backup (pg_dump)…');
 
-    const env = { ...process.env, PGPASSWORD: this.dbPassword };
+    const env = { ...process.env, PGPASSWORD: this.dbPassword }; // eslint-disable-line no-restricted-syntax -- spawning a DB CLI child process needs the full inherited environment, not a single config value.
     const dumpCmd = [
       'pg_dump',
       `-h ${this.dbHost}`,
@@ -117,7 +117,7 @@ export class BackupManagerService {
 
     this.logger.log('Starting incremental backup (pg_basebackup)…');
 
-    const env = { ...process.env, PGPASSWORD: this.dbPassword };
+    const env = { ...process.env, PGPASSWORD: this.dbPassword }; // eslint-disable-line no-restricted-syntax -- spawning a DB CLI child process needs the full inherited environment, not a single config value.
     await execAsync(
       `pg_basebackup -h ${this.dbHost} -p ${this.dbPort} -U ${this.dbUser} -D ${targetDir} --wal-method=stream --gzip --compress=5`,
       { env },
@@ -168,7 +168,7 @@ export class BackupManagerService {
       await execAsync(`gunzip -c ${decryptedPath} > ${sqlPath}`);
 
       const testDb = `stellarswipe_verify_${Date.now()}`;
-      const env = { ...process.env, PGPASSWORD: this.dbPassword };
+      const env = { ...process.env, PGPASSWORD: this.dbPassword }; // eslint-disable-line no-restricted-syntax -- spawning a DB CLI child process needs the full inherited environment, not a single config value.
 
       await execAsync(
         `psql -h ${this.dbHost} -p ${this.dbPort} -U ${this.dbUser} -c "CREATE DATABASE ${testDb}"`,
@@ -252,7 +252,7 @@ export class BackupManagerService {
       await this.decryptFile(fullBackup, decryptedGz);
       await execAsync(`gunzip -c ${decryptedGz} > ${decryptedSql}`);
 
-      const env = { ...process.env, PGPASSWORD: this.dbPassword };
+      const env = { ...process.env, PGPASSWORD: this.dbPassword }; // eslint-disable-line no-restricted-syntax -- spawning a DB CLI child process needs the full inherited environment, not a single config value.
       await execAsync(
         `psql -h ${this.dbHost} -p ${this.dbPort} -U ${this.dbUser} -d ${targetDb} -f ${decryptedSql}`,
         { env },

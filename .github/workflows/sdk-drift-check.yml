@@ -1,0 +1,145 @@
+name: SDK Type Drift Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  sdk-drift:
+    name: Check OpenAPI → SDK type sync
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: stellarswipe_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Step 1: Generate the OpenAPI spec from the built application ──────
+      - name: Build application
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Export OpenAPI spec
+        run: npm run export:openapi
+        env:
+          NODE_ENV: test
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          DATABASE_USER: test
+          DATABASE_PASSWORD: test
+          DATABASE_NAME: stellarswipe_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: ci-jwt-secret-for-spec-export
+          STELLAR_NETWORK: testnet
+          SOROBAN_RPC_URL: https://soroban-testnet.stellar.org:443
+
+      - name: Upload generated OpenAPI spec
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: docs/generated/openapi.json
+          retention-days: 7
+
+      # ── Step 2: Regenerate SDK types into a temp location ─────────────────
+      - name: Regenerate SDK types to temp location
+        run: |
+          npx --yes openapi-typescript@6 \
+            docs/generated/openapi.json \
+            --output /tmp/openapi.generated.ts
+
+      # ── Step 3: Fail if committed types differ from regenerated types ──────
+      - name: Check for SDK type drift
+        run: |
+          COMMITTED="sdk/typescript/src/types/openapi.generated.ts"
+          GENERATED="/tmp/openapi.generated.ts"
+
+          # If the committed generated file doesn't exist yet, this is itself
+          # a drift — the file should be committed after initial generation.
+          if [ ! -f "${COMMITTED}" ]; then
+            echo "❌  ${COMMITTED} does not exist."
+            echo ""
+            echo "Generate it locally and commit:"
+            echo "    npm run export:openapi"
+            echo "    npm run sdk:generate-types"
+            echo "    git add ${COMMITTED}"
+            echo "    git commit -m 'chore(sdk): add generated OpenAPI types'"
+            exit 1
+          fi
+
+          # Strip auto-generated timestamp comments before diffing to avoid
+          # false positives from header-only changes.
+          strip_comments() {
+            grep -v '^\s*/\*' "$1" | grep -v '^\s*\*' | grep -v '^\s*//' || true
+          }
+
+          strip_comments "${COMMITTED}"  > /tmp/committed_clean.ts
+          strip_comments "${GENERATED}"  > /tmp/generated_clean.ts
+
+          if ! diff -u /tmp/committed_clean.ts /tmp/generated_clean.ts; then
+            echo ""
+            echo "❌  SDK types have drifted from the current OpenAPI spec."
+            echo ""
+            echo "To fix, run locally:"
+            echo "    npm run export:openapi"
+            echo "    npm run sdk:generate-types"
+            echo "    git add sdk/typescript/src/types/openapi.generated.ts"
+            echo "    git commit -m 'chore(sdk): regenerate types from updated OpenAPI spec'"
+            echo ""
+            echo "Then push and re-run CI."
+            exit 1
+          fi
+
+          echo "✅  SDK types are in sync with the OpenAPI spec."
+
+      # ── Upload diff artifact on failure for easier debugging ──────────────
+      - name: Upload drift diff on failure
+        if: failure()
+        run: |
+          diff \
+            sdk/typescript/src/types/openapi.generated.ts \
+            /tmp/openapi.generated.ts \
+            > /tmp/sdk-drift.patch || true
+        continue-on-error: true
+
+      - name: Upload drift diff artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-type-drift-diff
+          path: /tmp/sdk-drift.patch
+          retention-days: 3

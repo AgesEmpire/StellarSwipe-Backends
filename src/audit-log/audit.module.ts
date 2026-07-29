@@ -5,6 +5,8 @@ import { AuditLog } from './entities/audit-log.entity';
 import { AuditService } from './audit.service';
 import { AuditController } from './audit.controller';
 import { AuditLoggingInterceptor } from './interceptors/audit-logging.interceptor';
+import { ComplianceAuditLogger } from './compliance-audit.logger';
+import { AuditEventListener } from './audit-event.listener';
 
 @Module({
   imports: [
@@ -12,7 +14,7 @@ import { AuditLoggingInterceptor } from './interceptors/audit-logging.intercepto
     ScheduleModule.forRoot(),
   ],
   controllers: [AuditController],
-  providers: [AuditService, AuditLoggingInterceptor],
-  exports: [AuditService, AuditLoggingInterceptor],
+  providers: [AuditService, AuditLoggingInterceptor, ComplianceAuditLogger, AuditEventListener],
+  exports: [AuditService, AuditLoggingInterceptor, ComplianceAuditLogger],
 })
 export class AuditModule {}

@@ -5,6 +5,7 @@ import { EtlOrchestratorService } from './etl/etl-orchestrator.service';
 import { UserEventsExtractor } from './etl/extractors/user-events.extractor';
 import { TradesExtractor } from './etl/extractors/trades.extractor';
 import { SignalsExtractor } from './etl/extractors/signals.extractor';
+import { PositionsExtractor } from './etl/extractors/positions.extractor';
 import { ParquetTransformer } from './etl/transformers/parquet.transformer';
 import { DataLakeLoader } from './etl/loaders/data-lake.loader';
 import { EtlJob } from './entities/etl-job.entity';
@@ -19,6 +20,7 @@ import { EtlJob } from './entities/etl-job.entity';
     UserEventsExtractor,
     TradesExtractor,
     SignalsExtractor,
+    PositionsExtractor,
     ParquetTransformer,
     DataLakeLoader,
   ],

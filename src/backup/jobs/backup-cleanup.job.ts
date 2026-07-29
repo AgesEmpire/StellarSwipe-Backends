@@ -1,23 +1,24 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { BackupService, BackupType } from '../backup.service';
+import { JobSchedulerService } from '../../jobs/job-scheduler.service';
 
 @Injectable()
-export class BackupCleanupJob {
-  private readonly logger = new Logger(BackupCleanupJob.name);
+export class BackupCleanupJob implements OnModuleInit {
+  constructor(
+    private readonly backupService: BackupService,
+    private readonly scheduler: JobSchedulerService,
+  ) {}
 
-  constructor(private backupService: BackupService) {}
-
-  @Cron('0 3 * * *', { timeZone: 'UTC' })
-  async handleDailyCleanup(): Promise<void> {
-    this.logger.log('Starting backup cleanup job...');
-    try {
-      await this.backupService.cleanupOldBackups(BackupType.DAILY, 7);
-      await this.backupService.cleanupOldBackups(BackupType.WEEKLY, 28);
-      await this.backupService.cleanupOldBackups(BackupType.MONTHLY, 365);
-      this.logger.log('Backup cleanup completed successfully');
-    } catch (error) {
-      this.logger.error(`Backup cleanup failed: ${error.message}`);
-    }
+  onModuleInit(): void {
+    this.scheduler.register({
+      name: 'backup.cleanup',
+      cronEnvKey: 'CRON_BACKUP_CLEANUP',
+      defaultCron: '0 3 * * *',
+      handler: async () => {
+        await this.backupService.cleanupOldBackups(BackupType.DAILY, 7);
+        await this.backupService.cleanupOldBackups(BackupType.WEEKLY, 28);
+        await this.backupService.cleanupOldBackups(BackupType.MONTHLY, 365);
+      },
+    });
   }
 }

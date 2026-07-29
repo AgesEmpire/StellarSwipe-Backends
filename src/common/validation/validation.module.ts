@@ -1,6 +1,7 @@
 import { Module, Global } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
-import { CustomValidationPipe, SanitizationPipe } from '../pipes/validation.pipe';
+import { CustomValidationPipe } from '../pipes/validation.pipe';
+import { SanitizationPipe } from '../pipes/sanitization.pipe';
 
 @Global()
 @Module({

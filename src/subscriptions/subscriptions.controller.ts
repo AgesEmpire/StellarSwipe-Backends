@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,10 +18,13 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { SubscriptionsService } from './subscriptions.service';
 import { AccessControlService } from './services/access-control.service';
 import { CreateTierDto, UpdateTierDto } from './dto/create-tier.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentWallet } from '../common/decorators/current-wallet.decorator';
 import {
   SubscribeDto,
   CancelSubscriptionDto,
@@ -69,13 +73,14 @@ export class SubscriptionsController {
   // ─────────────────────────────────────────────────────────────
 
   @Post('tiers')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Provider creates a new subscription tier' })
   @ApiResponse({ status: 201, description: 'Tier created successfully' })
   @ApiQuery({ name: 'providerId', description: 'UUID of the provider (user)' })
-  @ApiQuery({ name: 'providerWallet', description: 'Provider Stellar wallet address' })
   async createTier(
     @Query('providerId') providerId: string,
-    @Query('providerWallet') providerWallet: string,
+    @CurrentWallet() providerWallet: string,
     @Body() dto: CreateTierDto,
   ) {
     return this.subscriptionsService.createTier(providerId, providerWallet, dto);
@@ -131,6 +136,8 @@ export class SubscriptionsController {
   // ─────────────────────────────────────────────────────────────
 
   @Post('subscribe')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Subscribe a user to a tier (provide Stellar USDC tx hash as proof of payment)',
@@ -139,9 +146,15 @@ export class SubscriptionsController {
   @ApiQuery({ name: 'userId', description: 'Subscriber user UUID (auth stub)' })
   async subscribe(
     @Query('userId') userId: string,
+    @CurrentWallet() subscriberWallet: string,
     @Body() dto: SubscribeDto,
   ) {
-    return this.subscriptionsService.subscribe(userId, dto);
+    // The subscriber's wallet is taken from the authenticated session rather
+    // than trusting a client-supplied body field.
+    return this.subscriptionsService.subscribe(userId, {
+      ...dto,
+      subscriberWallet,
+    });
   }
 
   @Get('my/:userId')

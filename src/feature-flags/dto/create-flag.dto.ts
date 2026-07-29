@@ -50,6 +50,18 @@ export class CreateFlagDto {
   @ValidateNested()
   @Type(() => FlagConfigDto)
   config?: FlagConfigDto;
+
+  @IsOptional()
+  @IsString()
+  contractId?: string;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  retired?: boolean;
 }
 
 export class UpdateFlagDto {
@@ -65,4 +77,16 @@ export class UpdateFlagDto {
   @ValidateNested()
   @Type(() => FlagConfigDto)
   config?: FlagConfigDto;
+
+  @IsOptional()
+  @IsString()
+  contractId?: string;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  retired?: boolean;
 }

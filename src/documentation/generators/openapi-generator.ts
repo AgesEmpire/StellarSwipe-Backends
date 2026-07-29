@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder, OpenAPIObject } from '@nestjs/swagger';
+import { CORRELATION_ID_HEADER } from '../../common/correlation/correlation-id.store';
 
 export interface OpenApiOutput {
   document: OpenAPIObject;
@@ -11,12 +12,33 @@ export function generateOpenApiDocument(app: INestApplication): OpenApiOutput {
   const config = new DocumentBuilder()
     .setTitle('StellarSwipe API')
     .setDescription(
-      'Copy trading DApp on Stellar blockchain. Follow top traders, automate trades, and manage your portfolio.',
+      `Copy trading DApp on Stellar blockchain. Follow top traders, automate trades, and manage your portfolio.
+
+## Request Correlation
+
+Every request is assigned a unique correlation ID for end-to-end traceability.
+
+- **Header**: \`${CORRELATION_ID_HEADER}\`
+- **Format**: UUID v4
+- **Client-supplied**: Clients may send their own UUID in this header; the API will echo it back and propagate it through all internal calls and logs. This allows you to correlate API responses with your own request logs.
+- **Server-generated**: If the header is absent the server generates a fresh UUID automatically.
+- **Response header**: The resolved correlation ID is always echoed back in the \`${CORRELATION_ID_HEADER}\` response header.
+- **Error responses**: All error payloads include the correlation ID as \`requestId\` for easy support lookups.`,
     )
     .setVersion('2.0')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
       'JWT',
+    )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        in: 'header',
+        name: CORRELATION_ID_HEADER,
+        description:
+          'Optional client-supplied correlation ID (UUID v4). If omitted the server generates one. Always echoed back in the response header and included in all log entries and error payloads for this request.',
+      },
+      CORRELATION_ID_HEADER,
     )
     .addTag('Signals', 'Trading signals from providers')
     .addTag('Trades', 'Trade execution and management')

@@ -1,44 +1,51 @@
 import { Module, Global } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterService } from './event-emitter.service';
+import { EventReplayService } from './event-replay.service';
+import { EventSerializerService } from './event-serializer';
 import { TradeEventListener } from './listeners/trade-event.listener';
 import { SignalEventListener } from './listeners/signal-event.listener';
 import { PortfolioEventListener } from './listeners/portfolio-event.listener';
 import { ReferralEventListener } from './referral-event.listener';
 import { ReferralsModule } from '../referrals/referrals.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { AuditLog } from '../audit-log/entities/audit-log.entity';
+import { OutboxEvent } from './entities/outbox-event.entity';
+import { OutboxService } from './outbox.service';
+import { OutboxPublisherService } from './outbox-publisher.service';
 
 @Global()
 @Module({
   imports: [
     OutboxModule,
+    ScheduleModule.forRoot(),
     EventEmitterModule.forRoot({
-      // Use this instance across the entire application
       global: true,
-      // Set this to `true` to use wildcards
       wildcard: false,
-      // The delimiter used to segment namespaces
       delimiter: '.',
-      // Set this to `true` if you want to emit the newListener event
       newListener: false,
-      // Set this to `true` if you want to emit the removeListener event
       removeListener: false,
-      // The maximum amount of listeners that can be assigned to an event
       maxListeners: 10,
-      // Show event name in memory leak message when more than maximum amount of listeners is assigned
       verboseMemoryLeak: true,
-      // Disable throwing uncaughtException if an error event is emitted and it has no listeners
       ignoreErrors: false,
     }),
+    TypeOrmModule.forFeature([AuditLog, OutboxEvent]),
     ReferralsModule,
   ],
   providers: [
     EventEmitterService,
+    EventReplayService,
+    EventSerializerService,
     TradeEventListener,
     SignalEventListener,
     PortfolioEventListener,
     ReferralEventListener,
+    OutboxService,
+    OutboxPublisherService,
   ],
   exports: [EventEmitterService, OutboxModule],
+  exports: [EventEmitterService, EventReplayService, EventSerializerService, OutboxService],
 })
 export class EventsModule {}

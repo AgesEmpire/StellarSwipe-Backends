@@ -1,10 +1,12 @@
-import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards, Request, Post, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { AdminManagementService } from './admin.service';
 import { UserManagementQueryDto, SuspendUserDto } from './dto/user-management.dto';
 import { SignalModerationQueryDto, RemoveSignalDto } from './dto/signal-moderation.dto';
 import { AdminAnalyticsService } from './analytics/admin-analytics.service';
 import { AnalyticsQueryDto } from './analytics/dto/analytics-query.dto';
+import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
+import { AuditAction } from '../audit-log/entities/audit-log.entity';
 
 // import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 // import { RolesGuard } from '../common/guards/roles.guard';
@@ -12,6 +14,8 @@ import { AnalyticsQueryDto } from './analytics/dto/analytics-query.dto';
 // import { UserRole } from '../users/enums/user-role.enum';
 // Using placeholders for auth guards based on usual NestJS conventions mapped in the project
 import { AdminRoleGuard } from './guards/admin-role.guard';
+import { TracingService } from '../tracing/tracing.service';
+import { PriorityQueueService } from '../queue/priority-queue.service';
 
 @ApiTags('Admin Management')
 @ApiBearerAuth()
@@ -21,6 +25,8 @@ export class AdminController {
     constructor(
         private readonly adminService: AdminManagementService,
         private readonly analyticsService: AdminAnalyticsService,
+        private readonly tracingService: TracingService,
+        private readonly priorityQueueService: PriorityQueueService,
     ) { }
 
     // --- USER MANAGEMENT ---
@@ -39,6 +45,7 @@ export class AdminController {
     }
 
     @Put('users/:id/suspend')
+    @Audit({ action: AuditAction.USER_SUSPENDED, resource: 'User', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Suspend a user account' })
     @ApiParam({ name: 'id', description: 'User ID' })
     async suspendUser(
@@ -52,6 +59,7 @@ export class AdminController {
     }
 
     @Put('users/:id/unsuspend')
+    @Audit({ action: AuditAction.USER_REINSTATED, resource: 'User', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Unsuspend a user account' })
     @ApiParam({ name: 'id', description: 'User ID' })
     async unsuspendUser(
@@ -71,6 +79,7 @@ export class AdminController {
     }
 
     @Delete('signals/:id')
+    @Audit({ action: AuditAction.SIGNAL_DELETED, resource: 'Signal', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Remove a malicious or inappropriate signal' })
     @ApiParam({ name: 'id', description: 'Signal ID' })
     async removeSignal(
@@ -88,5 +97,19 @@ export class AdminController {
     @ApiOperation({ summary: 'Get platform analytics overview' })
     async getAnalyticsDashboard(@Query() query: AnalyticsQueryDto) {
         return this.analyticsService.getOverview(query);
+    }
+    // --- QUEUE STATS (Priority Tiers) ---
+
+    @Get('queues/stats')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Get queue depth, active job count, and average wait time per priority tier' })
+    async getQueueStats() {
+        return this.priorityQueueService.getAdminQueueStats();
+    }
+
+    @Post('tracing/sample-rate')
+    @ApiOperation({ summary: 'Adjust distributed tracing sampling rate' })
+    updateTracingSampleRate(@Body('sampleRate') sampleRate: number) {
+        return this.tracingService.setSamplingRate(Number(sampleRate));
     }
 }

@@ -1,16 +1,14 @@
-import { IsString, IsNotEmpty, Matches } from 'class-validator';
+import { IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsStellarPublicKey } from '../common/decorators/is-stellar-address.decorator';
 
 export class VerifyStakeDto {
   @ApiProperty({
     description: 'Stellar public key of the provider',
     example: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
   })
-  @IsString()
+  @IsStellarPublicKey({ message: 'publicKey must be a valid Stellar public key (56-char G... address)' })
   @IsNotEmpty()
-  @Matches(/^G[A-Z0-9]{55}$/, {
-    message: 'Invalid Stellar public key format',
-  })
   publicKey!: string;
 }
 

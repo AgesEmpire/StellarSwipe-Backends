@@ -1,0 +1,17 @@
+{
+    "SUCCESS": "Opération terminée avec succès",
+    "CREATED": "Ressource créée avec succès",
+    "UPDATED": "Ressource mise à jour avec succès",
+    "DELETED": "Ressource supprimée avec succès",
+    "NOT_FOUND": "Ressource demandée non trouvée",
+    "LOADING": "Chargement...",
+    "PLEASE_WAIT": "Veuillez patienter pendant que nous traitons votre demande",
+    "CONFIRM": "Êtes-vous sûr de vouloir continuer?",
+    "CANCEL": "Opération annulée",
+    "YES": "Oui",
+    "NO": "Non",
+    "CURRENCY_FORMAT": "{amount} {currency}",
+    "DATE_FORMAT": "DD/MM/YYYY",
+    "LANGUAGE_CHANGED": "Langue changée en Français",
+    "UNSUPPORTED_LANGUAGE": "Langue non supportée, utilisation de l'Anglais par défaut"
+}

@@ -28,6 +28,15 @@ export class FeatureFlag {
   @Column({ type: 'jsonb', default: {} })
   config!: FlagConfig;
 
+  @Column({ nullable: true })
+  contractId?: string;
+
+  @Column({ nullable: true })
+  method?: string;
+
+  @Column({ default: false })
+  retired?: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 

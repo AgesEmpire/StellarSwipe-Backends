@@ -1,21 +1,24 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
+import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 
-/**
- * Cache key prefixes for namespacing
- */
 export enum CachePrefix {
     SESSION = 'stellarswipe:session:',
     SIGNAL = 'stellarswipe:signal:',
     PORTFOLIO = 'stellarswipe:portfolio:',
     SDEX = 'stellarswipe:sdex:',
+    ANALYTICS = 'stellarswipe:analytics:',
+    USER_PROFILE = 'stellarswipe:user:',
+    MARKET = 'stellarswipe:market:',
 }
 
-/**
- * Cache TTL types matching the configuration
- */
+/** Build a tenant-namespaced cache key: <prefix><tenantId>:<entityId> */
+export function tenantKey(prefix: CachePrefix, tenantId: string, entityId: string): string {
+    return `${prefix}${tenantId}:${entityId}`;
+}
+
 export type CacheTTLType = 'session' | 'signal' | 'portfolio' | 'default';
 
 @Injectable()
@@ -26,6 +29,7 @@ export class CacheService {
     constructor(
         @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
         private readonly configService: ConfigService,
+        @Optional() private readonly prometheusService?: PrometheusService,
     ) {
         this.ttlConfig = {
             session: this.configService.get<number>('redisCache.ttl.session') ?? 24 * 60 * 60,
@@ -40,7 +44,13 @@ export class CacheService {
      */
     async get<T>(key: string): Promise<T | undefined> {
         try {
-            return await this.cacheManager.get<T>(key);
+            const value = await this.cacheManager.get<T>(key);
+            if (value !== undefined && value !== null) {
+                this.prometheusService?.cacheHitsTotal.inc({ layer: 'redis' });
+            } else {
+                this.prometheusService?.cacheMissesTotal.inc({ layer: 'redis' });
+            }
+            return value;
         } catch (error) {
             this.logger.error(`Cache GET error for key ${key}:`, error);
             return undefined;
@@ -140,8 +150,54 @@ export class CacheService {
     }
 
     /**
-     * Get TTL configuration for a specific type
+     * Cache-aside: return cached value or fetch, cache, and return.
+     * Prevents duplicate DB reads for repeated identical requests.
      */
+    async getOrSet<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType = 'default',
+    ): Promise<T> {
+        const cached = await this.get<T>(key);
+        if (cached !== undefined && cached !== null) {
+            return cached;
+        }
+        const value = await fetchFn();
+        await this.set(key, value, ttlType);
+        return value;
+    }
+
+    /**
+     * Stampede-safe getOrSet: coalesces concurrent fetches for the same key
+     * into a single DB/upstream call.
+     */
+    private readonly inflightRequests = new Map<string, Promise<any>>();
+
+    async getOrSetWithLock<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType = 'default',
+    ): Promise<T> {
+        const cached = await this.get<T>(key);
+        if (cached !== undefined && cached !== null) {
+            return cached;
+        }
+
+        if (this.inflightRequests.has(key)) {
+            return this.inflightRequests.get(key) as Promise<T>;
+        }
+
+        const promise = fetchFn().then(async (value) => {
+            await this.set(key, value, ttlType);
+            return value;
+        }).finally(() => {
+            this.inflightRequests.delete(key);
+        });
+
+        this.inflightRequests.set(key, promise);
+        return promise;
+    }
+
     getTTL(ttlType: CacheTTLType): number {
         return this.ttlConfig[ttlType];
     }

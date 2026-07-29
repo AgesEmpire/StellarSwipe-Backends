@@ -1,16 +1,41 @@
-import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Param, Query, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { ContestsService } from './contests.service';
-import { CreateContestDto, ContestQueryDto } from './dto/contest.dto';
+import { CreateContestDto, ContestQueryDto, UpdateContestDto } from './dto/contest.dto';
 import { Contest, ContestStatus } from './entities/contest.entity';
+import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
+import { PermissionsGuard } from '../authorization/guards/permissions.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('contests')
 @Controller('contests')
+@ApiBearerAuth()
 export class ContestsController {
-  constructor(private readonly contestsService: ContestsService) {}
+  constructor(
+    private readonly contestsService: ContestsService,
+    private readonly socketManager: SocketManagerService,
+  ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions('contests:admin')
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a new contest (Admin only)' })
+  @ApiResponse({ status: 201, description: 'Contest created' })
   async createContest(@Body() dto: CreateContestDto): Promise<Contest> {
     return this.contestsService.createContest(dto);
+  }
+
+  @Put(':id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions('contests:admin')
+  @ApiOperation({ summary: 'Update contest details (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Contest updated' })
+  async updateContest(
+    @Param('id') id: string,
+    @Body() dto: UpdateContestDto,
+  ): Promise<Contest> {
+    return this.contestsService.updateContest(id, dto);
   }
 
   @Get()
@@ -35,9 +60,34 @@ export class ContestsController {
     return this.contestsService.getContestLeaderboard(id);
   }
 
+  /**
+   * SSE endpoint for real-time leaderboard updates.
+   * Clients connect once and receive pushed updates every 10 seconds.
+   * Falls back to polling via GET :id/leaderboard for clients that don't support SSE.
+   */
+  @Sse(':id/leaderboard/live')
+  liveLeaderboard(@Param('id') id: string): Observable<MessageEvent> {
+    return interval(10_000).pipe(
+      switchMap(() => this.contestsService.getContestLeaderboard(id)),
+      map((data) => ({ data: JSON.stringify(data) } as MessageEvent)),
+    );
+  }
+
+  @Post(':id/leaderboard/refresh')
+  @HttpCode(HttpStatus.OK)
+  async refreshLeaderboard(@Param('id') id: string) {
+    const leaderboard = await this.contestsService.getContestLeaderboard(id);
+    // Push update to all WebSocket subscribers of this contest room
+    this.socketManager.emitContestLeaderboard(id, leaderboard);
+    return leaderboard;
+  }
+
   @Post(':id/finalize')
   @HttpCode(HttpStatus.OK)
   async finalizeContest(@Param('id') id: string) {
-    return this.contestsService.finalizeContest(id);
+    const result = await this.contestsService.finalizeContest(id);
+    // Notify WebSocket subscribers that contest is finalized
+    this.socketManager.emitContestLeaderboard(id, { ...result, status: 'FINALIZED' });
+    return result;
   }
 }
