@@ -6,10 +6,12 @@ import { SignalEventListener } from './listeners/signal-event.listener';
 import { PortfolioEventListener } from './listeners/portfolio-event.listener';
 import { ReferralEventListener } from './referral-event.listener';
 import { ReferralsModule } from '../referrals/referrals.module';
+import { OutboxModule } from './outbox/outbox.module';
 
 @Global()
 @Module({
   imports: [
+    OutboxModule,
     EventEmitterModule.forRoot({
       // Use this instance across the entire application
       global: true,
@@ -37,6 +39,6 @@ import { ReferralsModule } from '../referrals/referrals.module';
     PortfolioEventListener,
     ReferralEventListener,
   ],
-  exports: [EventEmitterService],
+  exports: [EventEmitterService, OutboxModule],
 })
 export class EventsModule {}

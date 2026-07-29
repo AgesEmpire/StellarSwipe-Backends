@@ -10,6 +10,7 @@ import { UserPreference } from './entities/user-preference.entity';
 import { Session } from './entities/session.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdatePreferenceDto } from './dto/update-preference.dto';
+import { restoreOrThrow } from '../common/services/soft-delete.helper';
 
 @Injectable()
 export class UsersService {
@@ -129,6 +130,18 @@ export class UsersService {
     async softDelete(walletAddress: string): Promise<void> {
         const user = await this.findByWalletAddress(walletAddress);
         await this.userRepository.softDelete(user.id);
+    }
+
+    async restore(walletAddress: string): Promise<User> {
+        const user = await this.userRepository.findOne({
+            where: { walletAddress },
+            withDeleted: true,
+        });
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+        await restoreOrThrow(this.userRepository, user.id, 'User not found');
+        return this.findByWalletAddress(walletAddress);
     }
 
     async createSession(

@@ -27,6 +27,10 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
+  // Align the body-parser limit with RequestValidationMiddleware's max payload size
+  app.useBodyParser('json', { limit: '5mb' });
+  app.useBodyParser('urlencoded', { limit: '5mb', extended: true });
+
   // Get services
   const configService = app.get(ConfigService);
   const logger = app.get(LoggerService);
