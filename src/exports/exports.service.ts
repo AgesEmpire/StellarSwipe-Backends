@@ -68,6 +68,7 @@ export class ExportsService {
       EXPORT_JOB,
       { exportId: saved.id },
       {
+        priority: 100, // NORMAL
         attempts: 3,
         backoff: { type: 'exponential', delay: 5_000 },
         removeOnComplete: 20,

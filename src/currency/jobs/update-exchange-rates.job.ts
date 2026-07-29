@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { CurrencyConverterService } from '../currency-converter.service';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
+
+const LOCK_KEY = 'update-exchange-rates';
+const LOCK_TTL_MS = 3 * 60 * 1000; // 3 min — well above a normal rates-refresh cycle
 
 const DEFAULT_PAIRS = [
   { base: 'USD', quote: 'EUR' },
@@ -17,12 +21,24 @@ const DEFAULT_PAIRS = [
 export class UpdateExchangeRatesJob {
   private readonly logger = new Logger(UpdateExchangeRatesJob.name);
 
-  constructor(private readonly currencyService: CurrencyConverterService) {}
+  constructor(
+    private readonly currencyService: CurrencyConverterService,
+    private readonly distributedLock: DistributedLockService,
+  ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async run(): Promise<void> {
-    this.logger.log('Refreshing exchange rates...');
-    await this.currencyService.refreshRates(DEFAULT_PAIRS);
-    this.logger.log('Exchange rates refreshed');
+    const { ran } = await this.distributedLock.withLock(
+      LOCK_KEY,
+      LOCK_TTL_MS,
+      async () => {
+        this.logger.log('Refreshing exchange rates...');
+        await this.currencyService.refreshRates(DEFAULT_PAIRS);
+        this.logger.log('Exchange rates refreshed');
+      },
+    );
+    if (!ran) {
+      this.logger.debug('Skipping exchange rate refresh — another replica is running it');
+    }
   }
 }

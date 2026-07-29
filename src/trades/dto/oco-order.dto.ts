@@ -10,6 +10,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { IsStellarPrecision } from '../../common/decorators/is-stellar-precision.decorator';
 
 // ─── Sub-DTOs ─────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ export class OcoLegDto {
    */
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
+  @IsStellarPrecision()
   triggerPrice!: number;
 
   /**
@@ -29,6 +31,7 @@ export class OcoLegDto {
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
   @IsOptional()
+  @IsStellarPrecision()
   amount?: number;
 }
 
@@ -81,6 +84,7 @@ export class CreateOcoOrderDto {
   /** Default amount for both legs (individual legs may override) */
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
+  @IsStellarPrecision()
   amount!: number;
 
   // ── OCO legs ───────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import {
   RedisHealthIndicator,
   StellarHealthIndicator,
   SorobanHealthIndicator,
+  QueueHealthIndicator,
 } from '../src/health/indicators';
 import { HealthSummaryService } from '../src/health/health-summary.service';
 import { HealthMetricsAuthGuard } from '../src/common/guards/health-metrics-auth.guard';
@@ -17,6 +18,7 @@ const mockDbHealth = { isHealthy: jest.fn() };
 const mockRedisHealth = { isHealthy: jest.fn() };
 const mockStellarHealth = { isHealthy: jest.fn() };
 const mockSorobanHealth = { isHealthy: jest.fn() };
+const mockQueueHealth = { isHealthy: jest.fn() };
 
 describe('HealthController (#370)', () => {
   let controller: HealthController;
@@ -31,6 +33,7 @@ describe('HealthController (#370)', () => {
         { provide: RedisHealthIndicator, useValue: mockRedisHealth },
         { provide: StellarHealthIndicator, useValue: mockStellarHealth },
         { provide: SorobanHealthIndicator, useValue: mockSorobanHealth },
+        { provide: QueueHealthIndicator, useValue: mockQueueHealth },
         HealthMetricsAuthGuard,
         { provide: JwtAuthGuard, useValue: { canActivate: jest.fn().mockResolvedValue(true) } },
         { provide: ApiKeyAuthGuard, useValue: { canActivate: jest.fn().mockResolvedValue(false) } },
@@ -67,15 +70,32 @@ describe('HealthController (#370)', () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ]));
   });
 
-  it('GET /health/readiness should check DB and cache only', async () => {
+  it('GET /health/readiness should check DB, cache, and queue', async () => {
     mockHealthCheck.mockResolvedValue({ status: 'ok', info: {}, error: {}, details: {} });
     await controller.readiness();
     expect(mockHealthCheck).toHaveBeenCalledWith(expect.arrayContaining([
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ]));
   });
+
+  it('GET /health/queue should check queue indicator', async () => {
+    mockHealthCheck.mockResolvedValue({ status: 'ok', info: {}, error: {}, details: {} });
+    await controller.checkQueue();
+    expect(mockHealthCheck).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.any(Function),
+    ]));
+  });
+
+  it('GET /health/liveness should return 200 without checking dependencies', async () => {
+    mockHealthCheck.mockResolvedValue({ status: 'ok', info: {}, error: {}, details: {} });
+    await controller.liveness();
+    expect(mockHealthCheck).toHaveBeenCalledWith([]);
+  });
 });
+

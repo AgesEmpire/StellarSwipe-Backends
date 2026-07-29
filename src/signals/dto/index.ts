@@ -9,6 +9,7 @@ import {
   Min,
   Max,
   IsObject,
+  IsBoolean,
 } from 'class-validator';
 import { SignalType, SignalStatus, SignalOutcome } from '../entities/signal.entity';
 
@@ -54,6 +55,18 @@ export class CreateSignalDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  tier?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isStaked?: boolean;
+
+  @IsOptional()
+  @IsEnum(SignalOutcome)
+  outcome?: SignalOutcome;
 }
 
 export class UpdateSignalDto {

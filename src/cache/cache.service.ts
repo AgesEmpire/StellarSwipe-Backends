@@ -1,13 +1,22 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
+import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 
 export enum CachePrefix {
     SESSION = 'stellarswipe:session:',
     SIGNAL = 'stellarswipe:signal:',
     PORTFOLIO = 'stellarswipe:portfolio:',
     SDEX = 'stellarswipe:sdex:',
+    ANALYTICS = 'stellarswipe:analytics:',
+    USER_PROFILE = 'stellarswipe:user:',
+    MARKET = 'stellarswipe:market:',
+}
+
+/** Build a tenant-namespaced cache key: <prefix><tenantId>:<entityId> */
+export function tenantKey(prefix: CachePrefix, tenantId: string, entityId: string): string {
+    return `${prefix}${tenantId}:${entityId}`;
 }
 
 export type CacheTTLType = 'session' | 'signal' | 'portfolio' | 'default';
@@ -20,6 +29,7 @@ export class CacheService {
     constructor(
         @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
         private readonly configService: ConfigService,
+        @Optional() private readonly prometheusService?: PrometheusService,
     ) {
         this.ttlConfig = {
             session: this.configService.get<number>('redisCache.ttl.session') ?? 24 * 60 * 60,
@@ -34,7 +44,13 @@ export class CacheService {
      */
     async get<T>(key: string): Promise<T | undefined> {
         try {
-            return await this.cacheManager.get<T>(key);
+            const value = await this.cacheManager.get<T>(key);
+            if (value !== undefined && value !== null) {
+                this.prometheusService?.cacheHitsTotal.inc({ layer: 'redis' });
+            } else {
+                this.prometheusService?.cacheMissesTotal.inc({ layer: 'redis' });
+            }
+            return value;
         } catch (error) {
             this.logger.error(`Cache GET error for key ${key}:`, error);
             return undefined;

@@ -58,15 +58,26 @@ export class SentryService {
   }
 
   /**
-   * Capture an exception
+   * Capture an exception with optional request context.
+   * Automatically attaches url, method, and user agent when provided.
    */
   captureException(exception: Error, context?: Record<string, any>): void {
     if (!this.isInitialized) {
       return;
     }
 
-    Sentry.captureException(exception, {
-      extra: context,
+    Sentry.withScope((scope) => {
+      if (context) {
+        // Surface request context as a dedicated Sentry section
+        const { path, method, userAgent, userId, tenantId, ...extra } = context as any;
+        if (path || method) {
+          scope.setContext('request', { path, method, userAgent });
+        }
+        if (userId) scope.setUser({ id: userId });
+        if (tenantId) scope.setTag('tenant_id', tenantId);
+        if (Object.keys(extra).length) scope.setExtras(extra);
+      }
+      Sentry.captureException(exception);
     });
   }
 

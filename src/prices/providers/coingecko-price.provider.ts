@@ -4,9 +4,10 @@ import { HttpRetryService } from '../../http/http-retry.service';
 import { CircuitBreakerService } from '../../http/circuit-breaker.service';
 
 const REQUEST_TIMEOUT_MS = 5000;
+import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
-export class CoinGeckoPriceProvider {
+export class CoinGeckoPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(CoinGeckoPriceProvider.name);
   private readonly baseUrl = 'https://api.coingecko.com/api/v3';
   private static readonly CIRCUIT_NAME = 'coingecko-price';

@@ -1,0 +1,38 @@
+name: ADR Requirement Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  adr-check:
+    name: Check ADR Documentation
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check ADR requirement
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          chmod +x ./scripts/check-adr-requirement.sh
+          ./scripts/check-adr-requirement.sh origin/main ${{ github.event.pull_request.number }} "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Comment on PR if ADR check fails
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🏗️ **ADR Documentation Required**\n\nThis PR modifies architecturally-significant code paths. Please:\n\n1. **Create or reference an ADR:**\n   - Create: \`docs/adr/NNNN-your-title.md\` (use next sequence number)\n   - Reference: Mention ADR number in PR description or commit message\n\n2. **Or request exemption:**\n   - Add the \`adr-exemption\` label to this PR\n   - Document your justification in the PR description\n\nFor guidance, see: [docs/adr/README.md](https://github.com/AgesEmpire/StellarSwipe-Backends/blob/main/docs/adr/README.md)`
+            })

@@ -35,6 +35,7 @@ export class AmlScanJob implements OnModuleInit {
         AML_SCAN_JOB,
         {},
         {
+          priority: 1000, // LOW — background analytics processing
           jobId: AML_SCAN_JOB,
           repeat: { cron: '0 * * * *' }, // every hour on the hour
           removeOnComplete: true,
@@ -50,6 +51,7 @@ export class AmlScanJob implements OnModuleInit {
         AML_SAR_JOB,
         { riskScoreThreshold: 80 },
         {
+          priority: 1000, // LOW — background analytics processing
           jobId: AML_SAR_JOB,
           repeat: { cron: '0 9 * * *' }, // 09:00 UTC daily
           removeOnComplete: true,

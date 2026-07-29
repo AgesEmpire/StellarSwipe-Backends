@@ -1,5 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User, UserTier, KycStatus } from '../users/entities/user.entity';
+import { ComplianceLog } from './entities/compliance-log.entity';
 import { UserDataExporterService } from './exporters/user-data-exporter.service';
 import { TradeReportExporterService } from './exporters/trade-report-exporter.service';
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
@@ -11,6 +15,8 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import { JobSchedulerService } from '../jobs/job-scheduler.service';
 import { EncryptionService } from '../security/encryption.service';
+import { SignedUrlGeneratorService } from './exporters/signed-url-generator.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class ComplianceService {
@@ -25,6 +31,7 @@ export class ComplianceService {
     private gdprGenerator: GdprReportGenerator,
     private financialGenerator: FinancialReportGenerator,
     private encryptionService: EncryptionService,
+    private signedUrlGenerator: SignedUrlGeneratorService,
   ) {
     this.exportDir = this.configService.get('EXPORT_DIR', '/tmp/exports');
     this.ensureExportDir();
@@ -36,10 +43,14 @@ export class ComplianceService {
     }
   }
 
-  async exportUserData(userId: string, format: ExportFormat = ExportFormat.JSON): Promise<string> {
+  async exportUserData(
+    userId: string,
+    format: ExportFormat = ExportFormat.JSON,
+  ): Promise<{ signedUrl: string; expiresIn: string }> {
     this.logger.log(`Exporting user data for ${userId} in ${format} format`);
 
     const userData = await this.userDataExporter.exportUserData(userId);
+    const exportId = crypto.randomUUID();
     const fileName = `user_export_${userId}_${Date.now()}.${format}`;
     const filePath = join(this.exportDir, fileName);
 
@@ -57,7 +68,20 @@ export class ComplianceService {
 
     this.scheduleFileDeletion(filePath, 7);
 
-    return filePath;
+    // Generate signed URL for the export
+    const signedUrl = this.signedUrlGenerator.generateSignedUrl(
+      exportId,
+      'user-data',
+      userId,
+      filePath,
+      format,
+      60 * 24 * 7, // 7 days expiry
+    );
+
+    return {
+      signedUrl,
+      expiresIn: '7 days',
+    };
   }
 
   async generateComplianceReport(type: string, startDate: Date, endDate: Date): Promise<any> {
@@ -72,6 +96,69 @@ export class ComplianceService {
         return this.auditExporter.generateAuditReport(startDate, endDate, true);
       default:
         throw new Error(`Unknown report type: ${type}`);
+    }
+  }
+
+  async validateTransaction(userId: string, amount: number, asset: string): Promise<void> {
+    this.logger.log(`Performing compliance check for user ${userId}, amount ${amount} ${asset}`);
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // 1. Check KYC Status
+    if (user.kycStatus !== KycStatus.VERIFIED) {
+      await this.logCompliance(userId, 'transaction_blocked', `KYC status is ${user.kycStatus}`, { amount, asset });
+      throw new ForbiddenException(`Transaction blocked: KYC status is ${user.kycStatus}. Please complete your verification.`);
+    }
+
+    // 2. AML Screening (Mocked)
+    const isAmlFlagged = await this.mockAmlScreening(userId, amount);
+    if (isAmlFlagged) {
+      await this.logCompliance(userId, 'transaction_blocked', 'AML screening flagged this transaction', { amount, asset });
+      throw new ForbiddenException('Transaction blocked due to AML screening. Our compliance team will review it.');
+    }
+
+    // 3. Transaction Limits based on User Tier
+    const limit = this.getTransactionLimit(user.tier);
+    if (amount > limit) {
+      await this.logCompliance(userId, 'transaction_blocked', `Transaction amount ${amount} exceeds limit ${limit} for tier ${user.tier}`, { amount, asset });
+      throw new ForbiddenException(`Transaction blocked: Amount exceeds your daily limit of ${limit} for ${user.tier} tier.`);
+    }
+
+    // 4. Log successful compliance check
+    await this.logCompliance(userId, 'transaction_allowed', 'Compliance checks passed', { amount, asset });
+  }
+
+  private async logCompliance(userId: string, type: any, reason: string, metadata: any): Promise<void> {
+    const log = this.complianceLogRepository.create({
+      userId,
+      type,
+      reason,
+      metadata,
+      ipAddress: '0.0.0.0', // In production, get from request
+    });
+    await this.complianceLogRepository.save(log);
+  }
+
+  private async mockAmlScreening(_userId: string, amount: number): Promise<boolean> {
+    // Mock AML logic: flag extremely large transactions
+    return amount > 1000000;
+  }
+
+  private getTransactionLimit(tier: UserTier): number {
+    switch (tier) {
+      case UserTier.BASIC:
+        return 1000;
+      case UserTier.SILVER:
+        return 5000;
+      case UserTier.GOLD:
+        return 20000;
+      case UserTier.PLATINUM:
+        return 100000;
+      default:
+        return 0;
     }
   }
 

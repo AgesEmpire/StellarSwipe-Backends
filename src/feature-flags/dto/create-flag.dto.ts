@@ -60,6 +60,16 @@ export class CreateFlagDto {
   @IsArray()
   @IsString({ each: true })
   environments?: string[];
+  @IsString()
+  contractId?: string;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  retired?: boolean;
 }
 
 export class UpdateFlagDto {
@@ -80,4 +90,14 @@ export class UpdateFlagDto {
   @IsArray()
   @IsString({ each: true })
   environments?: string[];
+  @IsString()
+  contractId?: string;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  retired?: boolean;
 }

@@ -31,6 +31,7 @@ import {
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ConfigService } from '@nestjs/config';
 
 export const SLOW_QUERY_EVENT = 'db.query.slow';
 export const SLOW_RATE_EVENT = 'db.query.slow_rate_exceeded';
@@ -74,13 +75,14 @@ export class QueryMonitorService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
+    private readonly configService: ConfigService,
   ) {
     this.thresholdMs = parseInt(
-      process.env.SLOW_QUERY_THRESHOLD_MS ?? '200',
+      this.configService.get<string>('SLOW_QUERY_THRESHOLD_MS') ?? '200',
       10,
     );
     this.rateAlertThreshold = parseInt(
-      process.env.SLOW_QUERY_RATE_ALERT_THRESHOLD ?? '10',
+      this.configService.get<string>('SLOW_QUERY_RATE_ALERT_THRESHOLD') ?? '10',
       10,
     );
   }

@@ -4,9 +4,10 @@ import { PriceSourceResult } from '../dto/price-data.dto';
 import { CircuitBreakerService } from '../../http/circuit-breaker.service';
 
 const REQUEST_TIMEOUT_MS = 5000;
+import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
-export class SdexPriceProvider {
+export class SdexPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(SdexPriceProvider.name);
   private readonly server: Server;
   private static readonly CIRCUIT_NAME = 'sdex-price';

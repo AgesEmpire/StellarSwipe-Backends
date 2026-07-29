@@ -10,6 +10,7 @@ export interface AppConfig {
   logMaxSize: string;
   corsOrigin: string[];
   corsCredentials: boolean;
+  slippageToleranceBps: number;
 }
 
 export interface DatabaseConfig {
@@ -25,6 +26,16 @@ export interface DatabaseConfig {
   };
 }
 
+export interface HorizonBulkheadCategoryConfig {
+  maxConcurrent: number;
+  maxQueue: number;
+}
+
+export interface HorizonBulkheadConfig {
+  read: HorizonBulkheadCategoryConfig;
+  write: HorizonBulkheadCategoryConfig;
+}
+
 export interface StellarConfig {
   network: 'testnet' | 'public';
   horizonUrl: string;
@@ -32,6 +43,9 @@ export interface StellarConfig {
   networkPassphrase: string;
   apiTimeout: number;
   maxRetries: number;
+  maxCallDepth: number;
+  maxCallDepthViolationPolicy: 'reject' | 'warn';
+  horizonBulkhead: HorizonBulkheadConfig;
 }
 
 export interface RedisConfig {

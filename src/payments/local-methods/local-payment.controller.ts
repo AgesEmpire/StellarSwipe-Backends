@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, Param, Query, Headers } from '@nestjs/common';
+import { RateLimit, RateLimitTier } from '../../common/decorators/rate-limit.decorator';
 import { LocalPaymentService } from './local-payment.service';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
@@ -24,6 +25,7 @@ export class LocalPaymentController {
   }
 
   @Post('mpesa/initiate')
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 10, window: 60 })
   async initiateMpesa(@Body() dto: MpesaPaymentDto) {
     return this.localPaymentService.initiatePayment('KE', 'KES', {
       userId: dto.userId,
@@ -35,6 +37,7 @@ export class LocalPaymentController {
   }
 
   @Post('paystack/initiate')
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 10, window: 60 })
   async initiatePaystack(@Body() dto: PaystackPaymentDto) {
     const country = dto.currency === 'NGN' ? 'NG' : dto.currency === 'GHS' ? 'GH' : 'NG';
     return this.localPaymentService.initiatePayment(country, dto.currency, {
@@ -56,12 +59,14 @@ export class LocalPaymentController {
   }
 
   @Post('webhooks/mpesa')
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 120, window: 60 })
   async mpesaWebhook(@Body() payload: Record<string, any>) {
     await this.mpesaWebhook.handle(payload, '');
     return { received: true };
   }
 
   @Post('webhooks/paystack')
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 120, window: 60 })
   async paystackWebhook(
     @Body() payload: Record<string, any>,
     @Headers('x-paystack-signature') signature: string,

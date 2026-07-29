@@ -1,5 +1,17 @@
 version: '3.8'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Available profiles
+#   (none)       Full stack — app + postgres + redis  (default)
+#   db-only      Postgres only, useful for DB-focused module tests
+#   cache-only   Redis only, useful for cache-focused module tests
+#
+# Examples:
+#   docker-compose up -d                          # full stack
+#   docker-compose --profile db-only up -d        # postgres only
+#   docker-compose --profile cache-only up -d     # redis only
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
   app:
     build:
@@ -20,6 +32,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
       STELLAR_HORIZON_URL: ${STELLAR_HORIZON_URL:-https://horizon-testnet.stellar.org}
       STELLAR_SOROBAN_RPC_URL: ${STELLAR_SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org:443}
@@ -32,6 +45,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:3000/api/v1/health/healthz || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     networks:
       - stellarswipe-network
     command: npm run start:dev
@@ -39,6 +58,8 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: stellarswipe-postgres
+    profiles:
+      - db-only
     environment:
       POSTGRES_USER: ${DATABASE_USER:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-password}
@@ -58,6 +79,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: stellarswipe-redis
+    profiles:
+      - cache-only
     ports:
       - '${REDIS_PORT:-6379}:6379'
     command: redis-server ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}

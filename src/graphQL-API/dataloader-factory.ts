@@ -71,4 +71,5 @@ export function createGroupedDataLoader<K, V>(
 export interface DataLoaderSet {
   providerById: DataLoader<string, any>;
   signalsByProviderId: DataLoader<string, any[]>;
+  assetByCode?: DataLoader<string, any>;
 }

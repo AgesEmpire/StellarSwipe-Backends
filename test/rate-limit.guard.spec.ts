@@ -59,9 +59,10 @@ describe('RateLimitGuard (#372)', () => {
     mockCacheManager.set.mockResolvedValue(undefined);
 
     const ctx = buildContext(undefined, '10.0.0.2');
-    await expect(guard.canActivate(ctx)).rejects.toThrow(
-      new HttpException(expect.objectContaining({ statusCode: HttpStatus.TOO_MANY_REQUESTS }), HttpStatus.TOO_MANY_REQUESTS),
-    );
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({
+      status: HttpStatus.TOO_MANY_REQUESTS,
+      response: expect.objectContaining({ statusCode: HttpStatus.TOO_MANY_REQUESTS }),
+    });
   });
 
   it('should use user ID as identifier for authenticated tier', async () => {

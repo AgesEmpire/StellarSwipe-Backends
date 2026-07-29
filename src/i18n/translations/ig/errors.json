@@ -18,5 +18,14 @@
     "INTERNAL_ERROR": "Enwere njehie nkesa n'ime",
     "VALIDATION_FAILED": "Nkwenye agaghị nke ọma",
     "RATE_LIMIT_EXCEEDED": "Ario otutu aririọ, biiko nwaa ọzọ ma emechaa",
-    "FORBIDDEN": "Iweghị ikike ime omume a"
+    "FORBIDDEN": "Iweghị ikike ime omume a",
+    "TRADE_NOT_FOUND": "Ahụghị azụmahịa",
+    "TRADE_ACCESS_DENIED": "Ị nweghị ohere ịnweta azụmahịa a",
+    "PREMIUM_SUBSCRIPTION_REQUIRED": "Achọrọ ndebanye aha ọkachamara iji nweta mgbaama a",
+    "PREMIUM_SUBSCRIPTION_EXPIRED": "Ndebanye aha ọkachamara gị agwụla",
+    "SIGNAL_NOT_PREMIUM": "Mgbaama a abụghị mgbaama ọkachamara",
+    "STALE_PRICE": "Data ọnụahịa ochie, enweghị ike iji ya maka azụmahịa",
+    "INSUFFICIENT_LIQUIDITY": "Mmiri ahịa ezughị oke maka azụmahịa a. Nke kacha nta: {minimum}",
+    "PRICE_VALIDATION_FAILED": "Nkwenye ọnụahịa agaghị nke ọma: {reason}",
+    "QUOTE_DEPTH_TOO_LOW": "Omimi akwụkwọ iwu dị ala maka ogo azụmahịa a"
 }

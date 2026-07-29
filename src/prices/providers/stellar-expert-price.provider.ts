@@ -4,9 +4,10 @@ import { HttpRetryService } from '../../http/http-retry.service';
 import { CircuitBreakerService } from '../../http/circuit-breaker.service';
 
 const REQUEST_TIMEOUT_MS = 5000;
+import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
-export class StellarExpertPriceProvider {
+export class StellarExpertPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(StellarExpertPriceProvider.name);
   private readonly baseUrl = 'https://api.stellar.expert/explorer/public';
   private static readonly CIRCUIT_NAME = 'stellar-expert-price';

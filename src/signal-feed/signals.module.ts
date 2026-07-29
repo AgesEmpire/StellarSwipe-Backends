@@ -1,25 +1,31 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
-import { redisStore } from 'cache-manager-redis-store';
+import { Signal } from '../signals/entities/signal.entity';
+import { ProviderStats } from '../signals/entities/provider-stats.entity';
+import { UserProviderMute } from '../providers/entities/user-provider-mute.entity';
 import { SignalsController } from './signals.controller';
 import { SignalsService } from './signals.service';
-// Import your Signal entity
-// import { Signal } from './entities/signal.entity';
+import { FeedAnalyticsService } from './feed-analytics.service';
+import { FeedRankingService } from './feed-ranking.service';
+import { AssetPairMetadataService } from './asset-pair-metadata.service';
+import { ProviderMuteService } from '../providers/mute/provider-mute.service';
+import { AnalyticsModule } from '../analytics/analytics.module';
 
 @Module({
   imports: [
-    // TypeOrmModule.forFeature([Signal]),
-    CacheModule.register({
-      store: redisStore,
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      ttl: 30, // 30 seconds default TTL
-    }),
+    TypeOrmModule.forFeature([Signal, ProviderStats, UserProviderMute]),
+    CacheModule.register({ ttl: 30 }),
+    AnalyticsModule,
   ],
   controllers: [SignalsController],
-  providers: [SignalsService],
-  exports: [SignalsService],
+  providers: [
+    SignalsService,
+    FeedAnalyticsService,
+    FeedRankingService,
+    AssetPairMetadataService,
+    ProviderMuteService,
+  ],
+  exports: [SignalsService, FeedRankingService, AssetPairMetadataService],
 })
 export class SignalsModule {}
-

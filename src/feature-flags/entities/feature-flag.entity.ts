@@ -33,6 +33,14 @@ export class FeatureFlag {
   /** When set, the flag only evaluates as enabled in these environments (e.g. ['staging']). Null/empty = all environments. */
   @Column({ type: 'simple-array', nullable: true })
   environments?: string[] | null;
+  @Column({ nullable: true })
+  contractId?: string;
+
+  @Column({ nullable: true })
+  method?: string;
+
+  @Column({ default: false })
+  retired?: boolean;
 
   @CreateDateColumn()
   createdAt!: Date;

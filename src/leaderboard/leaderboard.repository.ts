@@ -2,36 +2,39 @@
  * LeaderboardRepository
  *
  * Encapsulates all leaderboard aggregation queries with optimised index hints.
- *
- * Recommended PostgreSQL indexes (add via migration):
- *   CREATE INDEX CONCURRENTLY idx_signals_leaderboard
- *     ON signals (provider_address, status, created_at)
- *     WHERE status = 'closed';
- *
- *   CREATE INDEX CONCURRENTLY idx_signals_pnl_outcome
- *     ON signals (provider_address, outcome, pnl)
- *     WHERE status = 'closed';
- *
- *   CREATE INDEX CONCURRENTLY idx_providers_address
- *     ON providers (address)
- *     INCLUDE (name, avatar, bio);
- *
- * These partial/covering indexes eliminate full-table scans on the hot
- * aggregation path and allow index-only scans for provider metadata lookups.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { Signal } from '../signals/signal.entity';
-import { Provider } from '../providers/provider.entity';
+import {
+  Signal,
+  SignalStatus,
+  SignalOutcome,
+} from '../signals/entities/signal.entity';
+import {
+  CopiedPosition,
+  PositionStatus,
+} from '../signals/entities/copied-position.entity';
+import { User } from '../users/entities/user.entity';
 import { LeaderboardPeriod } from './dto/leaderboard-query.dto';
-import { LeaderboardEntry } from './leaderboard.service';
+import {
+  ProviderLeaderboardEntry,
+  UserLeaderboardEntry,
+} from './leaderboard.types';
 
-interface RawLeaderboardRow {
-  provider: string;
+interface RawProviderLeaderboardRow {
+  providerId: string;
   signalCount: string;
   winRate: string;
-  totalPnL: string;
+  totalPnl: string;
+}
+
+interface RawUserLeaderboardRow {
+  userId: string;
+  adoptionCount: string;
+  successRate: string;
+  averageReturn: string;
+  totalReturn: string;
 }
 
 @Injectable()
@@ -42,122 +45,210 @@ export class LeaderboardRepository {
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
 
-    @InjectRepository(Provider)
-    private readonly providerRepo: Repository<Provider>,
+    @InjectRepository(CopiedPosition)
+    private readonly copiedPositionRepo: Repository<CopiedPosition>,
+
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
 
     private readonly dataSource: DataSource,
   ) {}
 
-  /**
-   * Aggregate leaderboard rows for the given period.
-   *
-   * Uses a single GROUP BY query that leverages the partial index on
-   * (provider_address, status, created_at) to avoid sequential scans.
-   * Provider metadata is fetched in one IN-query (no N+1).
-   */
-  async aggregateLeaderboard(
+  async aggregateProviderLeaderboard(
     period: LeaderboardPeriod,
     limit: number,
-  ): Promise<LeaderboardEntry[]> {
+    page: number = 1,
+    minActivity: number = 3,
+  ): Promise<ProviderLeaderboardEntry[]> {
     const dateFilter = this.resolveDateFilter(period);
+    const offset = (page - 1) * limit;
 
     const qb = this.signalRepo
       .createQueryBuilder('s')
-      // Only columns needed — avoids SELECT * overhead
-      .select('s.provider_address', 'provider')
+      .select('s.providerId', 'providerId')
       .addSelect('COUNT(s.id)', 'signalCount')
       .addSelect(
         `ROUND(
-           (SUM(CASE WHEN s.outcome = 'win' THEN 1 ELSE 0 END)::numeric
+           (SUM(CASE WHEN s.outcome = :success THEN 1 ELSE 0 END)::numeric
             / NULLIF(COUNT(s.id), 0)) * 100,
            2
          )`,
         'winRate',
       )
-      .addSelect('COALESCE(ROUND(SUM(s.pnl)::numeric, 2), 0)', 'totalPnL')
-      // Partial index hint: filter matches the WHERE clause of the index
-      .where('s.status = :status', { status: 'closed' })
-      .groupBy('s.provider_address')
-      // Composite score — mirrors computeScore() in the service
+      .addSelect('COALESCE(ROUND(SUM(s.totalProfitLoss)::numeric, 2), 0)', 'totalPnl')
+      .where('s.status = :status', { status: SignalStatus.CLOSED })
+      .groupBy('s.providerId')
+      .having('COUNT(s.id) >= :minActivity', { minActivity })
       .orderBy(
         `(
-           (SUM(CASE WHEN s.outcome = 'win' THEN 1 ELSE 0 END)::numeric
+           (SUM(CASE WHEN s.outcome = :success THEN 1 ELSE 0 END)::numeric
             / NULLIF(COUNT(s.id), 0)) * 100 * 0.5
-           + COALESCE(SUM(s.pnl), 0) * 0.3
+           + COALESCE(SUM(s.totalProfitLoss::numeric), 0) * 0.3
            + COUNT(s.id) * 0.2
          )`,
         'DESC',
       )
-      .limit(limit);
+      .limit(limit)
+      .offset(offset)
+      .setParameters({ success: SignalOutcome.TARGET_HIT });
 
     if (dateFilter) {
-      // Uses the created_at column covered by the partial index
-      qb.andWhere('s.created_at >= :from', { from: dateFilter });
+      qb.andWhere('s.createdAt >= :from', { from: dateFilter });
     }
 
-    const rows: RawLeaderboardRow[] = await qb.getRawMany();
-
+    const rows: RawProviderLeaderboardRow[] = await qb.getRawMany();
     if (!rows.length) return [];
 
-    const metaMap = await this.fetchProviderMetadata(rows.map((r) => r.provider));
+    const metadata = await this.fetchUserMetadata(rows.map((row) => row.providerId));
 
-    return rows.map((row, idx) => {
+    return rows.map((row, index) => {
       const winRate = parseFloat(row.winRate) || 0;
-      const totalPnL = parseFloat(row.totalPnL) || 0;
+      const totalPnl = parseFloat(row.totalPnl) || 0;
       const signalCount = parseInt(row.signalCount, 10) || 0;
-      const meta = metaMap.get(row.provider);
+      const score = Math.round(
+        (winRate * 0.5 + totalPnl * 0.3 + signalCount * 0.2) * 100,
+      ) / 100;
+      const meta = metadata.get(row.providerId);
 
       return {
-        rank: idx + 1,
-        provider: row.provider,
-        name: meta?.name ?? null,
+        rank: index + 1,
+        providerId: row.providerId,
+        username: meta?.username ?? null,
+        displayName: meta?.displayName ?? null,
         avatar: meta?.avatar ?? null,
         bio: meta?.bio ?? null,
         winRate,
-        totalPnL,
+        totalPnl,
         signalCount,
-        score: Math.round((winRate * 0.5 + totalPnL * 0.3 + signalCount * 0.2) * 100) / 100,
+        score,
       };
     });
   }
 
-  /**
-   * Fetch provider metadata in a single covering-index scan.
-   * The INCLUDE (name, avatar, bio) index makes this an index-only read.
-   */
-  async fetchProviderMetadata(
-    addresses: string[],
-  ): Promise<Map<string, { name: string; avatar: string; bio: string }>> {
-    if (!addresses.length) return new Map();
+  async aggregateUserLeaderboard(
+    period: LeaderboardPeriod,
+    limit: number,
+    page: number = 1,
+    minActivity: number = 3,
+  ): Promise<UserLeaderboardEntry[]> {
+    const dateFilter = this.resolveDateFilter(period);
+    const offset = (page - 1) * limit;
 
-    const providers = await this.providerRepo
+    const qb = this.copiedPositionRepo
       .createQueryBuilder('p')
-      .select(['p.address', 'p.name', 'p.avatar', 'p.bio'])
-      .where('p.address IN (:...addresses)', { addresses })
+      .select('p.userId', 'userId')
+      .addSelect('COUNT(p.id)', 'adoptionCount')
+      .addSelect(
+        `ROUND(
+           COALESCE(
+             SUM(CASE WHEN COALESCE(p.pnlPercentage::numeric, 0) > 0 THEN 1 ELSE 0 END)::numeric
+             / NULLIF(COUNT(p.id), 0) * 100,
+             0
+           ),
+           2
+         )`,
+        'successRate',
+      )
+      .addSelect(
+        `ROUND(COALESCE(AVG(COALESCE(p.pnlPercentage::numeric, 0)), 0), 2)`,
+        'averageReturn',
+      )
+      .addSelect(
+        `ROUND(COALESCE(SUM(COALESCE(p.pnlPercentage::numeric, 0)), 0), 2)`,
+        'totalReturn',
+      )
+      .where('p.status = :status', { status: PositionStatus.CLOSED })
+      .groupBy('p.userId')
+      .having('COUNT(p.id) >= :minActivity', { minActivity })
+      .orderBy(
+        `(
+           COALESCE(AVG(COALESCE(p.pnlPercentage::numeric, 0)), 0) * 0.4
+           + COALESCE(SUM(COALESCE(p.pnlPercentage::numeric, 0)), 0) * 0.2
+           + COUNT(p.id) * 0.2
+           + COALESCE(
+               SUM(CASE WHEN COALESCE(p.pnlPercentage::numeric, 0) > 0 THEN 1 ELSE 0 END)::numeric
+               / NULLIF(COUNT(p.id), 0) * 100,
+               0
+             ) * 0.2
+         )`,
+        'DESC',
+      )
+      .limit(limit)
+      .offset(offset);
+
+    if (dateFilter) {
+      qb.andWhere('p.createdAt >= :from', { from: dateFilter });
+    }
+
+    const rows: RawUserLeaderboardRow[] = await qb.getRawMany();
+    if (!rows.length) return [];
+
+    const metadata = await this.fetchUserMetadata(rows.map((row) => row.userId));
+
+    return rows.map((row, index) => {
+      const adoptionCount = parseInt(row.adoptionCount, 10) || 0;
+      const successRate = parseFloat(row.successRate) || 0;
+      const averageReturn = parseFloat(row.averageReturn) || 0;
+      const totalReturn = parseFloat(row.totalReturn) || 0;
+      const score = Math.round(
+        (averageReturn * 0.4 + totalReturn * 0.2 + adoptionCount * 0.2 + successRate * 0.2) * 100,
+      ) / 100;
+      const meta = metadata.get(row.userId);
+
+      return {
+        rank: index + 1,
+        userId: row.userId,
+        username: meta?.username ?? null,
+        displayName: meta?.displayName ?? null,
+        totalReturn,
+        averageReturn,
+        adoptionCount,
+        successRate,
+        score,
+      };
+    });
+  }
+
+  async fetchUserMetadata(
+    ids: string[],
+  ): Promise<
+    Map<
+      string,
+      { username: string; displayName: string | null; avatar: string | null; bio: string | null }
+    >
+  > {
+    if (!ids.length) return new Map();
+
+    const users = await this.userRepo
+      .createQueryBuilder('u')
+      .select(['u.id', 'u.username', 'u.displayName', 'u.bio'])
+      .where('u.id IN (:...ids)', { ids })
       .getMany();
 
     return new Map(
-      providers.map((p) => [p.address, { name: p.name, avatar: p.avatar, bio: p.bio }]),
+      users.map((user) => [
+        user.id,
+        {
+          username: user.username,
+          displayName: user.displayName ?? null,
+          avatar: null,
+          bio: user.bio ?? null,
+        },
+      ]),
     );
   }
 
-  /**
-   * Emit the recommended DDL for leaderboard indexes.
-   * Call this from a migration or a one-time admin endpoint.
-   */
   async ensureIndexes(): Promise<void> {
     const statements = [
       `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_signals_leaderboard
-         ON signals (provider_address, status, created_at)
-         WHERE status = 'closed'`,
-
+         ON signals (provider_id, status, created_at)
+         WHERE status = 'CLOSED'`,
       `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_signals_pnl_outcome
-         ON signals (provider_address, outcome, pnl)
-         WHERE status = 'closed'`,
-
-      `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_providers_address
-         ON providers (address)
-         INCLUDE (name, avatar, bio)`,
+         ON signals (provider_id, outcome, total_profit_loss)
+         WHERE status = 'CLOSED'`,
+      `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_copied_positions_leaderboard
+         ON copied_positions (user_id, status, created_at)
+         WHERE status = 'CLOSED'`,
     ];
 
     for (const sql of statements) {
@@ -165,13 +256,12 @@ export class LeaderboardRepository {
         await this.dataSource.query(sql);
         this.logger.log(`Index ensured: ${sql.split('\n')[0].trim()}`);
       } catch (err) {
-        // CONCURRENTLY cannot run inside a transaction; log and continue
-        this.logger.warn(`Index creation skipped (may already exist): ${(err as Error).message}`);
+        this.logger.warn(
+          `Index creation skipped (may already exist): ${(err as Error).message}`,
+        );
       }
     }
   }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
 
   private resolveDateFilter(period: LeaderboardPeriod): Date | null {
     const now = new Date();
@@ -184,6 +274,12 @@ export class LeaderboardRepository {
       case LeaderboardPeriod.WEEKLY: {
         const d = new Date(now);
         d.setDate(d.getDate() - 7);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+      case LeaderboardPeriod.MONTHLY: {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 30);
         d.setHours(0, 0, 0, 0);
         return d;
       }

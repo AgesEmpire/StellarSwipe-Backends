@@ -11,6 +11,11 @@ import { PriceDataDto } from './dto/price-data.dto';
 import { SdexPriceProvider } from './providers/sdex-price.provider';
 import { CoinGeckoPriceProvider } from './providers/coingecko-price.provider';
 import { StellarExpertPriceProvider } from './providers/stellar-expert-price.provider';
+import {
+  historicalPriceCacheKey,
+  hydrateHistoricalPriceCacheEntry,
+  readHistoricalPriceCache,
+} from '../market-data/history/utils/cache-writer';
 
 @Injectable()
 export class PriceOracleService implements OnModuleInit {
@@ -185,11 +190,37 @@ export class PriceOracleService implements OnModuleInit {
     assetPair: string,
     hours: number = 24,
   ): Promise<PriceHistory[]> {
-    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const cached = await readHistoricalPriceCache(this.cacheManager, assetPair, hours);
+    if (cached && cached.length > 0) {
+      this.logger.debug(`Historical price cache hit for ${assetPair} (${hours}h)`);
+      return cached;
+    }
 
-    return this.priceHistoryRepository.find({
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const history = await this.priceHistoryRepository.find({
       where: { assetPair },
       order: { timestamp: 'DESC' },
+    });
+
+    const filtered = history.filter(
+      (row) => new Date(row.timestamp).getTime() >= since.getTime(),
+    );
+    await this.cacheManager.set(
+      historicalPriceCacheKey(assetPair, hours),
+      {
+        assetPair,
+        hours,
+        refreshedAt: new Date().toISOString(),
+        history: filtered,
+      },
+      30 * 60 * 1000,
+    );
+
+    return hydrateHistoricalPriceCacheEntry({
+      assetPair,
+      hours,
+      refreshedAt: new Date().toISOString(),
+      history: filtered,
     });
   }
 }

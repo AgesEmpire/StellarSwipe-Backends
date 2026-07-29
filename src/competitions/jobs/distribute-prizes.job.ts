@@ -29,6 +29,7 @@ export class DistributePrizesJob implements OnModuleInit {
         COMPETITION_JOB_DISTRIBUTE_PRIZES,
         {},
         {
+          priority: 1000, // LOW — prize distribution is background work
           jobId: 'competitions-distribute-prizes',
           repeat: { every: 120_000 },
           removeOnComplete: true,

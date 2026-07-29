@@ -9,6 +9,7 @@ import { CurrencyController } from './currency.controller';
 import { FixerIoProvider } from './providers/fixer-io.provider';
 import { BaseForexProvider } from './providers/base-forex.provider';
 import { UpdateExchangeRatesJob } from './jobs/update-exchange-rates.job';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UpdateExchangeRatesJob } from './jobs/update-exchange-rates.job';
   providers: [
     CurrencyConverterService,
     UpdateExchangeRatesJob,
+    DistributedLockService,
     FixerIoProvider,
     { provide: BaseForexProvider, useExisting: FixerIoProvider },
   ],

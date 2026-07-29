@@ -1,0 +1,11 @@
+{
+    "WALLET_BALANCE": "Solde du Portefeuille",
+    "SIGNAL_QUOTA": "Quota de Signal",
+    "QUOTA_REMAINING": "Quota Restant",
+    "QUOTA_RESET": "Réinitialisation du Quota",
+    "DEPLOYMENT_STATUS": "Statut de Déploiement",
+    "SYNC_STATUS": "Statut de Synchronisation",
+    "PROVIDER": "Fournisseur",
+    "LOCALE": "Langue",
+    "SUPPORTED_LANGUAGES": "Langues Prises en Charge"
+}

@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Role } from './entities/role.entity';
 import { Permission } from './entities/permission.entity';
-import { UserRole } from './entities/user-role.entity';
+import { UserRole, AssignmentStatus } from './entities/user-role.entity';
 import { ApprovalWorkflow, ApprovalRequest, ApprovalAction, WorkflowType, ApprovalStatus } from './entities/approval-workflow.entity';
 import { PermissionChecker } from './utils/permission-checker';
 import { PolicyEvaluator } from './utils/policy-evaluator';
@@ -12,7 +12,7 @@ import { AssignPermissionDto, CheckPermissionDto } from './dto/assign-permission
 import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow-config.dto';
 import { CreateAccessRequestDto, ApproveRequestDto, RejectRequestDto } from './dto/access-request.dto';
 import { IPermissionContext } from './interfaces/permission.interface';
-import { PermissionAuditService, AuditAction } from '../auth/permission-audit.service';
+import { PermissionAuditService, AuditAction, diffObjects } from '../auth/permission-audit.service';
 
 @Injectable()
 export class RbacService {
@@ -67,6 +67,17 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    // Capture before state for diffing
+    const beforeSnapshot: Record<string, unknown> = {
+      name: role.name,
+      description: role.description,
+      type: role.type,
+      scope: role.scope,
+      isActive: role.isActive,
+      priority: role.priority,
+      permissionIds: role.permissions?.map((p) => p.id) ?? [],
+    };
+
     Object.assign(role, dto);
 
     if (dto.permissionIds) {
@@ -75,13 +86,29 @@ export class RbacService {
     }
 
     const saved = await this.roleRepository.save(role);
+
     if (updatedBy) {
-      await this.permissionAuditService.log({
-        actorId: updatedBy,
-        action: AuditAction.ROLE_UPDATED,
-        resourceName: saved.name,
-        metadata: { roleId: id, changes: dto },
-      });
+      const afterSnapshot: Record<string, unknown> = {
+        name: saved.name,
+        description: saved.description,
+        type: saved.type,
+        scope: saved.scope,
+        isActive: saved.isActive,
+        priority: saved.priority,
+        permissionIds: saved.permissions?.map((p) => p.id) ?? [],
+      };
+
+      const diff = diffObjects(beforeSnapshot, afterSnapshot);
+      if (diff) {
+        await this.permissionAuditService.log({
+          actorId: updatedBy,
+          action: AuditAction.ROLE_UPDATED,
+          resourceName: saved.name,
+          beforeState: diff.before,
+          afterState: diff.after,
+          metadata: { roleId: id },
+        });
+      }
     }
     return saved;
   }
@@ -161,17 +188,28 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    const previousPermissionIds = role.permissions?.map((p) => p.id) ?? [];
+
     const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
     role.permissions = permissions;
 
     const saved = await this.roleRepository.save(role);
+
     if (actorId) {
-      await this.permissionAuditService.log({
-        actorId,
-        action: AuditAction.PERMISSION_GRANTED,
-        resourceName: role.name,
-        metadata: { roleId: dto.roleId, permissionIds: dto.permissionIds },
-      });
+      const diff = diffObjects(
+        { permissionIds: previousPermissionIds },
+        { permissionIds: dto.permissionIds },
+      );
+      if (diff) {
+        await this.permissionAuditService.log({
+          actorId,
+          action: AuditAction.PERMISSION_GRANTED,
+          resourceName: role.name,
+          beforeState: diff.before,
+          afterState: diff.after,
+          metadata: { roleId: dto.roleId },
+        });
+      }
     }
     return saved;
   }
@@ -199,6 +237,9 @@ export class RbacService {
       throw new NotFoundException('Role not found');
     }
 
+    // Capture the user's active role set before the change for diffing (issue #820)
+    const beforeRoleIds = await this.getActiveRoleIds(userId);
+
     const userRole = this.userRoleRepository.create({
       userId,
       roleId,
@@ -209,13 +250,20 @@ export class RbacService {
     });
 
     const saved = await this.userRoleRepository.save(userRole);
-    await this.permissionAuditService.log({
-      actorId: assignedBy,
-      targetUserId: userId,
-      action: AuditAction.ROLE_ASSIGNED,
-      resourceName: role.name,
-      metadata: { roleId, teamId: options?.teamId, organizationId: options?.organizationId },
-    });
+
+    const afterRoleIds = await this.getActiveRoleIds(userId);
+    const diff = diffObjects({ roleIds: beforeRoleIds }, { roleIds: afterRoleIds });
+    if (diff) {
+      await this.permissionAuditService.log({
+        actorId: assignedBy,
+        targetUserId: userId,
+        action: AuditAction.ROLE_ASSIGNED,
+        resourceName: role.name,
+        beforeState: diff.before,
+        afterState: diff.after,
+        metadata: { roleId, teamId: options?.teamId, organizationId: options?.organizationId },
+      });
+    }
     return saved;
   }
 
@@ -228,17 +276,38 @@ export class RbacService {
       throw new NotFoundException('Role assignment not found');
     }
 
+    // Capture the user's active role set before the change for diffing (issue #820)
+    const beforeRoleIds = await this.getActiveRoleIds(userId);
+
     userRole.status = 'revoked' as any;
     await this.userRoleRepository.save(userRole);
 
+    const afterRoleIds = await this.getActiveRoleIds(userId);
     const role = await this.roleRepository.findOne({ where: { id: roleId } });
-    await this.permissionAuditService.log({
-      actorId: revokedBy ?? 'system',
-      targetUserId: userId,
-      action: AuditAction.ROLE_REVOKED,
-      resourceName: role?.name ?? roleId,
-      metadata: { roleId },
+
+    const diff = diffObjects({ roleIds: beforeRoleIds }, { roleIds: afterRoleIds });
+    if (diff) {
+      await this.permissionAuditService.log({
+        actorId: revokedBy ?? 'system',
+        targetUserId: userId,
+        action: AuditAction.ROLE_REVOKED,
+        resourceName: role?.name ?? roleId,
+        beforeState: diff.before,
+        afterState: diff.after,
+        metadata: { roleId },
+      });
+    }
+  }
+
+  /**
+   * Returns the sorted list of role IDs currently active for a user.
+   * Used to diff role-set changes for audit logging (issue #820).
+   */
+  private async getActiveRoleIds(userId: string): Promise<string[]> {
+    const activeAssignments = await this.userRoleRepository.find({
+      where: { userId, status: AssignmentStatus.ACTIVE },
     });
+    return activeAssignments.map((ur) => ur.roleId).sort();
   }
 
   async getUserRoles(userId: string): Promise<UserRole[]> {

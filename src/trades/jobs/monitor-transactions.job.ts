@@ -30,6 +30,7 @@ export class MonitorTransactionsJob implements OnModuleInit {
                 'check-statuses',
                 {},
                 {
+                    priority: 1, // CRITICAL — market order transaction monitoring
                     jobId: 'monitor-txs',
                     repeat: {
                         every: 5000, // 5 seconds

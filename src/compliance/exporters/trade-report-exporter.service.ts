@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Trade } from '../../trades/entities/trade.entity';
+import { Trade, TradeStatus } from '../../trades/entities/trade.entity';
 
 @Injectable()
 export class TradeReportExporterService {
@@ -12,12 +12,12 @@ export class TradeReportExporterService {
       where: { createdAt: Between(startDate, endDate) },
     });
 
-    const totalVolume = trades.reduce((sum, t) => sum + parseFloat(t.amount) * parseFloat(t.price), 0);
+    const totalVolume = trades.reduce((sum, t) => sum + parseFloat(t.amount) * parseFloat(t.entryPrice), 0);
     const uniqueUsers = new Set(trades.map((t) => t.userId)).size;
 
     const assetVolumes = trades.reduce((acc, t) => {
-      const pair = `${t.baseAsset}/${t.quoteAsset}`;
-      acc[pair] = (acc[pair] || 0) + parseFloat(t.amount) * parseFloat(t.price);
+      const pair = `${t.baseAsset}/${t.counterAsset}`;
+      acc[pair] = (acc[pair] || 0) + parseFloat(t.amount) * parseFloat(t.entryPrice);
       return acc;
     }, {} as Record<string, number>);
 
@@ -38,11 +38,11 @@ export class TradeReportExporterService {
 
   async generateFinancialSummary(startDate: Date, endDate: Date): Promise<any> {
     const trades = await this.tradeRepo.find({
-      where: { createdAt: Between(startDate, endDate), status: 'closed' },
+      where: { createdAt: Between(startDate, endDate), status: TradeStatus.COMPLETED },
     });
 
-    const totalPnL = trades.reduce((sum, t) => sum + parseFloat(t.pnl || '0'), 0);
-    const profitableTrades = trades.filter((t) => parseFloat(t.pnl || '0') > 0).length;
+    const totalPnL = trades.reduce((sum, t) => sum + parseFloat(t.profitLoss || '0'), 0);
+    const profitableTrades = trades.filter((t) => parseFloat(t.profitLoss || '0') > 0).length;
     const winRate = trades.length > 0 ? (profitableTrades / trades.length) * 100 : 0;
 
     return {

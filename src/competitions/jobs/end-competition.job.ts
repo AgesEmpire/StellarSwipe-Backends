@@ -26,6 +26,7 @@ export class EndCompetitionJob implements OnModuleInit {
         COMPETITION_JOB_SYNC_LIFECYCLE,
         {},
         {
+          priority: 1000, // LOW — background lifecycle sync
           jobId: 'competitions-sync-lifecycle',
           repeat: { every: 60_000 },
           removeOnComplete: true,

@@ -1,20 +1,30 @@
 import { Module } from '@nestjs/common';
 import { TerminusModule } from '@nestjs/terminus';
+import { BullModule } from '@nestjs/bull';
 import { HealthController } from './health.controller';
 import {
   StellarHealthIndicator,
   SorobanHealthIndicator,
   DatabaseHealthIndicator,
   RedisHealthIndicator,
+  QueueHealthIndicator,
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
-import { AuthModule } from '../auth/auth.module';
-import { ApiKeysModule } from '../api-keys/api-keys.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
+import { SyntheticMonitoringService } from './synthetic-monitoring.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from '../users/entities/user.entity';
+import { Signal } from '../signals/entities/signal.entity';
+import { Trade } from '../trades/entities/trade.entity';
 
 @Module({
-  imports: [TerminusModule, MonitoringModule],
+  imports: [
+    TerminusModule,
+    MonitoringModule,
+    BullModule.registerQueue({ name: 'priority-queue' }),
+    TypeOrmModule.forFeature([User, Signal, Trade]),
+  ],
   controllers: [HealthController],
   providers: [
     StellarConfigService,
@@ -22,14 +32,18 @@ import { MonitoringModule } from '../monitoring/monitoring.module';
     SorobanHealthIndicator,
     DatabaseHealthIndicator,
     RedisHealthIndicator,
+    QueueHealthIndicator,
     HealthSummaryService,
+    SyntheticMonitoringService,
   ],
   exports: [
     StellarHealthIndicator,
     SorobanHealthIndicator,
     DatabaseHealthIndicator,
     RedisHealthIndicator,
+    QueueHealthIndicator,
     HealthSummaryService,
+    SyntheticMonitoringService,
   ],
 })
 export class HealthModule {}

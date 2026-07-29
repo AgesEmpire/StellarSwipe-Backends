@@ -10,7 +10,10 @@ import { redisCacheConfig } from '../config/redis.config';
 import { jwtConfig } from '../config/jwt.config';
 import { stellarConfig } from '../config/stellar.config';
 import { xaiConfig } from '../config/xai.config';
-import { connectionPoolConfig } from '../database/config/connection-pool.config';
+import {
+  connectionPoolConfig,
+  connectionPoolReplicaConfig,
+} from '../database/config/connection-pool.config';
 import configuration from '../config/configuration';
 import { configSchema } from '../config/schemas/config.schema';
 import { CliModule } from './cli.module';
@@ -32,8 +35,9 @@ import { GenerateReportCommand } from './commands/analytics/generate-report.comm
       load: [
         appConfig, sentryConfig, stellarConfig, databaseConfig,
         redisConfig, redisCacheConfig, jwtConfig, xaiConfig,
-        connectionPoolConfig, configuration,
+        connectionPoolConfig, connectionPoolReplicaConfig, configuration,
       ],
+      // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
       validationSchema: configSchema,
       validationOptions: { allowUnknown: true, abortEarly: false },

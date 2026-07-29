@@ -12,7 +12,7 @@ export class ComplianceLog {
   id!: string;
 
   @Column({ type: 'varchar', length: 50 })
-  type!: 'access_blocked' | 'access_allowed' | 'sanctions_hit';
+  type!: 'access_blocked' | 'access_allowed' | 'sanctions_hit' | 'transaction_blocked' | 'transaction_allowed';
 
   @Column({ name: 'ip_address', type: 'varchar', length: 45 })
   ipAddress!: string;

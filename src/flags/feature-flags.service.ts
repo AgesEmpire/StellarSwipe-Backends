@@ -40,7 +40,7 @@ export class FeatureFlagsService {
         enabled: this.getEnvBoolean('FF_NEW_PORTFOLIO_UI', false),
         description: 'Gradual rollout of new portfolio UI',
         rolloutPercentage: parseInt(
-          process.env.FF_NEW_PORTFOLIO_UI_ROLLOUT || '0',
+          this.configService.get<string>('FF_NEW_PORTFOLIO_UI_ROLLOUT') || '0',
           10,
         ),
       },
@@ -49,7 +49,7 @@ export class FeatureFlagsService {
         enabled: this.getEnvBoolean('FF_ADVANCED_ANALYTICS', false),
         description: 'Advanced analytics features',
         rolloutPercentage: parseInt(
-          process.env.FF_ADVANCED_ANALYTICS_ROLLOUT || '0',
+          this.configService.get<string>('FF_ADVANCED_ANALYTICS_ROLLOUT') || '0',
           10,
         ),
       },
@@ -58,7 +58,7 @@ export class FeatureFlagsService {
         enabled: this.getEnvBoolean('FF_SOROBAN_CONTRACTS', false),
         description: 'Soroban smart contract integration',
         rolloutPercentage: parseInt(
-          process.env.FF_SOROBAN_CONTRACTS_ROLLOUT || '0',
+          this.configService.get<string>('FF_SOROBAN_CONTRACTS_ROLLOUT') || '0',
           10,
         ),
       },
@@ -67,7 +67,7 @@ export class FeatureFlagsService {
         enabled: this.getEnvBoolean('FF_AUTOMATED_TRADING', false),
         description: 'Automated trading features',
         rolloutPercentage: parseInt(
-          process.env.FF_AUTOMATED_TRADING_ROLLOUT || '0',
+          this.configService.get<string>('FF_AUTOMATED_TRADING_ROLLOUT') || '0',
           10,
         ),
       },
@@ -76,7 +76,7 @@ export class FeatureFlagsService {
         enabled: this.getEnvBoolean('FF_SIGNAL_MARKETPLACE', false),
         description: 'Signal marketplace features',
         rolloutPercentage: parseInt(
-          process.env.FF_SIGNAL_MARKETPLACE_ROLLOUT || '0',
+          this.configService.get<string>('FF_SIGNAL_MARKETPLACE_ROLLOUT') || '0',
           10,
         ),
       },
@@ -260,7 +260,7 @@ export class FeatureFlagsService {
    * Parse boolean from environment variable
    */
   private getEnvBoolean(key: string, defaultValue: boolean): boolean {
-    const value = process.env[key];
+    const value = this.configService.get<string>(key);
     if (value === undefined) return defaultValue;
     return value.toLowerCase() === 'true' || value === '1';
   }

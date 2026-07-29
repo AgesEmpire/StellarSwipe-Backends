@@ -8,6 +8,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AlertSeverity, AlertType } from '../entities/security-alert.entity';
+import { IncidentStatus } from '../entities/security-incident.entity';
 
 export class CreateSecurityAlertDto {
   @ApiProperty({ description: 'User ID associated with the alert' })
@@ -42,6 +43,21 @@ export class ResolveAlertDto {
   @IsOptional()
   @IsBoolean()
   falsePositive?: boolean;
+}
+
+export class UpdateIncidentStatusDto {
+  @ApiProperty({ enum: IncidentStatus, description: 'New incident status' })
+  @IsEnum(IncidentStatus)
+  status: IncidentStatus;
+
+  @ApiProperty({ description: 'ID of the actor performing the update' })
+  @IsUUID()
+  actorId: string;
+
+  @ApiPropertyOptional({ description: 'Optional note explaining the status change' })
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class SecurityAlertResponseDto {

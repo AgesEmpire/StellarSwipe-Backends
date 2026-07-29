@@ -2,15 +2,20 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { LeaderboardRepository } from './leaderboard.repository';
-import { Signal } from '../signals/signal.entity';
-import { Provider } from '../providers/provider.entity';
+import { Signal } from '../signals/entities/signal.entity';
+import { CopiedPosition } from '../signals/entities/copied-position.entity';
+import { User } from '../users/entities/user.entity';
 import { LeaderboardPeriod } from './dto/leaderboard-query.dto';
 
 const mockSignalRepo = () => ({
   createQueryBuilder: jest.fn(),
 });
 
-const mockProviderRepo = () => ({
+const mockCopiedPositionRepo = () => ({
+  createQueryBuilder: jest.fn(),
+});
+
+const mockUserRepo = () => ({
   createQueryBuilder: jest.fn(),
 });
 
@@ -21,7 +26,8 @@ const mockDataSource = () => ({
 describe('LeaderboardRepository', () => {
   let repo: LeaderboardRepository;
   let signalRepo: ReturnType<typeof mockSignalRepo>;
-  let providerRepo: ReturnType<typeof mockProviderRepo>;
+  let copiedPositionRepo: ReturnType<typeof mockCopiedPositionRepo>;
+  let userRepo: ReturnType<typeof mockUserRepo>;
   let dataSource: ReturnType<typeof mockDataSource>;
 
   beforeEach(async () => {
@@ -29,120 +35,134 @@ describe('LeaderboardRepository', () => {
       providers: [
         LeaderboardRepository,
         { provide: getRepositoryToken(Signal), useFactory: mockSignalRepo },
-        { provide: getRepositoryToken(Provider), useFactory: mockProviderRepo },
+        { provide: getRepositoryToken(CopiedPosition), useFactory: mockCopiedPositionRepo },
+        { provide: getRepositoryToken(User), useFactory: mockUserRepo },
         { provide: DataSource, useFactory: mockDataSource },
       ],
     }).compile();
 
     repo = module.get(LeaderboardRepository);
     signalRepo = module.get(getRepositoryToken(Signal));
-    providerRepo = module.get(getRepositoryToken(Provider));
+    copiedPositionRepo = module.get(getRepositoryToken(CopiedPosition));
+    userRepo = module.get(getRepositoryToken(User));
     dataSource = module.get(DataSource);
   });
 
-  // ── aggregateLeaderboard ──────────────────────────────────────────────────
-
-  describe('aggregateLeaderboard', () => {
-    const buildQb = (rows: any[]) => {
-      const qb: any = {
-        select: jest.fn().mockReturnThis(),
-        addSelect: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        groupBy: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        getRawMany: jest.fn().mockResolvedValue(rows),
-      };
-      return qb;
+  const buildQb = (rows: any[]) => {
+    const qb: any = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      having: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      setParameters: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue(rows),
     };
+    return qb;
+  };
 
+  describe('aggregateProviderLeaderboard', () => {
     it('returns empty array when no signals exist', async () => {
       signalRepo.createQueryBuilder.mockReturnValue(buildQb([]));
-      const result = await repo.aggregateLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
+      const result = await repo.aggregateProviderLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
       expect(result).toEqual([]);
     });
 
-    it('maps raw rows to LeaderboardEntry with correct rank', async () => {
+    it('maps raw rows to provider leaderboard entries with metadata', async () => {
       const rawRows = [
-        { provider: 'addr1', signalCount: '10', winRate: '70.00', totalPnL: '500.00' },
-        { provider: 'addr2', signalCount: '5', winRate: '60.00', totalPnL: '200.00' },
+        { providerId: 'provider-1', signalCount: '10', winRate: '70.00', totalPnl: '500.00' },
+        { providerId: 'provider-2', signalCount: '5', winRate: '60.00', totalPnl: '200.00' },
       ];
       signalRepo.createQueryBuilder.mockReturnValue(buildQb(rawRows));
 
-      const providerQb: any = {
+      const userQb: any = {
         select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         getMany: jest.fn().mockResolvedValue([
-          { address: 'addr1', name: 'Alice', avatar: 'a.png', bio: 'bio1' },
-          { address: 'addr2', name: 'Bob', avatar: 'b.png', bio: 'bio2' },
+          { id: 'provider-1', username: 'alice', displayName: 'Alice', bio: 'bio1' },
+          { id: 'provider-2', username: 'bob', displayName: 'Bob', bio: 'bio2' },
         ]),
       };
-      providerRepo.createQueryBuilder.mockReturnValue(providerQb);
+      userRepo.createQueryBuilder.mockReturnValue(userQb);
 
-      const result = await repo.aggregateLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
+      const result = await repo.aggregateProviderLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
 
       expect(result).toHaveLength(2);
       expect(result[0].rank).toBe(1);
-      expect(result[0].provider).toBe('addr1');
-      expect(result[0].name).toBe('Alice');
+      expect(result[0].providerId).toBe('provider-1');
+      expect(result[0].username).toBe('alice');
       expect(result[1].rank).toBe(2);
     });
 
-    it('applies date filter for DAILY period', async () => {
+    it('applies date filter for MONTHLY period', async () => {
       const qb = buildQb([]);
       signalRepo.createQueryBuilder.mockReturnValue(qb);
 
-      await repo.aggregateLeaderboard(LeaderboardPeriod.DAILY, 10);
+      await repo.aggregateProviderLeaderboard(LeaderboardPeriod.MONTHLY, 20);
 
-      expect(qb.andWhere).toHaveBeenCalledWith(
-        's.created_at >= :from',
-        expect.objectContaining({ from: expect.any(Date) }),
-      );
+      expect(qb.andWhere).toHaveBeenCalledWith('s.createdAt >= :from', expect.objectContaining({ from: expect.any(Date) }));
     });
 
-    it('applies date filter for WEEKLY period', async () => {
+    it('applies offset for page 2', async () => {
       const qb = buildQb([]);
       signalRepo.createQueryBuilder.mockReturnValue(qb);
 
-      await repo.aggregateLeaderboard(LeaderboardPeriod.WEEKLY, 10);
+      await repo.aggregateProviderLeaderboard(LeaderboardPeriod.ALL_TIME, 10, 2, 3);
 
-      expect(qb.andWhere).toHaveBeenCalledWith(
-        's.created_at >= :from',
-        expect.objectContaining({ from: expect.any(Date) }),
-      );
+      expect(qb.offset).toHaveBeenCalledWith(10);
     });
 
-    it('does NOT apply date filter for ALL_TIME period', async () => {
+    it('applies minimum activity threshold via HAVING clause', async () => {
       const qb = buildQb([]);
       signalRepo.createQueryBuilder.mockReturnValue(qb);
 
-      await repo.aggregateLeaderboard(LeaderboardPeriod.ALL_TIME, 10);
+      await repo.aggregateProviderLeaderboard(LeaderboardPeriod.ALL_TIME, 20, 1, 5);
 
-      expect(qb.andWhere).not.toHaveBeenCalled();
-    });
-
-    it('handles missing provider metadata gracefully', async () => {
-      const rawRows = [
-        { provider: 'unknown_addr', signalCount: '3', winRate: '50.00', totalPnL: '100.00' },
-      ];
-      signalRepo.createQueryBuilder.mockReturnValue(buildQb(rawRows));
-
-      const providerQb: any = {
-        select: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([]),
-      };
-      providerRepo.createQueryBuilder.mockReturnValue(providerQb);
-
-      const result = await repo.aggregateLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
-
-      expect(result[0].name).toBeNull();
-      expect(result[0].avatar).toBeNull();
+      expect(qb.having).toHaveBeenCalledWith('COUNT(s.id) >= :minActivity', { minActivity: 5 });
     });
   });
 
-  // ── ensureIndexes ─────────────────────────────────────────────────────────
+  describe('aggregateUserLeaderboard', () => {
+    it('returns empty array when no copied positions exist', async () => {
+      copiedPositionRepo.createQueryBuilder.mockReturnValue(buildQb([]));
+      const result = await repo.aggregateUserLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
+      expect(result).toEqual([]);
+    });
+
+    it('maps raw rows to user leaderboard entries with metadata', async () => {
+      const rawRows = [
+        {
+          userId: 'user-1',
+          adoptionCount: '20',
+          successRate: '75.00',
+          averageReturn: '3.50',
+          totalReturn: '70.00',
+        },
+      ];
+      copiedPositionRepo.createQueryBuilder.mockReturnValue(buildQb(rawRows));
+
+      const userQb: any = {
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          { id: 'user-1', username: 'carol', displayName: 'Carol' },
+        ]),
+      };
+      userRepo.createQueryBuilder.mockReturnValue(userQb);
+
+      const result = await repo.aggregateUserLeaderboard(LeaderboardPeriod.ALL_TIME, 100);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].rank).toBe(1);
+      expect(result[0].userId).toBe('user-1');
+      expect(result[0].username).toBe('carol');
+      expect(result[0].adoptionCount).toBe(20);
+    });
+  });
 
   describe('ensureIndexes', () => {
     it('executes three CREATE INDEX statements', async () => {

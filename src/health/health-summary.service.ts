@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   HealthCheckService,
   HealthCheckResult,
@@ -9,6 +10,7 @@ import {
   SorobanHealthIndicator,
   DatabaseHealthIndicator,
   RedisHealthIndicator,
+  QueueHealthIndicator,
 } from './indicators';
 import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 import { recordHealthCheck } from '../monitoring/metrics/custom-metrics';
@@ -21,6 +23,7 @@ export interface ServiceHealthSummary {
     cache: HealthStatus;
     stellar: HealthStatus;
     soroban: HealthStatus;
+    queue: HealthStatus;
   };
   uptime: number;
   version: string;
@@ -38,8 +41,6 @@ type HealthIndicatorResultWithResponseTime = Record<string, any> & {
 };
 
 /**
- * #388 — Health summary service for backend services and dependencies.
- *
  * Creates a unified health summary endpoint for backend services and dependencies.
  * Provides comprehensive health status with detailed information about each service.
  */
@@ -54,18 +55,18 @@ export class HealthSummaryService {
     private sorobanHealth: SorobanHealthIndicator,
     private databaseHealth: DatabaseHealthIndicator,
     private redisHealth: RedisHealthIndicator,
+    private queueHealth: QueueHealthIndicator,
     private prometheus: PrometheusService,
+    private configService: ConfigService,
   ) {}
 
-  /**
-   * Get comprehensive health summary of all services.
-   */
   async getHealthSummary(): Promise<ServiceHealthSummary> {
     const results = await Promise.allSettled([
       this.checkDatabase(),
       this.checkCache(),
       this.checkStellar(),
       this.checkSoroban(),
+      this.checkQueue(),
     ]);
 
     const services: ServiceHealthSummary['services'] = {
@@ -73,6 +74,7 @@ export class HealthSummaryService {
       cache: this.extractHealthStatus(results[1]),
       stellar: this.extractHealthStatus(results[2]),
       soroban: this.extractHealthStatus(results[3]),
+      queue: this.extractHealthStatus(results[4]),
     };
 
     const overall = this.determineOverallStatus(services);
@@ -82,7 +84,7 @@ export class HealthSummaryService {
       timestamp: new Date().toISOString(),
       services,
       uptime: Date.now() - this.startupTime,
-      version: process.env.npm_package_version || '1.0.0',
+      version: this.configService.get<string>('npm_package_version') || '1.0.0',
     };
   }
 
@@ -95,11 +97,8 @@ export class HealthSummaryService {
     } catch (error) {
       recordHealthCheck(this.prometheus, 'database', false);
       return {
-        database: {
-          status: 'down',
-          error: (error as Error).message,
-          responseTime: Date.now() - start,
-        },
+        database: { status: 'down', error: (error as Error).message },
+        responseTime: Date.now() - start,
       };
     }
   }
@@ -113,11 +112,8 @@ export class HealthSummaryService {
     } catch (error) {
       recordHealthCheck(this.prometheus, 'cache', false);
       return {
-        cache: {
-          status: 'down',
-          error: (error as Error).message,
-          responseTime: Date.now() - start,
-        },
+        cache: { status: 'down', error: (error as Error).message },
+        responseTime: Date.now() - start,
       };
     }
   }
@@ -131,11 +127,8 @@ export class HealthSummaryService {
     } catch (error) {
       recordHealthCheck(this.prometheus, 'stellar', false);
       return {
-        stellar: {
-          status: 'down',
-          error: (error as Error).message,
-          responseTime: Date.now() - start,
-        },
+        stellar: { status: 'down', error: (error as Error).message },
+        responseTime: Date.now() - start,
       };
     }
   }
@@ -149,46 +142,57 @@ export class HealthSummaryService {
     } catch (error) {
       recordHealthCheck(this.prometheus, 'soroban', false);
       return {
-        soroban: {
-          status: 'down',
-          error: (error as Error).message,
-          responseTime: Date.now() - start,
-        },
+        soroban: { status: 'down', error: (error as Error).message },
+        responseTime: Date.now() - start,
       };
     }
   }
 
-  private extractHealthStatus(result: PromiseSettledResult<HealthIndicatorResult>): HealthStatus {
+  private async checkQueue(): Promise<HealthIndicatorResultWithResponseTime> {
+    const start = Date.now();
+    try {
+      const result = await this.queueHealth.isHealthy('queue');
+      recordHealthCheck(this.prometheus, 'queue', true);
+      return { ...result, responseTime: Date.now() - start };
+    } catch (error) {
+      recordHealthCheck(this.prometheus, 'queue', false);
+      return {
+        queue: { status: 'down', error: (error as Error).message },
+        responseTime: Date.now() - start,
+      };
+    }
+  }
+
+  private extractHealthStatus(
+    result: PromiseSettledResult<HealthIndicatorResultWithResponseTime>,
+  ): HealthStatus {
     if (result.status === 'fulfilled') {
-      const serviceName = Object.keys(result.value)[0];
-      const serviceData = result.value[serviceName];
+      const { responseTime, ...rest } = result.value;
+      const serviceName = Object.keys(rest)[0];
+      const serviceData = rest[serviceName];
 
       return {
-        status: serviceData.status === 'up' ? 'up' : 'down',
-        responseTime: (result.value as any).responseTime,
+        status: serviceData?.status === 'up' ? 'up' : 'down',
+        responseTime,
         details: serviceData,
         lastChecked: new Date().toISOString(),
       };
-    } else {
-      return {
-        status: 'down',
-        details: { error: result.reason?.message || 'Unknown error' },
-        lastChecked: new Date().toISOString(),
-      };
     }
+
+    return {
+      status: 'down',
+      details: { error: result.reason?.message || 'Unknown error' },
+      lastChecked: new Date().toISOString(),
+    };
   }
 
-  private determineOverallStatus(services: ServiceHealthSummary['services']): 'up' | 'down' | 'degraded' {
-    const statuses = Object.values(services).map(s => s.status);
+  private determineOverallStatus(
+    services: ServiceHealthSummary['services'],
+  ): 'up' | 'down' | 'degraded' {
+    const statuses = Object.values(services).map((s) => s.status);
 
-    if (statuses.every(status => status === 'up')) {
-      return 'up';
-    }
-
-    if (statuses.some(status => status === 'down')) {
-      return 'down';
-    }
-
+    if (statuses.every((s) => s === 'up')) return 'up';
+    if (statuses.some((s) => s === 'down')) return 'down';
     return 'degraded';
   }
 }

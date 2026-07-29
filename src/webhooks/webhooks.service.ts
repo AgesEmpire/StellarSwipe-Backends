@@ -10,14 +10,20 @@ import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { Webhook, SUPPORTED_WEBHOOK_EVENTS } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
-import { RegisterWebhookDto, UpdateWebhookDto } from './dto/register-webhook.dto';
+import {
+  RegisterWebhookDto,
+  UpdateWebhookDto,
+} from './dto/register-webhook.dto';
 import { WebhookPayload } from './dto/webhook-event.dto';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
+import { SsrfValidationPipe } from './pipes/ssrf-validation.pipe';
 
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
+
+  private readonly ssrfPipe = new SsrfValidationPipe();
 
   constructor(
     @InjectRepository(Webhook)
@@ -30,6 +36,7 @@ export class WebhooksService {
 
   async register(userId: string, dto: RegisterWebhookDto): Promise<Webhook> {
     this.validateEvents(dto.events as string[]);
+    await this.ssrfPipe.transform(dto.url);
 
     const secret = this.signatureGenerator.generateSecret();
 
@@ -60,14 +67,21 @@ export class WebhooksService {
     return webhook;
   }
 
-  async update(userId: string, id: string, dto: UpdateWebhookDto): Promise<Webhook> {
+  async update(
+    userId: string,
+    id: string,
+    dto: UpdateWebhookDto,
+  ): Promise<Webhook> {
     const webhook = await this.findOne(userId, id);
 
     if (dto.events) {
       this.validateEvents(dto.events as string[]);
     }
 
-    if (dto.url !== undefined) webhook.url = dto.url;
+    if (dto.url !== undefined) {
+      await this.ssrfPipe.transform(dto.url);
+      webhook.url = dto.url;
+    }
     if (dto.events !== undefined) webhook.events = dto.events as string[];
     if (dto.active !== undefined) {
       webhook.active = dto.active;
@@ -107,10 +121,34 @@ export class WebhooksService {
       relations: ['webhook'],
     });
 
-    if (!delivery) throw new NotFoundException(`Delivery not found: ${deliveryId}`);
+    if (!delivery)
+      throw new NotFoundException(`Delivery not found: ${deliveryId}`);
     if (delivery.webhook.userId !== userId) throw new ForbiddenException();
 
     await this.webhookSender.retryDelivery(deliveryId);
+  }
+
+  async replayToSubscriber(
+    userId: string,
+    deliveryId: string,
+    subscriberWebhookId: string,
+  ): Promise<void> {
+    const delivery = await this.deliveryRepo.findOne({
+      where: { id: deliveryId },
+    });
+    if (!delivery)
+      throw new NotFoundException(`Delivery not found: ${deliveryId}`);
+
+    const webhook = await this.findOne(userId, subscriberWebhookId);
+
+    const replayPayload = {
+      ...(delivery.payload as any),
+      deliveryId: uuidv4(),
+      isReplay: true,
+      originalDeliveryId: deliveryId,
+    };
+
+    await this.webhookSender.deliverWebhook(webhook, replayPayload);
   }
 
   async dispatchEvent(
@@ -120,7 +158,9 @@ export class WebhooksService {
     const webhooks = await this.webhookRepo
       .createQueryBuilder('w')
       .where('w.active = true')
-      .andWhere(':event = ANY(string_to_array(w.events, \',\'))', { event: eventName })
+      .andWhere(":event = ANY(string_to_array(w.events, ','))", {
+        event: eventName,
+      })
       .getMany();
 
     if (webhooks.length === 0) return;
@@ -138,9 +178,48 @@ export class WebhooksService {
 
     await Promise.allSettled(
       webhooks.map((webhook) =>
-        this.webhookSender.deliverWebhook(webhook, { ...payload, deliveryId: uuidv4() }),
+        this.webhookSender.deliverWebhook(webhook, {
+          ...payload,
+          deliveryId: uuidv4(),
+        }),
       ),
     );
+  }
+
+  async initiateSecretRotation(
+    userId: string,
+    webhookId: string,
+    rotationWindowMs: number = 3600000,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, webhookId);
+
+    webhook.nextSecret = this.signatureGenerator.generateSecret();
+    webhook.rotationStartedAt = new Date();
+    webhook.rotationFinalizesAt = new Date(Date.now() + rotationWindowMs);
+
+    this.logger.log(
+      `Initiated secret rotation for webhook ${webhookId}, window: ${rotationWindowMs}ms`,
+    );
+    return this.webhookRepo.save(webhook);
+  }
+
+  async finalizeSecretRotation(
+    userId: string,
+    webhookId: string,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, webhookId);
+
+    if (!webhook.nextSecret) {
+      throw new BadRequestException('No rotation in progress for this webhook');
+    }
+
+    webhook.secret = webhook.nextSecret;
+    webhook.nextSecret = undefined;
+    webhook.rotationStartedAt = undefined;
+    webhook.rotationFinalizesAt = undefined;
+
+    this.logger.log(`Finalized secret rotation for webhook ${webhookId}`);
+    return this.webhookRepo.save(webhook);
   }
 
   private validateEvents(events: string[]): void {

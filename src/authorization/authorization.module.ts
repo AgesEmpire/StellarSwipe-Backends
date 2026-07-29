@@ -11,6 +11,7 @@ import { ApprovalAction } from './entities/approval-workflow.entity';
 import { PermissionChecker } from './utils/permission-checker';
 import { PolicyEvaluator } from './utils/policy-evaluator';
 import { PermissionsGuard } from './guards/permissions.guard';
+import { RolesGuard } from './guards/roles.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
 import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
 
@@ -32,6 +33,7 @@ import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-a
     PermissionChecker,
     PolicyEvaluator,
     PermissionsGuard,
+    RolesGuard,
     WorkflowApprovalGuard,
     PermissionAuditService,
   ],
@@ -40,6 +42,7 @@ import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-a
     PermissionChecker,
     PolicyEvaluator,
     PermissionsGuard,
+    RolesGuard,
     WorkflowApprovalGuard,
     PermissionAuditService,
     TypeOrmModule,

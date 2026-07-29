@@ -1,4 +1,5 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { Counter, Gauge, Registry } from 'prom-client';
 
 export enum CircuitState {
   CLOSED = 'CLOSED',   // Normal operation
@@ -23,6 +24,13 @@ interface CircuitStats {
   openedAt?: Date;
 }
 
+/** Numeric encoding for Prometheus gauge: CLOSED=0, HALF_OPEN=1, OPEN=2 */
+const STATE_VALUE: Record<CircuitState, number> = {
+  [CircuitState.CLOSED]: 0,
+  [CircuitState.HALF_OPEN]: 1,
+  [CircuitState.OPEN]: 2,
+};
+
 /**
  * CircuitBreakerService
  *
@@ -33,6 +41,11 @@ interface CircuitStats {
  *  CLOSED     → normal; failures are counted
  *  OPEN       → requests rejected immediately with ServiceUnavailableException
  *  HALF_OPEN  → one probe request allowed; success closes, failure re-opens
+ *
+ * Prometheus metrics exposed (when a Registry is injected):
+ *  circuit_breaker_state          gauge   – current state (0=CLOSED, 1=HALF_OPEN, 2=OPEN)
+ *  circuit_breaker_transitions_total counter – state transitions labelled by direction
+ *  circuit_breaker_calls_total    counter – total executions (labelled outcome: success|failure|rejected)
  *
  * Usage:
  *   const result = await this.circuitBreaker.execute('stellar-horizon', () =>
@@ -50,6 +63,36 @@ export class CircuitBreakerService {
     successThreshold: 2,
   };
 
+  // Prometheus metrics – optional so the service remains usable without a registry
+  private stateGauge?: Gauge;
+  private transitionsCounter?: Counter;
+  private callsCounter?: Counter;
+
+  constructor(@Optional() private readonly prometheusRegistry?: Registry) {
+    if (prometheusRegistry) {
+      this.stateGauge = new Gauge({
+        name: 'circuit_breaker_state',
+        help: 'Current circuit breaker state: 0=CLOSED, 1=HALF_OPEN, 2=OPEN',
+        labelNames: ['circuit'],
+        registers: [prometheusRegistry],
+      });
+
+      this.transitionsCounter = new Counter({
+        name: 'circuit_breaker_transitions_total',
+        help: 'Total circuit breaker state transitions',
+        labelNames: ['circuit', 'from', 'to'],
+        registers: [prometheusRegistry],
+      });
+
+      this.callsCounter = new Counter({
+        name: 'circuit_breaker_calls_total',
+        help: 'Total calls routed through circuit breakers',
+        labelNames: ['circuit', 'outcome'],
+        registers: [prometheusRegistry],
+      });
+    }
+  }
+
   /**
    * Execute `fn` through the named circuit breaker.
    * Throws ServiceUnavailableException when the circuit is OPEN.
@@ -65,10 +108,11 @@ export class CircuitBreakerService {
 
     if (circuit.state === CircuitState.OPEN) {
       if (this.shouldAttemptRecovery(circuit, opts)) {
-        circuit.state = CircuitState.HALF_OPEN;
+        this.transition(name, circuit, CircuitState.HALF_OPEN);
         this.logger.log(`[CircuitBreaker] "${name}" → HALF_OPEN (probing)`);
       } else {
         this.logger.warn(`[CircuitBreaker] "${name}" is OPEN — rejecting request`);
+        this.callsCounter?.inc({ circuit: name, outcome: 'rejected' });
         if (fallback) return fallback();
         throw new ServiceUnavailableException(
           `Service "${name}" is temporarily unavailable. Please try again later.`,
@@ -78,9 +122,11 @@ export class CircuitBreakerService {
 
     try {
       const result = await fn();
+      this.callsCounter?.inc({ circuit: name, outcome: 'success' });
       this.onSuccess(name, circuit, opts);
       return result;
     } catch (error) {
+      this.callsCounter?.inc({ circuit: name, outcome: 'failure' });
       this.onFailure(name, circuit, opts);
       if (fallback) return fallback();
       throw error;
@@ -103,7 +149,13 @@ export class CircuitBreakerService {
 
   /** Manually reset a circuit to CLOSED (admin use). */
   reset(name: string): void {
-    this.circuits.delete(name);
+    const circuit = this.circuits.get(name);
+    if (circuit) {
+      const prev = circuit.state;
+      this.circuits.delete(name);
+      this.transitionsCounter?.inc({ circuit: name, from: prev, to: CircuitState.CLOSED });
+      this.stateGauge?.set({ circuit: name }, STATE_VALUE[CircuitState.CLOSED]);
+    }
     this.logger.log(`[CircuitBreaker] "${name}" manually reset to CLOSED`);
   }
 
@@ -113,9 +165,19 @@ export class CircuitBreakerService {
 
   private getOrCreate(name: string): CircuitStats {
     if (!this.circuits.has(name)) {
-      this.circuits.set(name, { state: CircuitState.CLOSED, failures: 0, successes: 0 });
+      const stats: CircuitStats = { state: CircuitState.CLOSED, failures: 0, successes: 0 };
+      this.circuits.set(name, stats);
+      this.stateGauge?.set({ circuit: name }, STATE_VALUE[CircuitState.CLOSED]);
     }
     return this.circuits.get(name)!;
+  }
+
+  /** Record a state transition in both the internal map and Prometheus. */
+  private transition(name: string, circuit: CircuitStats, next: CircuitState): void {
+    const prev = circuit.state;
+    circuit.state = next;
+    this.transitionsCounter?.inc({ circuit: name, from: prev, to: next });
+    this.stateGauge?.set({ circuit: name }, STATE_VALUE[next]);
   }
 
   private onSuccess(name: string, circuit: CircuitStats, opts: Required<CircuitBreakerOptions>): void {
@@ -124,8 +186,8 @@ export class CircuitBreakerService {
     if (circuit.state === CircuitState.HALF_OPEN) {
       circuit.successes += 1;
       if (circuit.successes >= opts.successThreshold) {
-        circuit.state = CircuitState.CLOSED;
         circuit.successes = 0;
+        this.transition(name, circuit, CircuitState.CLOSED);
         this.logger.log(`[CircuitBreaker] "${name}" → CLOSED (recovered)`);
       }
     }
@@ -136,16 +198,16 @@ export class CircuitBreakerService {
     circuit.lastFailureAt = new Date();
 
     if (circuit.state === CircuitState.HALF_OPEN) {
-      circuit.state = CircuitState.OPEN;
       circuit.openedAt = new Date();
       circuit.successes = 0;
+      this.transition(name, circuit, CircuitState.OPEN);
       this.logger.warn(`[CircuitBreaker] "${name}" → OPEN (probe failed)`);
       return;
     }
 
     if (circuit.failures >= opts.failureThreshold) {
-      circuit.state = CircuitState.OPEN;
       circuit.openedAt = new Date();
+      this.transition(name, circuit, CircuitState.OPEN);
       this.logger.warn(
         `[CircuitBreaker] "${name}" → OPEN after ${circuit.failures} consecutive failures`,
       );

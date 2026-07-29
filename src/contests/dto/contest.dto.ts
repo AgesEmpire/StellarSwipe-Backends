@@ -22,6 +22,33 @@ export class CreateContestDto {
   prizePool!: string;
 }
 
+export class UpdateContestDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startTime?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endTime?: string;
+
+  @IsOptional()
+  @IsEnum(ContestMetric)
+  metric?: ContestMetric;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  minSignals?: number;
+
+  @IsOptional()
+  @IsString()
+  prizePool?: string;
+}
+
 export class ContestQueryDto {
   @IsOptional()
   @IsEnum(['ACTIVE', 'FINALIZED', 'CANCELLED'])

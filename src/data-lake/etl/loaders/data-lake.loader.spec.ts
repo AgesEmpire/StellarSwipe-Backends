@@ -43,15 +43,14 @@ describe('DataLakeLoader', () => {
       expect(l.basePath).toBe('/custom/path');
     });
 
-    it('should use DATA_LAKE_PATH env var when no arg provided', () => {
-      process.env.DATA_LAKE_PATH = '/env/path';
-      const l = new DataLakeLoader();
+    it('should use DATA_LAKE_PATH config value when no arg provided', () => {
+      const mockConfigService = { get: jest.fn().mockReturnValue('/env/path') } as any;
+      const l = new DataLakeLoader(undefined, mockConfigService);
       expect(l.basePath).toBe('/env/path');
-      delete process.env.DATA_LAKE_PATH;
+      expect(mockConfigService.get).toHaveBeenCalledWith('DATA_LAKE_PATH');
     });
 
-    it('should fall back to /tmp/data-lake when no arg or env', () => {
-      delete process.env.DATA_LAKE_PATH;
+    it('should fall back to /tmp/data-lake when no arg or config value', () => {
       const l = new DataLakeLoader();
       expect(l.basePath).toBe('/tmp/data-lake');
     });

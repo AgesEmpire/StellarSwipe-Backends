@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { Affiliate, AffiliateStatus } from './entities/affiliate.entity';
 import { AffiliateConversion, ConversionStatus, ConversionType } from './entities/affiliate-conversion.entity';
@@ -20,6 +21,7 @@ export class AffiliateService {
     private affiliateRepository: Repository<Affiliate>,
     @InjectRepository(AffiliateConversion)
     private conversionRepository: Repository<AffiliateConversion>,
+    private configService: ConfigService,
   ) {}
 
   async createAffiliate(dto: CreateAffiliateDto): Promise<Affiliate> {
@@ -231,7 +233,7 @@ export class AffiliateService {
     const affiliate = await this.getAffiliateByUserId(userId);
     const stats = await this.getAffiliateStats(affiliate.id);
 
-    const referralLink = `${process.env.APP_URL}/signup?ref=${affiliate.affiliateCode}`;
+    const referralLink = `${this.configService.get<string>('APP_URL')}/signup?ref=${affiliate.affiliateCode}`;
 
     return {
       affiliate: {
