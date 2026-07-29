@@ -12,6 +12,7 @@ import { UpiProvider } from './providers/upi.provider';
 import { RegionalRouter } from './utils/regional-router';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
+import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
 
 @Module({
   imports: [ConfigModule, TypeOrmModule.forFeature([LocalPayment, PaymentConfig])],
@@ -24,6 +25,7 @@ import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
     RegionalRouter,
     MpesaWebhookHandler,
     PaystackWebhookHandler,
+    WebhookVerifierService,
   ],
   controllers: [LocalPaymentController],
   exports: [LocalPaymentService],
