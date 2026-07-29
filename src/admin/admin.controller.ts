@@ -12,8 +12,6 @@ import { AuditAction } from '../audit-log/entities/audit-log.entity';
 // import { RolesGuard } from '../common/guards/roles.guard';
 // import { Roles } from '../common/decorators/roles.decorator';
 // import { UserRole } from '../users/enums/user-role.enum';
-// Using placeholders for auth guards based on usual NestJS conventions mapped in the project
-import { AdminRoleGuard } from './guards/admin-role.guard';
 import { TracingService } from '../tracing/tracing.service';
 import { PriorityQueueService } from '../queue/priority-queue.service';
 
