@@ -43,6 +43,7 @@ import { KycModule } from './kyc/kyc.module';
 import { ProductAnalyticsModule } from './analytics/product-analytics.module';
 import { BackupModule } from './backup/backup.module';
 import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
+import { AdminModule } from './admin/admin.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { DrModule } from './disaster-recovery/dr.module';
@@ -52,23 +53,19 @@ import { CompetitionsModule } from './competitions/competitions.module';
 import { NftModule } from './nft/nft.module';
 import { HealthModule } from './health/health.module';
 import { RateLimitModule } from './common/rate-limit.module';
- feature/295-discord-community-integration
 import { DiscordBotModule } from './integrations/discord/discord-bot.module';
-
- feature/294-telegram-bot-integration
 import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
-
- feature/293-mobile-api-optimizations
 import { MobileModule } from './mobile/mobile.module';
-
 import { AutomationModule } from './integrations/automation-platforms/automation.module';
 import { CurrencyModule } from './currency/currency.module';
 import { ImportModule } from './import/import.module';
 import { ExportsModule } from './exports/exports.module';
 import { HttpRetryModule } from './http/http.module';
- main
- main
- main
+import { ComplianceModule } from './compliance/compliance.module';
+import { PriceOracleModule } from './prices/price-oracle.module';
+import { PaymentsModule } from './payments/payments.module';
+import { LocalPaymentModule } from './payments/local-methods/local-payment.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 
 @Module({
   imports: [
@@ -172,6 +169,7 @@ import { HttpRetryModule } from './http/http.module';
     ProductAnalyticsModule,
     BackupModule,
     AdminAnalyticsModule,
+    AdminModule,
     MonitoringModule,
     WebhooksModule,
     DrModule,
@@ -181,23 +179,19 @@ import { HttpRetryModule } from './http/http.module';
     NftModule,
     HealthModule,
     RateLimitModule,
- feature/295-discord-community-integration
     DiscordBotModule,
-
- feature/294-telegram-bot-integration
     TelegramBotModule,
-
- feature/293-mobile-api-optimizations
     MobileModule,
-
     AutomationModule,
     CurrencyModule,
     ImportModule,
     ExportsModule,
     HttpRetryModule,
- main
- main
- main
+    ComplianceModule,
+    PriceOracleModule,
+    PaymentsModule,
+    LocalPaymentModule,
+    FeatureFlagsModule,
   ],
   providers: [StellarConfigService],
   exports: [StellarConfigService],

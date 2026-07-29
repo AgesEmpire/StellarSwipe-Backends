@@ -6,6 +6,7 @@ import { User } from '../users/entities/user.entity';
 import { Signal } from '../signals/entities/signal.entity';
 import { AuditLog } from '../audit-log/audit-log.entity';
 import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
+import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
 // The auth modules normally needed to protect these routes
 // import { AuthModule } from '../auth/auth.module';
 
@@ -17,6 +18,7 @@ import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
             AuditLog,
         ]),
         AdminAnalyticsModule,
+        FeatureFlagsModule,
         // AuthModule
     ],
     controllers: [AdminController],

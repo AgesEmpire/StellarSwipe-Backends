@@ -30,6 +30,8 @@ import {
 } from '../dto/oco-order.dto';
 import { StellarConfigService } from '../../config/stellar.service';
 import { buildAsset } from './asset-utils';
+import { updateWithVersionCheck } from '../../common/utils/optimistic-update.util';
+import { OptimisticLockException } from '../../common/exceptions/optimistic-lock.exception';
 
 @Injectable()
 export class OcoOrderService {
@@ -234,10 +236,21 @@ export class OcoOrderService {
     }
     data.triggeredLeg = triggeredLeg;
 
-    order.ocoData = data;
-    order.status = AdvancedOrderStatus.FILLED;
-    order.executedAt = new Date();
-    await this.repo.save(order);
+    try {
+      await updateWithVersionCheck(this.repo, 'AdvancedOrder', order.id, order.version, {
+        ocoData: data,
+        status: AdvancedOrderStatus.FILLED,
+        executedAt: new Date(),
+      } as any);
+    } catch (error) {
+      if (error instanceof OptimisticLockException) {
+        this.logger.warn(
+          `OCO order ${orderId} was modified concurrently (e.g. cancelled) — skipping fill update`,
+        );
+        return;
+      }
+      throw error;
+    }
 
     this.logger.log(`OCO order ${orderId} completed via ${triggeredLeg}`);
   }
@@ -292,7 +305,11 @@ export class OcoOrderService {
     if (cancelErrors.length > 0) {
       order.errorMessage = cancelErrors.join('; ');
     }
-    await this.repo.save(order);
+    await updateWithVersionCheck(this.repo, 'AdvancedOrder', order.id, order.version, {
+      status: order.status,
+      cancelledAt: order.cancelledAt,
+      errorMessage: order.errorMessage,
+    } as any);
 
     return this.toResponseDto(order);
   }

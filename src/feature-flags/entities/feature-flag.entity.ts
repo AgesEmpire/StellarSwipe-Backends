@@ -6,6 +6,8 @@ export interface FlagConfig {
   percentage?: number;
   userList?: string[];
   variants?: { name: string; percentage: number }[];
+  /** When set, only these tenant IDs are eligible for this flag. */
+  tenantAllowList?: string[];
 }
 
 @Entity('feature_flags')
@@ -27,6 +29,10 @@ export class FeatureFlag {
 
   @Column({ type: 'jsonb', default: {} })
   config!: FlagConfig;
+
+  /** When set, the flag only evaluates as enabled in these environments (e.g. ['staging']). Null/empty = all environments. */
+  @Column({ type: 'simple-array', nullable: true })
+  environments?: string[] | null;
 
   @CreateDateColumn()
   createdAt!: Date;

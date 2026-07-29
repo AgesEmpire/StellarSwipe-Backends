@@ -12,9 +12,14 @@ import { UpiProvider } from './providers/upi.provider';
 import { RegionalRouter } from './utils/regional-router';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
+import { WebhookIdempotencyModule } from '../../common/webhook-idempotency.module';
 
 @Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([LocalPayment, PaymentConfig])],
+  imports: [
+    ConfigModule,
+    TypeOrmModule.forFeature([LocalPayment, PaymentConfig]),
+    WebhookIdempotencyModule,
+  ],
   providers: [
     LocalPaymentService,
     MpesaProvider,

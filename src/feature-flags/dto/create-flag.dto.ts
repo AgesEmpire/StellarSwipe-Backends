@@ -30,6 +30,11 @@ class FlagConfigDto {
   @Type(() => VariantDto)
   @ArrayMinSize(1)
   variants?: VariantDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tenantAllowList?: string[];
 }
 
 export class CreateFlagDto {
@@ -50,6 +55,11 @@ export class CreateFlagDto {
   @ValidateNested()
   @Type(() => FlagConfigDto)
   config?: FlagConfigDto;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  environments?: string[];
 }
 
 export class UpdateFlagDto {
@@ -65,4 +75,9 @@ export class UpdateFlagDto {
   @ValidateNested()
   @Type(() => FlagConfigDto)
   config?: FlagConfigDto;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  environments?: string[];
 }

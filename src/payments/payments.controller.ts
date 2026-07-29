@@ -14,6 +14,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaymentGatewayFactory } from './gateways/payment-gateway.factory';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { Request } from 'express';
+import { FeatureFlagGuard } from '../feature-flags/guards/feature-flag.guard';
+import { RequireFlag } from '../feature-flags/decorators/require-flag.decorator';
 
 @Controller('payments')
 export class PaymentsController {
@@ -62,7 +64,8 @@ export class PaymentsController {
   }
 
   @Post(':id/refund')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, FeatureFlagGuard)
+  @RequireFlag('payments.refunds')
   async refundPayment(
     @Param('id') paymentId: string,
     @Body('amount') amount?: number,

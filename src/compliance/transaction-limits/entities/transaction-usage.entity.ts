@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  VersionColumn,
   Index,
 } from 'typeorm';
 import { LimitType, LimitScope } from './transaction-limit.entity';
@@ -38,4 +39,8 @@ export class TransactionUsage {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  /** Optimistic concurrency guard — prevents lost updates when concurrent transactions race to increment usage. */
+  @VersionColumn()
+  version: number;
 }

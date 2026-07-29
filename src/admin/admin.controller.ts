@@ -7,6 +7,8 @@ import { AdminAnalyticsService } from './analytics/admin-analytics.service';
 import { AnalyticsQueryDto } from './analytics/dto/analytics-query.dto';
 import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
+import { FeatureFlagGuard } from '../feature-flags/guards/feature-flag.guard';
+import { RequireFlag } from '../feature-flags/decorators/require-flag.decorator';
 
 // import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 // import { RolesGuard } from '../common/guards/roles.guard';
@@ -41,6 +43,8 @@ export class AdminController {
     }
 
     @Put('users/:id/suspend')
+    @UseGuards(FeatureFlagGuard)
+    @RequireFlag('admin.user-suspension')
     @Audit({ action: AuditAction.USER_SUSPENDED, resource: 'User', getResourceId: (req) => req.params.id })
     @ApiOperation({ summary: 'Suspend a user account' })
     @ApiParam({ name: 'id', description: 'User ID' })
