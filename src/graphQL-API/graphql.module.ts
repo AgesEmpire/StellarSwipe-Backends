@@ -42,6 +42,7 @@ import { PortfolioResolver } from './resolvers/portfolio.resolver';
 import { ProviderResolver } from './resolvers/provider.resolver';
 import { UserResolver } from './resolvers/user.resolver';
 import { SignalSubscriptionResolver } from './signal-subscription.resolver';
+import { ApiVersionResolver } from './resolvers/api-version.resolver';
 
 // ─── Domain modules ───────────────────────────────────────────────────────────
 import { SignalsModule } from '../signals/signals.module';
@@ -51,6 +52,7 @@ import { ProvidersModule } from '../providers/providers.module';
 import { UsersModule } from '../users/users.module';
 import { AssetsModule } from '../assets/assets.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { VersioningModule } from '../versioning/versioning.module';
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 import { createDataLoader, createGroupedDataLoader } from './utils/dataloader-factory';
@@ -72,6 +74,7 @@ import { AssetsService } from '../assets/assets.service';
     AssetsModule,
     UsersModule,
     AuthorizationModule,
+    VersioningModule,
 
     // AuthModule → SessionManagerService (session-revocation check reused by
     // the subscription handshake authenticator below).
@@ -232,6 +235,7 @@ import { AssetsService } from '../assets/assets.service';
     ProviderResolver,
     UserResolver,
     SignalSubscriptionResolver,
+    ApiVersionResolver,
   ],
 
   exports: [GqlAuthGuard],

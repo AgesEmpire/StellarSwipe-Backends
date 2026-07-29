@@ -16,6 +16,7 @@ import {
   DatabaseHealthIndicator,
   RedisHealthIndicator,
   QueueHealthIndicator,
+  KafkaHealthIndicator,
 } from './indicators';
 import {
   HealthSummaryService,
@@ -37,6 +38,7 @@ export class HealthController implements OnApplicationBootstrap {
     private databaseHealth: DatabaseHealthIndicator,
     private redisHealth: RedisHealthIndicator,
     private queueHealth: QueueHealthIndicator,
+    private kafkaHealth: KafkaHealthIndicator,
     private healthSummary: HealthSummaryService,
   ) {}
 
@@ -79,7 +81,18 @@ export class HealthController implements OnApplicationBootstrap {
       () => this.stellarHealth.isHealthy('stellar'),
       () => this.sorobanHealth.isHealthy('soroban'),
       () => this.queueHealth.isHealthy('queue'),
+      () => this.kafkaHealth.isHealthy('broker'),
     ]);
+  }
+
+  /**
+   * Message broker (Kafka) health — kept out of readiness/ready since no
+   * request path currently depends on it synchronously.
+   */
+  @Get('broker')
+  @HealthCheck()
+  async checkBroker(): Promise<HealthCheckResult> {
+    return this.health.check([() => this.kafkaHealth.isHealthy('broker')]);
   }
 
   @Get('stellar')
