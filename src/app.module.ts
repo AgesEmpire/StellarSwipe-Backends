@@ -18,6 +18,8 @@ import { redisCacheConfig } from './config/redis.config';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
 import { queueRetryConfig } from './queue/queue-retry.config';
+import { retryPolicyConfig } from './common/retry/retry-policy.config';
+import { RetryModule } from './common/retry/retry.module';
 import { validateEnvironment } from './config/schemas/config.schema';
 import { ConfigValidationService } from './config/config-validation.service';
 import { StellarConfigService } from './config/stellar.service';
@@ -128,6 +130,7 @@ import { SearchModule } from './search/search.module';
         configuration,
         nplus1DetectionConfig,
         queueRetryConfig,
+        retryPolicyConfig,
       ],
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
@@ -229,6 +232,7 @@ import { SearchModule } from './search/search.module';
     CorrelationModule,
     LoggerModule,
     SentryModule,
+    RetryModule,
     ErrorClassificationModule,
     MaxCallDepthModule,
     IdempotentModule,
