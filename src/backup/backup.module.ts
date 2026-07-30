@@ -5,9 +5,10 @@ import { VerificationService } from './verification.service';
 import { DatabaseBackupJob } from './jobs/database-backup.job';
 import { BackupCleanupJob } from './jobs/backup-cleanup.job';
 import { JobsModule } from '../jobs/jobs.module';
+import { AdvisoryLockModule } from '../common/database/advisory-lock.module';
 
 @Module({
-  imports: [ConfigModule, JobsModule],
+  imports: [ConfigModule, JobsModule, AdvisoryLockModule],
   providers: [BackupService, VerificationService, DatabaseBackupJob, BackupCleanupJob],
   exports: [BackupService, VerificationService],
 })
