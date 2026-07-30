@@ -1,11 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { configSchema } from './schemas/config.schema';
+import { validateEnvironment } from './schemas/config.schema';
 
 /**
- * Validates all required environment variables at startup via the shared
- * Joi configSchema.  A missing or invalid variable aborts the process with
- * a human-readable message so misconfiguration is caught before any service
- * dependency is reached.
+ * Validates all required environment variables at startup with the shared typed
+ * schema. Missing or invalid values abort boot before downstream services are
+ * constructed with unsafe defaults.
  */
 @Injectable()
 export class ConfigValidationService implements OnModuleInit {
@@ -16,24 +15,15 @@ export class ConfigValidationService implements OnModuleInit {
   }
 
   validate(): void {
-    const { error } = configSchema.validate(process.env, {
-      allowUnknown: true,
-      abortEarly: false,
-    });
-
-    if (!error) {
+    try {
+      validateEnvironment(process.env);
       this.logger.log('Environment configuration validated successfully.');
-      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Application startup aborted - environment misconfiguration:\n${message}`,
+      );
+      throw error;
     }
-
-    const messages = error.details.map((d) => `  • ${d.message}`).join('\n');
-    this.logger.error(
-      `Application startup aborted – environment misconfiguration:\n${messages}`,
-    );
-    // Throw so NestJS bootstrap() rejects and the process exits with a
-    // non-zero code, making deployment failures immediately visible.
-    throw new Error(
-      `Missing or invalid environment variables:\n${messages}`,
-    );
   }
 }
