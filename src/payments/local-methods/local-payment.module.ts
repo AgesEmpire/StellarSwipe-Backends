@@ -15,7 +15,11 @@ import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
 import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
 
 @Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([LocalPayment, PaymentConfig])],
+  imports: [
+    ConfigModule,
+    TypeOrmModule.forFeature([LocalPayment, PaymentConfig]),
+    WebhookIdempotencyModule,
+  ],
   providers: [
     LocalPaymentService,
     MpesaProvider,
