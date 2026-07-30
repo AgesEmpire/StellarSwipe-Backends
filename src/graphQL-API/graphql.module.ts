@@ -117,9 +117,17 @@ import { AssetsService } from '../assets/assets.service';
         autoSchemaFile: join(process.cwd(), 'src/graphql/schema.gql'),
         sortSchema: true,
 
-        /** Attach DataLoaders to every request context to solve N+1 at resolver level. */
-        context: ({ req }: { req: Request }) => ({
+        /**
+         * Attach DataLoaders to every request context to solve N+1 at resolver level.
+         *
+         * `res` is threaded through alongside `req` so guards that need to write
+         * response headers from a GraphQL execution context (e.g. RateLimitGuard's
+         * X-RateLimit-*/Retry-After headers) have somewhere to write them — without
+         * it, header-emitting guards silently no-op for every GraphQL request.
+         */
+        context: ({ req, res }: { req: Request; res: any }) => ({
           req,
+          res,
           loaders: {
             providerById: createDataLoader(
               (ids) => providersService.findByIds(ids as string[]),
