@@ -108,6 +108,19 @@ groups:
           summary: "Soroban RPC health check failing"
           description: "The /health/soroban endpoint has been returning errors for more than 2 minutes."
 
+      # ── Message broker ────────────────────────────────────────────────────
+
+      - alert: MessageBrokerDown
+        expr: |
+          sum(rate(http_requests_total{job="stellarswipe-backend", route="/api/v1/health/broker", status_code=~"5.."}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: broker
+        annotations:
+          summary: "Message broker health check failing"
+          description: "The /health/broker endpoint has been returning errors for more than 2 minutes."
+
       # ── HTTP error rate ───────────────────────────────────────────────────
 
       - alert: HighErrorRate

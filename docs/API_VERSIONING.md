@@ -70,6 +70,32 @@ X-Deprecation-Notice: This endpoint is deprecated. Use /new-endpoint instead. Su
 | `@Deprecated()` decorator        | `src/versioning/decorators/deprecated.decorator.ts`   | Marks individual endpoints as deprecated                |
 | `@ApiVersion()` decorator        | `src/versioning/decorators/api-version.decorator.ts`  | Tags controllers/handlers with a version string         |
 
+## GraphQL Versioning & Deprecation
+
+The GraphQL surface (`/graphql`) follows the same version registry as REST, exposed
+through two mechanisms instead of response headers (GraphQL has no per-field headers):
+
+- **Schema-level version query** — `ApiVersionResolver` (`src/graphQL-API/resolvers/api-version.resolver.ts`)
+  exposes an `apiVersion` query backed by the same `VersionManagerService` used by REST,
+  so GraphQL clients can read the current version, status, and sunset date:
+  ```graphql
+  query {
+    apiVersion { version status sunsetDate successorVersion description }
+  }
+  ```
+- **Field-level deprecation** — use GraphQL's native `deprecationReason` option (surfaced
+  in introspection and IDEs like GraphiQL/Apollo Studio) on any `@Field()` or `@Query()`
+  that is superseded:
+  ```typescript
+  @Query(() => GqlUserType, { deprecationReason: 'Use `me` instead.' })
+  ```
+
+## REST Endpoints Currently Marked Deprecated
+
+| Endpoint | Sunset | Successor | Reason |
+|---|---|---|---|
+| `GET /trades/user/:userId` | 2025-12-31 | v2 (`GET /trades/user/:userId/history`) | Superseded by a richer, paginated history endpoint. |
+
 ## Adding a New Version
 
 1. Add the version entry to `VersionManagerService.config.versions`:

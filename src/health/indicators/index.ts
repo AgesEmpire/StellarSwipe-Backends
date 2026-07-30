@@ -4,3 +4,4 @@ export * from './database.health';
 export * from './redis.health';
 export * from './queue.health';
 export * from './bullmq.health';
+export * from './kafka.health';
