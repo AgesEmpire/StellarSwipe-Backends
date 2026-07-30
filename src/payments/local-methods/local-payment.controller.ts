@@ -1,5 +1,17 @@
-import { Controller, Get, Post, Body, Param, Query, Headers } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+  RawBodyRequest,
+  Req,
+} from '@nestjs/common';
+import { Request } from 'express';
 import { RateLimit, RateLimitTier } from '../../common/decorators/rate-limit.decorator';
+import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
 import { LocalPaymentService } from './local-payment.service';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
@@ -10,8 +22,9 @@ import { PaystackPaymentDto } from './dto/paystack-payment.dto';
 export class LocalPaymentController {
   constructor(
     private readonly localPaymentService: LocalPaymentService,
-    private readonly mpesaWebhook: MpesaWebhookHandler,
-    private readonly paystackWebhook: PaystackWebhookHandler,
+    private readonly mpesaWebhookHandler: MpesaWebhookHandler,
+    private readonly paystackWebhookHandler: PaystackWebhookHandler,
+    private readonly webhookVerifier: WebhookVerifierService,
   ) {}
 
   @Get('providers')
@@ -60,8 +73,18 @@ export class LocalPaymentController {
 
   @Post('webhooks/mpesa')
   @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 120, window: 60 })
-  async mpesaWebhook(@Body() payload: Record<string, any>) {
-    await this.mpesaWebhook.handle(payload, '');
+  async mpesaWebhook(
+    @Body() payload: Record<string, any>,
+    @Headers('x-mpesa-signature') signature: string,
+    @Req() req: RawBodyRequest<Request>,
+  ) {
+    this.webhookVerifier.validateRequest({
+      rawBody: req.rawBody,
+      parsedBody: payload,
+      signatureHeader: signature,
+      providerKeyName: 'MPESA_WEBHOOK_SECRET',
+    });
+    await this.mpesaWebhookHandler.handle(payload, signature);
     return { received: true };
   }
 
@@ -70,8 +93,16 @@ export class LocalPaymentController {
   async paystackWebhook(
     @Body() payload: Record<string, any>,
     @Headers('x-paystack-signature') signature: string,
+    @Req() req: RawBodyRequest<Request>,
   ) {
-    await this.paystackWebhook.handle(payload, signature);
+    this.webhookVerifier.validateRequest({
+      rawBody: req.rawBody,
+      parsedBody: payload,
+      signatureHeader: signature,
+      providerKeyName: 'PAYSTACK_SECRET_KEY',
+      algorithm: 'sha512',
+    });
+    await this.paystackWebhookHandler.handle(payload, signature);
     return { received: true };
   }
 }

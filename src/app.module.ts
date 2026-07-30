@@ -18,7 +18,8 @@ import { redisCacheConfig } from './config/redis.config';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
 import { queueRetryConfig } from './queue/queue-retry.config';
-import { configSchema } from './config/schemas/config.schema';
+import { validateEnvironment } from './config/schemas/config.schema';
+import { ConfigValidationService } from './config/config-validation.service';
 import { StellarConfigService } from './config/stellar.service';
 import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -130,11 +131,7 @@ import { SearchModule } from './search/search.module';
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
       cache: true,
-      validationSchema: configSchema,
-      validationOptions: {
-        allowUnknown: true,
-        abortEarly: false,
-      },
+      validate: validateEnvironment,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -190,7 +187,8 @@ import { SearchModule } from './search/search.module';
       useFactory: (configService: ConfigService) => ({
         type: 'postgres' as const,
         host: configService.get<string>('database.replica.host'),
-        port: configService.get<number>('database.replica.port'),n        username: configService.get<string>('database.replica.username'),
+        port: configService.get<number>('database.replica.port'),
+        username: configService.get<string>('database.replica.username'),
         password: configService.get<string>('database.replica.password'),
         database: configService.get<string>('database.replica.database'),
         synchronize: false,
@@ -313,7 +311,11 @@ import { SearchModule } from './search/search.module';
     TracingModule,
     TenancyModule,
   ],
-  providers: [StellarConfigService, RateLimitMiddleware],
+  providers: [
+    StellarConfigService,
+    RateLimitMiddleware,
+    ConfigValidationService,
+  ],
   exports: [StellarConfigService],
 })
-export class AppModule { }
+export class AppModule {}

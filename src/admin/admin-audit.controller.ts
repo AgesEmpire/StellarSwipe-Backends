@@ -1,11 +1,9 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { PermissionAuditService, AuditAction } from '../auth/permission-audit.service';
-import { AdminRoleGuard } from './guards/admin-role.guard';
 
 @ApiTags('Admin Audit')
 @ApiBearerAuth()
-@UseGuards(AdminRoleGuard)
 @Controller('admin/audit/permissions')
 export class AdminAuditController {
   constructor(private readonly permissionAuditService: PermissionAuditService) {}

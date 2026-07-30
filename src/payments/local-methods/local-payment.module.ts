@@ -12,7 +12,7 @@ import { UpiProvider } from './providers/upi.provider';
 import { RegionalRouter } from './utils/regional-router';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
-import { WebhookIdempotencyModule } from '../../common/webhook-idempotency.module';
+import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
 
 @Module({
   imports: [
@@ -29,6 +29,7 @@ import { WebhookIdempotencyModule } from '../../common/webhook-idempotency.modul
     RegionalRouter,
     MpesaWebhookHandler,
     PaystackWebhookHandler,
+    WebhookVerifierService,
   ],
   controllers: [LocalPaymentController],
   exports: [LocalPaymentService],
