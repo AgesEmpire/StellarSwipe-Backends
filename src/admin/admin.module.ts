@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
 import { AdminManagementService } from './admin.service';
@@ -10,6 +11,9 @@ import { AdminAnalyticsModule } from './analytics/admin-analytics.module';
 import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
 import { TracingModule } from '../tracing/tracing.module';
 import { QueueModule } from '../queue/queue.module';
+import { UserRole } from '../authorization/entities/user-role.entity';
+import { AdminAccessGuard } from './access-control/admin-access.guard';
+import { AdminAccessPolicyService } from './access-control/admin-access-policy.service';
 
 @Module({
     imports: [
@@ -18,13 +22,22 @@ import { QueueModule } from '../queue/queue.module';
             Signal,
             AuditLog,
             PermissionAuditLog,
+            UserRole,
         ]),
         AdminAnalyticsModule,
         TracingModule,
         QueueModule,
     ],
     controllers: [AdminController, AdminAuditController],
-    providers: [AdminManagementService, PermissionAuditService],
+    providers: [
+        AdminManagementService,
+        PermissionAuditService,
+        AdminAccessPolicyService,
+        {
+            provide: APP_GUARD,
+            useClass: AdminAccessGuard,
+        },
+    ],
     exports: [AdminManagementService],
 })
 export class AdminModule { }
