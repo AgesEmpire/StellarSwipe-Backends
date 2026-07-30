@@ -1,5 +1,11 @@
 import { InputType, Field, Float } from '@nestjs/graphql';
-import { IsOptional, IsString, IsEnum, IsNumber, IsArray } from 'class-validator';
+import { IsOptional, IsEnum, IsArray } from 'class-validator';
+import {
+  NullableString,
+  NullableBoundedNumber,
+  NullableEnum,
+  NullableIsoDate,
+} from '../../common/validation/constraints/common-constraints.decorators';
 
 export enum SignalStatus {
   ACTIVE = 'ACTIVE',
@@ -30,8 +36,7 @@ export enum SortDirection {
 export class SignalFilterInput {
   /** Filter by asset pair, e.g. "XLM/USDC" */
   @Field(() => String, { nullable: true })
-  @IsOptional()
-  @IsString()
+  @NullableString(32)
   pair?: string;
 
   /** Filter by one or more signal statuses */
@@ -43,39 +48,34 @@ export class SignalFilterInput {
 
   /** Filter by signal direction */
   @Field(() => String, { nullable: true })
-  @IsOptional()
-  @IsEnum(SignalType)
+  @NullableEnum(SignalType)
   type?: SignalType;
 
   /** Filter by provider ID */
   @Field(() => String, { nullable: true })
-  @IsOptional()
-  @IsString()
+  @NullableString(64)
   providerId?: string;
 
   /** Only signals with confidence above this threshold (0–1) */
   @Field(() => Float, { nullable: true })
-  @IsOptional()
-  @IsNumber()
+  @NullableBoundedNumber(0, 1)
   minConfidence?: number;
 
   /** Filter signals created after this ISO-8601 timestamp */
   @Field(() => String, { nullable: true })
-  @IsOptional()
+  @NullableIsoDate()
   createdAfter?: string;
 
   /** Filter signals expiring before this ISO-8601 timestamp */
   @Field(() => String, { nullable: true })
-  @IsOptional()
+  @NullableIsoDate()
   expiresBeforeI?: string;
 
   @Field(() => String, { nullable: true, defaultValue: SignalSortField.CREATED_AT })
-  @IsOptional()
-  @IsEnum(SignalSortField)
+  @NullableEnum(SignalSortField)
   sortBy?: SignalSortField = SignalSortField.CREATED_AT;
 
   @Field(() => String, { nullable: true, defaultValue: SortDirection.DESC })
-  @IsOptional()
-  @IsEnum(SortDirection)
+  @NullableEnum(SortDirection)
   sortDir?: SortDirection = SortDirection.DESC;
 }
