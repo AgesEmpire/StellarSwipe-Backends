@@ -30,6 +30,11 @@ class FlagConfigDto {
   @Type(() => VariantDto)
   @ArrayMinSize(1)
   variants?: VariantDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tenantAllowList?: string[];
 }
 
 export class CreateFlagDto {
@@ -52,6 +57,9 @@ export class CreateFlagDto {
   config?: FlagConfigDto;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  environments?: string[];
   @IsString()
   contractId?: string;
 
@@ -79,6 +87,9 @@ export class UpdateFlagDto {
   config?: FlagConfigDto;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  environments?: string[];
   @IsString()
   contractId?: string;
 

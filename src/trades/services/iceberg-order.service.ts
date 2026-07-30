@@ -29,6 +29,8 @@ import {
 } from '../dto/iceberg-order.dto';
 import { StellarConfigService } from '../../config/stellar.service';
 import { buildAsset } from './asset-utils';
+import { updateWithVersionCheck } from '../../common/utils/optimistic-update.util';
+import { OptimisticLockException } from '../../common/exceptions/optimistic-lock.exception';
 
 @Injectable()
 export class IcebergOrderService {
@@ -142,6 +144,8 @@ export class IcebergOrderService {
     if (!order) throw new NotFoundException(`Iceberg order ${orderId} not found`);
     if (order.status !== AdvancedOrderStatus.ACTIVE) return;
 
+    const expectedVersion = order.version;
+
     const data = order.icebergData!;
     const keypair = this.parseKeypair(sourceSecret);
 
@@ -165,11 +169,20 @@ export class IcebergOrderService {
 
     if (remaining <= 0) {
       // Fully filled
-      order.icebergData = { ...data, filledAmount: data.totalAmount, currentDisplayedAmount: 0 };
-      order.status = AdvancedOrderStatus.FILLED;
-      order.executedAt = new Date();
-      await this.repo.save(order);
-      this.logger.log(`Iceberg order ${orderId} fully filled`);
+      try {
+        await updateWithVersionCheck(this.repo, 'AdvancedOrder', order.id, expectedVersion, {
+          icebergData: { ...data, filledAmount: data.totalAmount, currentDisplayedAmount: 0 },
+          status: AdvancedOrderStatus.FILLED,
+          executedAt: new Date(),
+        } as any);
+        this.logger.log(`Iceberg order ${orderId} fully filled`);
+      } catch (error) {
+        if (error instanceof OptimisticLockException) {
+          this.logger.warn(`Iceberg order ${orderId} was modified concurrently — skipping fill update`);
+          return;
+        }
+        throw error;
+      }
       return;
     }
 
@@ -196,7 +209,7 @@ export class IcebergOrderService {
         data.limitPrice,
       );
 
-      order.icebergData = {
+      const nextIcebergData: IcebergOrderData = {
         ...data,
         filledAmount: data.filledAmount,
         currentDisplayedAmount: nextSliceAmount,
@@ -204,18 +217,29 @@ export class IcebergOrderService {
         refillCount: data.refillCount + 1,
       };
 
-      order.status = AdvancedOrderStatus.PARTIALLY_FILLED;
-      await this.repo.save(order);
+      await updateWithVersionCheck(this.repo, 'AdvancedOrder', order.id, expectedVersion, {
+        icebergData: nextIcebergData,
+        status: AdvancedOrderStatus.PARTIALLY_FILLED,
+      } as any);
 
       this.logger.log(
         `Iceberg ${orderId}: slice #${data.refillCount + 1} placed – offer ${newOfferId} (${nextSliceAmount} remaining)`,
       );
     } catch (err) {
+      if (err instanceof OptimisticLockException) {
+        this.logger.warn(`Iceberg order ${orderId} was modified concurrently — skipping refill update`);
+        return;
+      }
       this.logger.error(
         `Iceberg ${orderId}: failed to place refill slice – ${(err as Error).message}`,
       );
-      order.errorMessage = (err as Error).message;
-      await this.repo.save(order);
+      try {
+        await updateWithVersionCheck(this.repo, 'AdvancedOrder', order.id, expectedVersion, {
+          errorMessage: (err as Error).message,
+        } as any);
+      } catch (updateError) {
+        if (!(updateError instanceof OptimisticLockException)) throw updateError;
+      }
     }
   }
 
@@ -252,7 +276,10 @@ export class IcebergOrderService {
 
     order.status = AdvancedOrderStatus.CANCELLED;
     order.cancelledAt = new Date();
-    await this.repo.save(order);
+    await updateWithVersionCheck(this.repo, 'AdvancedOrder', order.id, order.version, {
+      status: order.status,
+      cancelledAt: order.cancelledAt,
+    } as any);
 
     return this.toResponseDto(order);
   }

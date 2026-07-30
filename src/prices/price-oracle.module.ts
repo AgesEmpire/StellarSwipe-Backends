@@ -1,6 +1,5 @@
 import { DynamicModule, Module, Provider, Type } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { HttpModule } from '@nestjs/axios';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -10,6 +9,7 @@ import { PriceHistory } from './entities/price-history.entity';
 import { SdexPriceProvider } from './providers/sdex-price.provider';
 import { CoinGeckoPriceProvider } from './providers/coingecko-price.provider';
 import { StellarExpertPriceProvider } from './providers/stellar-expert-price.provider';
+import { HttpRetryModule } from '../http/http.module';
 import {
   PRICE_ORACLE_OPTIONS,
   PRICE_ORACLE_PROVIDER,
@@ -45,7 +45,7 @@ function resolveStrategyProvider(
 @Module({
   imports: [
     TypeOrmModule.forFeature([PriceHistory]),
-    HttpModule,
+    HttpRetryModule,
     CacheModule.register({
       ttl: 60000, // 60 seconds
       max: 100,

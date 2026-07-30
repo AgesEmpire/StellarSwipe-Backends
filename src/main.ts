@@ -38,6 +38,7 @@ initTracing();
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
+    rawBody: true,
   });
 
   // Align the body-parser limit with RequestValidationMiddleware's max payload size

@@ -18,7 +18,8 @@ import { redisCacheConfig } from './config/redis.config';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
 import { queueRetryConfig } from './queue/queue-retry.config';
-import { configSchema } from './config/schemas/config.schema';
+import { validateEnvironment } from './config/schemas/config.schema';
+import { ConfigValidationService } from './config/config-validation.service';
 import { StellarConfigService } from './config/stellar.service';
 import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -67,6 +68,8 @@ import { NftModule } from './nft/nft.module';
 import { RequestValidationMiddleware } from './common/middleware/request-validation.middleware';
 import { HealthModule } from './health/health.module';
 import { RateLimitModule } from './common/rate-limit.module';
+import { DiscordBotModule } from './integrations/discord/discord-bot.module';
+import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 // feature/295-discord-community-integration
@@ -77,12 +80,16 @@ import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 
 // feature/293-mobile-api-optimizations
 import { MobileModule } from './mobile/mobile.module';
-
 import { AutomationModule } from './integrations/automation-platforms/automation.module';
 import { CurrencyModule } from './currency/currency.module';
 import { ImportModule } from './import/import.module';
 import { ExportsModule } from './exports/exports.module';
 import { HttpRetryModule } from './http/http.module';
+import { ComplianceModule } from './compliance/compliance.module';
+import { PriceOracleModule } from './prices/price-oracle.module';
+import { PaymentsModule } from './payments/payments.module';
+import { LocalPaymentModule } from './payments/local-methods/local-payment.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { I18nModule } from './i18n/i18n.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -125,11 +132,7 @@ import { SearchModule } from './search/search.module';
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
       cache: true,
-      validationSchema: configSchema,
-      validationOptions: {
-        allowUnknown: true,
-        abortEarly: false,
-      },
+      validate: validateEnvironment,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -185,7 +188,8 @@ import { SearchModule } from './search/search.module';
       useFactory: (configService: ConfigService) => ({
         type: 'postgres' as const,
         host: configService.get<string>('database.replica.host'),
-        port: configService.get<number>('database.replica.port'),n        username: configService.get<string>('database.replica.username'),
+        port: configService.get<number>('database.replica.port'),
+        username: configService.get<string>('database.replica.username'),
         password: configService.get<string>('database.replica.password'),
         database: configService.get<string>('database.replica.database'),
         synchronize: false,
@@ -259,6 +263,9 @@ import { SearchModule } from './search/search.module';
     BackupModule,
     AdminAnalyticsModule,
     AdminModule,
+    MonitoringModule,
+    WebhooksModule,
+    DrModule,
     MetadataExtractorService,
     NPlus1DetectionInterceptor,
     MarketIntelligenceModule,
@@ -267,6 +274,8 @@ import { SearchModule } from './search/search.module';
     NftModule,
     HealthModule,
     RateLimitModule,
+    DiscordBotModule,
+    TelegramBotModule,
     // feature/295-discord-community-integration
     DiscordBotModule,
 
@@ -275,12 +284,16 @@ import { SearchModule } from './search/search.module';
 
     // feature/293-mobile-api-optimizations
     MobileModule,
-
     AutomationModule,
     CurrencyModule,
     ImportModule,
     ExportsModule,
     HttpRetryModule,
+    ComplianceModule,
+    PriceOracleModule,
+    PaymentsModule,
+    LocalPaymentModule,
+    FeatureFlagsModule,
     I18nModule,
     PortfolioModule,
     NotificationsModule,
@@ -299,11 +312,11 @@ import { SearchModule } from './search/search.module';
     TracingModule,
     TenancyModule,
   ],
-  providers: [StellarConfigService, RateLimitMiddleware],
+  providers: [
+    StellarConfigService,
+    RateLimitMiddleware,
+    ConfigValidationService,
+  ],
   exports: [StellarConfigService],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestValidationMiddleware).forRoutes('*');
-  }
-}
+export class AppModule {}

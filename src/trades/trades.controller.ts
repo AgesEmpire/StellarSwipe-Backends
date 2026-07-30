@@ -56,6 +56,7 @@ import {
   CloseTradeResultDto,
 } from './dto/trade-result.dto';
 import { PaginatedTradeHistoryDto } from './trade-history.service';
+import { Deprecated } from '../versioning/decorators/deprecated.decorator';
 
 @Controller('trades')
 @UseInterceptors(IdempotencyInterceptor)
@@ -214,6 +215,11 @@ export class TradesController {
    */
   @Get('user/:userId')
   @RequireScopes(ApiKeyScope.TRADES_READ)
+  @Deprecated({
+    sunsetDate: '2025-12-31',
+    successorVersion: '2',
+    reason: 'Use GET /trades/user/:userId/history instead, which supports richer filtering and pagination.',
+  })
   async getUserTrades(
     @Param('userId', ParseUUIDPipe) userId: string,
     @Query('status') status?: string,

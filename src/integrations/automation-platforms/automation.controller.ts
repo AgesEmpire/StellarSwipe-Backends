@@ -8,7 +8,11 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Headers,
+  RawBodyRequest,
+  Req,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { ZapierService } from './zapier.service';
 import { MakeService } from './make.service';
 import { TriggerConfigDto } from './dto/trigger-config.dto';
@@ -24,6 +28,7 @@ import { executeTradeAction } from './actions/execute-trade.action';
 import { createSignalAction } from './actions/create-signal.action';
 import { getPortfolioAction } from './actions/get-portfolio.action';
 import { formatActionResponse } from './utils/payload-formatter';
+import { WebhookVerifierService } from '../webhooks/webhook-verifier.service';
 
 @Controller('api/v1/automation')
 export class AutomationController {
@@ -33,6 +38,7 @@ export class AutomationController {
     private readonly signalsService: SignalsService,
     private readonly tradesService: TradesService,
     private readonly portfolioService: PortfolioService,
+    private readonly webhookVerifier: WebhookVerifierService,
   ) {}
 
   @Get('triggers')
@@ -82,7 +88,17 @@ export class AutomationController {
   // --- Inbound action webhook (called by Zapier/Make to trigger actions) ---
 
   @Post('action')
-  async handleAction(@Body() dto: ActionConfigDto) {
+  async handleAction(
+    @Body() dto: ActionConfigDto,
+    @Headers('x-stellarswipe-signature') signature: string,
+    @Req() req: RawBodyRequest<Request>,
+  ) {
+    this.webhookVerifier.validateRequest({
+      rawBody: req.rawBody,
+      parsedBody: dto,
+      signatureHeader: signature,
+    });
+
     try {
       switch (dto.action) {
         case ActionType.GET_PORTFOLIO: {
@@ -118,7 +134,17 @@ export class AutomationController {
   // --- Inbound trigger webhook (for testing/manual dispatch) ---
 
   @Post('trigger/dispatch')
-  async dispatchTrigger(@Body() dto: WebhookPayloadDto) {
+  async dispatchTrigger(
+    @Body() dto: WebhookPayloadDto,
+    @Headers('x-stellarswipe-signature') signature: string,
+    @Req() req: RawBodyRequest<Request>,
+  ) {
+    this.webhookVerifier.validateRequest({
+      rawBody: req.rawBody,
+      parsedBody: dto,
+      signatureHeader: signature,
+    });
+
     await Promise.all([
       this.zapier.dispatch(dto.userId, dto.event, dto.data),
       this.make.dispatch(dto.userId, dto.event, dto.data),

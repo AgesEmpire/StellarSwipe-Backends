@@ -8,6 +8,7 @@ import {
   DatabaseHealthIndicator,
   RedisHealthIndicator,
   QueueHealthIndicator,
+  KafkaHealthIndicator,
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
@@ -17,6 +18,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity';
 import { Signal } from '../signals/entities/signal.entity';
 import { Trade } from '../trades/entities/trade.entity';
+import { StreamingModule } from '../streaming/streaming.module';
 
 @Module({
   imports: [
@@ -24,6 +26,7 @@ import { Trade } from '../trades/entities/trade.entity';
     MonitoringModule,
     BullModule.registerQueue({ name: 'priority-queue' }),
     TypeOrmModule.forFeature([User, Signal, Trade]),
+    StreamingModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -33,6 +36,7 @@ import { Trade } from '../trades/entities/trade.entity';
     DatabaseHealthIndicator,
     RedisHealthIndicator,
     QueueHealthIndicator,
+    KafkaHealthIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
   ],
@@ -42,6 +46,7 @@ import { Trade } from '../trades/entities/trade.entity';
     DatabaseHealthIndicator,
     RedisHealthIndicator,
     QueueHealthIndicator,
+    KafkaHealthIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
   ],
