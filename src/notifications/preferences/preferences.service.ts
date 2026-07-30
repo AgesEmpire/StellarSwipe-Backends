@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { NotificationPreference } from './entities/notification-preference.entity';
@@ -15,6 +15,13 @@ export interface PreferencesResponse {
   signalPerformance: PreferenceChannel;
   systemAlerts: PreferenceChannel;
   marketing: PreferenceChannel;
+  quietHours: {
+    enabled: boolean;
+    start?: string;
+    end?: string;
+    timezone: string;
+  };
+  thresholds: Partial<Record<NotificationType, number>>;
   updatedAt: Date;
 }
 
@@ -80,6 +87,33 @@ export class PreferencesService {
       }
     }
 
+    if (dto.quietHours !== undefined) {
+      if (dto.quietHours.enabled !== undefined) {
+        preference.quietHoursEnabled = dto.quietHours.enabled;
+      }
+      if (dto.quietHours.start !== undefined) {
+        preference.quietHoursStart = dto.quietHours.start;
+      }
+      if (dto.quietHours.end !== undefined) {
+        preference.quietHoursEnd = dto.quietHours.end;
+      }
+      if (dto.quietHours.timezone !== undefined) {
+        preference.timezone = dto.quietHours.timezone;
+      }
+      if (
+        (preference.quietHoursEnabled || dto.quietHours.enabled) &&
+        (!preference.quietHoursStart || !preference.quietHoursEnd)
+      ) {
+        throw new BadRequestException(
+          'quietHours.start and quietHours.end are required to enable quiet hours',
+        );
+      }
+    }
+
+    if (dto.thresholds !== undefined) {
+      preference.thresholds = { ...preference.thresholds, ...dto.thresholds };
+    }
+
     const saved = await this.preferenceRepository.save(preference);
     return this.toResponse(saved);
   }
@@ -94,11 +128,43 @@ export class PreferencesService {
     channel: NotificationChannel,
   ): Promise<boolean> {
     const preference = await this.findOrCreate(userId);
+    return this.channelMap(preference)[type][channel];
+  }
 
-    const map: Record<
-      NotificationType,
-      Record<NotificationChannel, boolean>
-    > = {
+  /**
+   * Full delivery decision: checks channel opt-in, per-type threshold, and quiet hours.
+   * `value`, when provided, is compared against the user's configured threshold for `type`
+   * (e.g. a signal score) — the notification is suppressed if it falls below the threshold.
+   * Quiet hours suppress everything except systemAlerts.
+   */
+  async shouldDeliver(
+    userId: string,
+    type: NotificationType,
+    channel: NotificationChannel,
+    value?: number,
+  ): Promise<boolean> {
+    const preference = await this.findOrCreate(userId);
+
+    if (!this.channelMap(preference)[type][channel]) {
+      return false;
+    }
+
+    const threshold = preference.thresholds?.[type];
+    if (threshold !== undefined && value !== undefined && value < threshold) {
+      return false;
+    }
+
+    if (type !== 'systemAlerts' && this.isWithinQuietHours(preference)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private channelMap(
+    preference: NotificationPreference,
+  ): Record<NotificationType, Record<NotificationChannel, boolean>> {
+    return {
       tradeUpdates: {
         email: preference.tradeUpdatesEmail,
         push: preference.tradeUpdatesPush,
@@ -116,8 +182,49 @@ export class PreferencesService {
         push: preference.marketingPush,
       },
     };
+  }
 
-    return map[type][channel];
+  private isWithinQuietHours(
+    preference: NotificationPreference,
+    at: Date = new Date(),
+  ): boolean {
+    if (
+      !preference.quietHoursEnabled ||
+      !preference.quietHoursStart ||
+      !preference.quietHoursEnd
+    ) {
+      return false;
+    }
+
+    const minutesNow = this.minutesInTimezone(at, preference.timezone);
+    const start = this.toMinutes(preference.quietHoursStart);
+    const end = this.toMinutes(preference.quietHoursEnd);
+
+    if (start === end) return true;
+    if (start < end) {
+      return minutesNow >= start && minutesNow < end;
+    }
+    // Wraps past midnight, e.g. 22:00 -> 07:00
+    return minutesNow >= start || minutesNow < end;
+  }
+
+  private toMinutes(hhmm: string): number {
+    const [hours, minutes] = hhmm.split(':').map(Number);
+    return hours * 60 + minutes;
+  }
+
+  private minutesInTimezone(at: Date, timezone: string): number {
+    try {
+      const formatted = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).format(at);
+      return this.toMinutes(formatted);
+    } catch {
+      return at.getUTCHours() * 60 + at.getUTCMinutes();
+    }
   }
 
   /**
@@ -166,6 +273,13 @@ export class PreferencesService {
         email: preference.marketingEmail,
         push: preference.marketingPush,
       },
+      quietHours: {
+        enabled: preference.quietHoursEnabled,
+        start: preference.quietHoursStart,
+        end: preference.quietHoursEnd,
+        timezone: preference.timezone,
+      },
+      thresholds: preference.thresholds || {},
       updatedAt: preference.updatedAt,
     };
   }

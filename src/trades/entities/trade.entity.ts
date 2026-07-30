@@ -178,6 +178,7 @@ export class Trade {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
 
+  @DeleteDateColumn({ name: 'deleted_at' })
   @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt?: Date;
 }

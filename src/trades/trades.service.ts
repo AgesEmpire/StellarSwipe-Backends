@@ -1,3 +1,9 @@
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { Trade, TradeStatus, TradeSide } from './entities/trade.entity';
+import { OutboxService } from '../events/outbox/outbox.service';
+import { ExecuteTradeDto, CloseTradeDto, GetUserTradesDto } from './dto/execute-trade.dto';
 import {
   Injectable,
   Logger,
@@ -25,6 +31,7 @@ import {
 } from './services/risk-manager.service';
 import { TradeExecutorService } from './services/trade-executor.service';
 import { RiskManagerService as VelocityRiskManager } from '../risk/risk-manager.service';
+import { softDeleteOrThrow, restoreOrThrow } from '../common/services/soft-delete.helper';
 import { ComplianceRuleEngineService } from '../compliance/rule-engine/compliance-rule-engine.service';
 import {
   TradeLatencyService,
@@ -50,9 +57,12 @@ export class TradesService {
   constructor(
     @InjectRepository(Trade)
     private readonly tradeRepository: Repository<Trade>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly riskManager: RiskManagerService,
     private readonly tradeExecutor: TradeExecutorService,
     private readonly velocityRiskManager: VelocityRiskManager,
+    private readonly outboxService: OutboxService,
     private readonly complianceRuleEngine: ComplianceRuleEngineService,
     private readonly tradeLatency: TradeLatencyService,
     private readonly slippageGuard: SlippageGuardService,
@@ -247,6 +257,63 @@ export class TradesService {
           tradeId: trade.id,
         });
       }
+
+      // Persist the completed trade and its integration event atomically: if the
+      // process crashes between the two, the outbox row is never orphaned from the write.
+      await this.dataSource.transaction(async (manager) => {
+        await manager.save(Trade, trade);
+        await this.outboxService.record(
+          manager,
+          'trade.completed',
+          {
+            tradeId: trade.id,
+            userId: trade.userId,
+            signalId: trade.signalId,
+            transactionHash: trade.transactionHash,
+            totalValue: trade.totalValue,
+          },
+          `trade.completed:${trade.id}`,
+        );
+      });
+
+      // Record trade execution for velocity tracking
+      await this.velocityRiskManager.recordTradeExecution({
+        userId: trade.userId,
+        asset: `${trade.baseAsset}/${trade.counterAsset}`,
+        amount: parseFloat(trade.amount),
+        entryPrice: parseFloat(trade.entryPrice),
+      });
+
+      this.logger.log(`Trade ${trade.id} executed successfully. Hash: ${trade.transactionHash}`);
+
+      return {
+        id: trade.id,
+        userId: trade.userId,
+        signalId: trade.signalId,
+        status: trade.status,
+        side: trade.side,
+        baseAsset: trade.baseAsset,
+        counterAsset: trade.counterAsset,
+        entryPrice: trade.entryPrice,
+        amount: trade.amount,
+        totalValue: trade.totalValue,
+        feeAmount: trade.feeAmount,
+        transactionHash: trade.transactionHash,
+        executedAt: trade.executedAt,
+        message: 'Trade executed successfully',
+      };
+    } else {
+      trade.status = TradeStatus.FAILED;
+      trade.errorMessage = executionResult.error;
+      await this.tradeRepository.save(trade);
+
+      this.logger.error(`Trade ${trade.id} failed: ${executionResult.error}`);
+
+      throw new BadRequestException({
+        message: 'Trade execution failed',
+        error: executionResult.error,
+        tradeId: trade.id,
+      });
     } catch (error) {
       // Ensure the flow is always finalised even on unexpected errors
       this.tradeLatency.endFlow(tempFlowId, 'failure');
@@ -327,9 +394,11 @@ export class TradesService {
   async getTradeById(
     tradeId: string,
     userId: string,
+    includeDeleted = false,
   ): Promise<TradeDetailsDto> {
     const trade = await this.tradeRepository.findOne({
       where: { id: tradeId, userId },
+      withDeleted: includeDeleted,
     });
 
     if (!trade) {
@@ -339,11 +408,17 @@ export class TradesService {
     return this.mapToTradeDetails(trade);
   }
 
-  async getUserTrades(dto: GetUserTradesDto): Promise<TradeDetailsDto[]> {
+  async getUserTrades(
+    dto: GetUserTradesDto & { includeDeleted?: boolean },
+  ): Promise<TradeDetailsDto[]> {
     const query = this.tradeRepository
       .createQueryBuilder('trade')
       .where('trade.user_id = :userId', { userId: dto.userId })
       .orderBy('trade.created_at', 'DESC');
+
+    if (dto.includeDeleted) {
+      query.withDeleted();
+    }
 
     if (dto.status && dto.status !== 'all') {
       query.andWhere('trade.status = :status', { status: dto.status });
@@ -359,6 +434,35 @@ export class TradesService {
 
     const trades = await query.getMany();
     return trades.map((trade) => this.mapToTradeDetails(trade));
+  }
+
+  /**
+   * Soft-delete a trade, e.g. to remove it from a user's history without losing
+   * the record for auditing/recovery.
+   */
+  async softDeleteTrade(tradeId: string, userId: string): Promise<void> {
+    const trade = await this.tradeRepository.findOne({
+      where: { id: tradeId, userId },
+    });
+    if (!trade) {
+      throw new NotFoundException('Trade not found');
+    }
+    await softDeleteOrThrow(this.tradeRepository, tradeId, 'Trade not found');
+  }
+
+  /**
+   * Restore a previously soft-deleted trade.
+   */
+  async restoreTrade(tradeId: string, userId: string): Promise<TradeDetailsDto> {
+    const trade = await this.tradeRepository.findOne({
+      where: { id: tradeId, userId },
+      withDeleted: true,
+    });
+    if (!trade) {
+      throw new NotFoundException('Trade not found');
+    }
+    await restoreOrThrow(this.tradeRepository, tradeId, 'Trade not found');
+    return this.getTradeById(tradeId, userId);
   }
 
   async getUserTradesSummary(userId: string): Promise<UserTradesSummaryDto> {

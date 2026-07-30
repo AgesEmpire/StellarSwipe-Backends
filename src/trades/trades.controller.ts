@@ -2,12 +2,15 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Param,
   Query,
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  ParseBoolPipe,
+  DefaultValuePipe,
   UseGuards,
   UseInterceptors,
   Request,
@@ -151,6 +154,10 @@ export class TradesController {
   @RequireScopes(ApiKeyScope.TRADES_READ)
   async getTradeById(
     @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+    @Query('includeDeleted', new DefaultValuePipe(false), ParseBoolPipe) includeDeleted: boolean,
+  ): Promise<TradeDetailsDto> {
+    return this.tradesService.getTradeById(tradeId, userId, includeDeleted);
     @Request() req: any,
   ): Promise<TradeDetailsDto> {
     return this.queryBus.execute(new GetTradeStatusQuery(tradeId, req.user.id));
@@ -218,16 +225,45 @@ export class TradesController {
     @Query('status') status?: string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
+    @Query('includeDeleted', new DefaultValuePipe(false), ParseBoolPipe) includeDeleted?: boolean,
   ): Promise<TradeDetailsDto[]> {
     return this.tradesService.getUserTrades({
       userId,
       status,
       limit,
       offset,
+      includeDeleted,
     });
   }
 
   /**
+   * Soft-delete a trade (recoverable)
+   * DELETE /trades/:tradeId
+   */
+  @Delete(':tradeId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async softDeleteTrade(
+    @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+  ): Promise<void> {
+    return this.tradesService.softDeleteTrade(tradeId, userId);
+  }
+
+  /**
+   * Restore a soft-deleted trade
+   * POST /trades/:tradeId/restore
+   */
+  @Post(':tradeId/restore')
+  @HttpCode(HttpStatus.OK)
+  async restoreTrade(
+    @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+  ): Promise<TradeDetailsDto> {
+    return this.tradesService.restoreTrade(tradeId, userId);
+  }
+
+  /**
+   * Get user's trading summary/statistics
    * Get user's trading summary/statistics (DB-aggregated)
    * GET /trades/user/:userId/summary
    */

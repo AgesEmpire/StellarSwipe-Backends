@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
@@ -65,6 +65,7 @@ import { MarketIntelligenceModule } from './market-intelligence/market-intellige
 import { DocumentationModule } from './documentation/documentation.module';
 import { CompetitionsModule } from './competitions/competitions.module';
 import { NftModule } from './nft/nft.module';
+import { RequestValidationMiddleware } from './common/middleware/request-validation.middleware';
 import { HealthModule } from './health/health.module';
 import { RateLimitModule } from './common/rate-limit.module';
 import { DiscordBotModule } from './integrations/discord/discord-bot.module';
