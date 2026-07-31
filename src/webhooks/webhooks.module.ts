@@ -14,6 +14,7 @@ import { StellarCallbackReconciliationJob } from './jobs/stellar-callback-reconc
 import { AuditWebhookSecretsJob } from './jobs/audit-webhook-secrets.job';
 import { WebhookDeliveryProcessor } from './jobs/webhook-delivery.processor';
 import { WEBHOOK_DELIVERY_QUEUE } from './jobs/webhook-delivery.constants';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { WEBHOOK_DELIVERY_QUEUE } from './jobs/webhook-delivery.constants';
     StellarCallbackReconciliationJob,
     AuditWebhookSecretsJob,
     WebhookDeliveryProcessor,
+    DistributedLockService,
   ],
   exports: [WebhooksService],
 })

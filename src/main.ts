@@ -150,7 +150,7 @@ async function bootstrap() {
   );
   app.useGlobalInterceptors(new ResponseEnvelopeInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new StripInternalFieldsInterceptor());
-  app.useGlobalInterceptors(new SensitiveDataInterceptor());
+  app.useGlobalInterceptors(new SensitiveDataInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new StellarMemoInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));

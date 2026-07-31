@@ -31,6 +31,7 @@ import {
 } from './dto/start-kyc.dto';
 import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
+import { ExposeSensitiveFields } from '../common/decorators/expose-sensitive-fields.decorator';
 
 @ApiTags('KYC / Identity Verification')
 @ApiBearerAuth()
@@ -130,6 +131,9 @@ export class KycController {
 
   @Get('admin/user/:userId')
   @ApiOperation({ summary: '[Admin] Get all KYC verifications for a user' })
+  // Compliance/support review needs the raw identity fields on this record —
+  // opt out of the default public sensitive-field redaction.
+  @ExposeSensitiveFields()
   adminGetUserKyc(
     @Param('userId', ParseUUIDPipe) userId: string,
   ): Promise<KycStatusDto[]> {
