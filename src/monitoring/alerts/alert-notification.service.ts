@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
+import { redactSensitiveFields } from '../../common/logger/log-redaction';
+import { redactSensitiveText, deepRedactText } from '../../common/logger/text-redaction';
 
 interface AlertData {
   type: string;
@@ -24,16 +26,39 @@ export class AlertNotificationService {
   @OnEvent('alert.soroban.failure')
   async handleSorobanAlert(alertData: AlertData): Promise<void> {
     this.logger.log(`Processing Soroban alert: ${alertData.type}`);
-    
+
+    // Redact before this payload fans out to external webhooks/Slack and
+    // internal logs — `metrics` is an untyped bag that upstream callers may
+    // populate with account identifiers, wallet addresses, or emails.
+    const redactedAlertData = this.redactAlertData(alertData);
+
     try {
       await Promise.all([
-        this.sendWebhookNotification(alertData),
-        this.sendSlackNotification(alertData),
-        this.logToMonitoringSystem(alertData),
+        this.sendWebhookNotification(redactedAlertData),
+        this.sendSlackNotification(redactedAlertData),
+        this.logToMonitoringSystem(redactedAlertData),
       ]);
     } catch (error) {
       this.logger.error(`Failed to send alert notifications: ${error.message}`);
     }
+  }
+
+  /**
+   * Applies standardized redaction to an alert payload before it leaves the
+   * process boundary (webhook/Slack) or is written to structured logs.
+   *
+   *  - `metrics` is walked field-by-field via `redactSensitiveFields` (keyed
+   *    redaction: password/token/email/wallet-address/etc.), then any
+   *    remaining string leaves are scanned for embedded PII patterns.
+   *  - `message` is freeform and interpolated by callers, so it only goes
+   *    through the pattern-based text scrubber.
+   */
+  private redactAlertData(alertData: AlertData): AlertData {
+    return {
+      ...alertData,
+      message: redactSensitiveText(alertData.message),
+      metrics: deepRedactText(redactSensitiveFields(alertData.metrics)),
+    };
   }
 
   private async sendWebhookNotification(alertData: AlertData): Promise<void> {
