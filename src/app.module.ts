@@ -94,6 +94,7 @@ import { I18nModule } from './i18n/i18n.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit-log/audit.module';
+import { RetentionModule } from './common/retention/retention.module';
 import { AssetsModule } from './assets/assets.module';
 import { SocialExportModule } from './social-export/social-export.module';
 import { LowBalanceAlertModule } from './alerts/low-balance-alert.module';
@@ -298,6 +299,7 @@ import { SearchModule } from './search/search.module';
     PortfolioModule,
     NotificationsModule,
     AuditModule,
+    RetentionModule,
     AssetsModule,
     SocialExportModule,
     LowBalanceAlertModule,

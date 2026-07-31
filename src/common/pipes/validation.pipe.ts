@@ -5,8 +5,9 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { validate, ValidationError } from 'class-validator';
+import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
+import { formatValidationErrors } from '../validation/validation-error-formatter';
 
 @Injectable()
 export class CustomValidationPipe implements PipeTransform<any> {
@@ -30,7 +31,7 @@ export class CustomValidationPipe implements PipeTransform<any> {
     });
 
     if (errors.length > 0) {
-      const errorMessages = this.formatErrors(errors);
+      const errorMessages = formatValidationErrors(errors);
       this.logger.warn(`Validation failed: ${JSON.stringify(errorMessages)}`);
       throw new BadRequestException({
         message: 'Validation failed',
@@ -44,21 +45,5 @@ export class CustomValidationPipe implements PipeTransform<any> {
   private toValidate(metatype: Function): boolean {
     const types: Function[] = [String, Boolean, Number, Array, Object];
     return !types.includes(metatype);
-  }
-
-  private formatErrors(errors: ValidationError[]): any {
-    const result = {};
-
-    errors.forEach((error) => {
-      if (error.children && error.children.length > 0) {
-        // Handle nested validation errors
-        result[error.property] = this.formatErrors(error.children);
-      } else {
-        // Handle direct validation errors
-        result[error.property] = Object.values(error.constraints || {});
-      }
-    });
-
-    return result;
   }
 }

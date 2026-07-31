@@ -25,6 +25,7 @@ import { DateTimeScalar } from './scalars/datetime.scalar';
 import { JsonScalar } from './scalars/json.scalar';
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
+// GqlOwnershipGuard is provided/exported by AuthorizationModule (already imported below).
 import { GqlAuthGuard } from './guards/gql-auth.guard';
 
 // ─── Filters ──────────────────────────────────────────────────────────────────

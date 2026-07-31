@@ -13,6 +13,7 @@ import { PolicyEvaluator } from './utils/policy-evaluator';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
+import { GqlOwnershipGuard } from './guards/gql-ownership.guard';
 import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
 import { PermissionMatrixService } from './permission-matrix.service';
 
@@ -36,6 +37,7 @@ import { PermissionMatrixService } from './permission-matrix.service';
     PermissionsGuard,
     RolesGuard,
     WorkflowApprovalGuard,
+    GqlOwnershipGuard,
     PermissionAuditService,
     PermissionMatrixService,
   ],
@@ -46,6 +48,7 @@ import { PermissionMatrixService } from './permission-matrix.service';
     PermissionsGuard,
     RolesGuard,
     WorkflowApprovalGuard,
+    GqlOwnershipGuard,
     PermissionAuditService,
     PermissionMatrixService,
     TypeOrmModule,
