@@ -10,8 +10,15 @@ import {
   Max,
   IsObject,
   IsBoolean,
+  IsInt,
 } from 'class-validator';
-import { SignalType, SignalStatus, SignalOutcome } from '../entities/signal.entity';
+import { Type } from 'class-transformer';
+import {
+  SignalType,
+  SignalStatus,
+  SignalOutcome,
+} from '../entities/signal.entity';
+import { Signal } from '../entities/signal.entity';
 
 export class CreateSignalDto {
   @IsUUID()
@@ -120,4 +127,37 @@ export class SignalQueryDto {
   @IsOptional()
   @IsString()
   counterAsset?: string;
+}
+
+/**
+ * Query DTO for cursor-based pagination of signals feed.
+ *
+ * Supports:
+ * - cursor?: string (base64-encoded "id:createdAt" for pagination)
+ * - limit?: number (default 20, max 50)
+ *
+ * Example: GET /signals?cursor=c2lnbmFsLTEyMzp0aW1lc3RhbXA=&limit=20
+ */
+export class PaginatedSignalsQueryDto {
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 20;
+}
+
+/**
+ * Cursor-based paginated signals response.
+ * Includes a nextCursor for fetching the next page of results.
+ */
+export class PaginatedSignalsResponseDto {
+  data!: Signal[];
+  nextCursor?: string;
+  hasMore!: boolean;
+  limit!: number;
 }
