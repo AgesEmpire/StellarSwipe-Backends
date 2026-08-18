@@ -12,6 +12,10 @@ import { PositionArchiveService } from './services/position-archive.service';
 import { PositionArchiveJob } from './jobs/position-archive.job';
 import { PortfolioSnapshotService } from './services/portfolio-snapshot.service';
 import { PortfolioSnapshotJob } from './jobs/portfolio-snapshot.job';
+import { PnlSnapshotJob } from './jobs/pnl-snapshot.job';
+import { PnlSnapshotService } from './services/pnl-snapshot.service';
+import { PnlSnapshotAdminController } from './pnl-snapshot-admin.controller';
+import { ConfigModule } from '@nestjs/config';
 
 import { Trade } from '../trades/entities/trade.entity';
 import { Position } from './entities/position.entity';
@@ -32,8 +36,9 @@ import { RateLimitService } from '../common/services/rate-limit.service';
     TypeOrmModule.forFeature([Trade, Position, ArchivedPosition, PnlHistory, PortfolioSnapshot, User, CopiedPosition]),
     BullModule.registerQueue({ name: 'export-history' }),
     ScheduleModule.forRoot(),
+    ConfigModule,
   ],
-  controllers: [PortfolioController],
+  controllers: [PortfolioController, PnlSnapshotAdminController],
   providers: [
     PortfolioService,
     PriceService,
@@ -49,6 +54,8 @@ import { RateLimitService } from '../common/services/rate-limit.service';
     PositionArchiveJob,
     PortfolioSnapshotService,
     PortfolioSnapshotJob,
+    PnlSnapshotService,
+    PnlSnapshotJob,
   ],
   exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService, PositionBalanceUpdaterService, PositionArchiveService, PortfolioSnapshotService],
 })

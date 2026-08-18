@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 
 @Entity('pnl_history')
+@Index(['userId', 'snapshotDate'])
 export class PnlHistory {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -21,7 +22,7 @@ export class PnlHistory {
   @Column({ name: 'signal_id', type: 'uuid', nullable: true })
   signalId?: string | null;
 
-  @Column({ name: 'snapshot_date', type: 'date' })
+  @Column({ name: 'snapshot_date', type: 'timestamp with time zone' })
   snapshotDate!: Date;
 
   @Column({ name: 'realized_pnl', type: 'decimal', precision: 18, scale: 8, default: '0' })
