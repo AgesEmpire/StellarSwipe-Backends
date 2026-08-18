@@ -22,7 +22,7 @@ export interface BalanceAlertContext {
 export interface AlertResult {
   alerted: boolean;
   /** false when cooldown is active */
-  reason?: 'below_threshold' | 'cooldown_active' | 'balance_sufficient';
+  reason?: 'below_threshold' | 'cooldown_active' | 'balance_sufficient' | 'invalid_balance';
   currentBalance: string;
   minimumThreshold: string;
   estimatedTradeCapacity?: string;
@@ -60,6 +60,16 @@ export class LowBalanceAlertService {
   async checkAndAlert(ctx: BalanceAlertContext): Promise<AlertResult> {
     const available = parseFloat(ctx.balance.available);
     const threshold = this.minimumThreshold;
+
+    if (!Number.isFinite(available) || available < 0) {
+      this.logger.warn(`Skipping low-balance check for user=${ctx.userId}: invalid balance`);
+      return {
+        alerted: false,
+        reason: 'invalid_balance',
+        currentBalance: ctx.balance.available,
+        minimumThreshold: threshold.toString(),
+      };
+    }
 
     if (available >= threshold) {
       return {
