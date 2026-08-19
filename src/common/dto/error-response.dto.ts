@@ -4,5 +4,6 @@ export class ErrorResponseDto {
   message: string | string[];
   path: string;
   timestamp: string;
-  requestId: string;
+  requestId?: string;
+  details?: Record<string, unknown>;
 }
