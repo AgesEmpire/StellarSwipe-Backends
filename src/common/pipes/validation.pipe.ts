@@ -8,6 +8,7 @@ import {
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 import { formatValidationErrors } from '../validation/validation-error-formatter';
+import { ErrorCode } from '../error-classification/error-codes.enum';
 
 @Injectable()
 export class CustomValidationPipe implements PipeTransform<any> {
@@ -35,7 +36,9 @@ export class CustomValidationPipe implements PipeTransform<any> {
       this.logger.warn(`Validation failed: ${JSON.stringify(errorMessages)}`);
       throw new BadRequestException({
         message: 'Validation failed',
-        errors: errorMessages,
+        error: 'Validation',
+        code: ErrorCode.INVALID_INPUT,
+        details: errorMessages,
       });
     }
 
