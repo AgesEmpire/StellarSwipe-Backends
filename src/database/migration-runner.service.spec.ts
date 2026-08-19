@@ -58,6 +58,20 @@ describe('MigrationRunnerService', () => {
       const result = await service.runMigrations();
       expect(result.failed).toBe('DB error');
     });
+
+    it('rejects incompatible pending migrations before execution', async () => {
+      const pendingMigration = { constructor: { name: 'CreateUsers1690000000000' }, up: jest.fn(), down: jest.fn() };
+      dataSource.migrations = [pendingMigration];
+      dataSource.createQueryRunner.mockReturnValue({ hasTable: jest.fn().mockResolvedValue(true), release: jest.fn() });
+      dataSource.query.mockResolvedValue([
+        { name: 'CreateUsers1700000000000', timestamp: 1700000000000 },
+      ]);
+
+      const result = await service.runMigrations();
+
+      expect(result.failed).toContain('Incompatible pending migrations detected');
+      expect(dataSource.runMigrations).not.toHaveBeenCalled();
+    });
   });
 
   describe('revertLastMigration', () => {
