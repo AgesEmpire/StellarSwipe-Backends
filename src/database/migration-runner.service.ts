@@ -30,6 +30,8 @@ export class MigrationRunnerService {
     const skipped: string[] = [];
 
     try {
+      await this.validateMigrationPlan();
+
       const pending = await this.getPendingMigrations();
 
       if (pending.length === 0) {
@@ -107,6 +109,67 @@ export class MigrationRunnerService {
   async hasPendingMigrations(): Promise<boolean> {
     const pending = await this.getPendingMigrations();
     return pending.length > 0;
+  }
+
+  private async validateMigrationPlan(): Promise<void> {
+    const allMigrations = this.dataSource.migrations as MigrationInterface[];
+    if (!allMigrations.length) {
+      return;
+    }
+
+    const executedMigrations = await this.getExecutedMigrations();
+    const executedNames = new Set(executedMigrations.map((m) => m.name));
+    const missingExecuted = executedMigrations.filter(
+      (migration) => !allMigrations.some((candidate) => candidate.constructor.name === migration.name),
+    );
+
+    if (missingExecuted.length > 0) {
+      throw new Error(
+        `Incompatible migration state detected: executed migration(s) missing from the current codebase: ${missingExecuted.map((m) => m.name).join(', ')}`,
+      );
+    }
+
+    const pendingMigrations = allMigrations.filter(
+      (migration) => !executedNames.has(migration.constructor.name),
+    );
+
+    if (pendingMigrations.length === 0) {
+      return;
+    }
+
+    const latestExecutedTimestamp = executedMigrations.reduce(
+      (maxTimestamp, migration) => Math.max(maxTimestamp, migration.timestamp),
+      0,
+    );
+    const earliestPendingTimestamp = pendingMigrations.reduce(
+      (minTimestamp, migration) => {
+        const timestamp = this.getMigrationTimestamp(migration);
+        return timestamp > 0 && timestamp < minTimestamp ? timestamp : minTimestamp;
+      },
+      Number.MAX_SAFE_INTEGER,
+    );
+
+    if (latestExecutedTimestamp > 0 && earliestPendingTimestamp < latestExecutedTimestamp) {
+      const pendingNames = pendingMigrations.map((migration) => migration.constructor.name).join(', ');
+      throw new Error(
+        `Incompatible pending migrations detected: ${pendingNames} are older than the last applied migration timestamp (${latestExecutedTimestamp}).`,
+      );
+    }
+
+    const invalidTimestamps = allMigrations.filter(
+      (migration) => this.getMigrationTimestamp(migration) === 0,
+    );
+
+    if (invalidTimestamps.length > 0) {
+      throw new Error(
+        `Invalid migration naming detected: ${invalidTimestamps.map((m) => m.constructor.name).join(', ')}. Migration files must include a 13-digit timestamp in the class name.`,
+      );
+    }
+  }
+
+  private getMigrationTimestamp(migration: MigrationInterface): number {
+    const match = migration.constructor.name.match(/(\d{13,14})$/);
+    return match ? parseInt(match[1], 10) : 0;
   }
 
   private async getPendingMigrations(): Promise<MigrationInterface[]> {
