@@ -35,6 +35,9 @@ export class AuthService {
   private static readonly FAILED_ATTEMPTS_WINDOW_MS = 15 * 60 * 1000;
   private static readonly LOCKOUT_DURATION_MS = 30 * 60 * 1000;
 
+  /** TTL for password-reset tokens (1 hour). */
+  private static readonly PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+
   constructor(
     private jwtService: JwtService,
     private usersService: UsersService,
@@ -44,6 +47,15 @@ export class AuthService {
     private emailService: EmailService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
+
+  /**
+   * Hash a password-reset token for storage.
+   * Only the hash is ever persisted; the raw token is sent to the user and
+   * never written to Redis/DB (issue #1012).
+   */
+  private hashResetToken(token: string): string {
+    return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+  }
 
   async generateChallenge(publicKey: string): Promise<{ message: string }> {
     const nonce = crypto.randomBytes(32).toString('hex');
@@ -221,13 +233,19 @@ export class AuthService {
     }
 
     if (user) {
-      // Generate secure token
+      // Generate secure token (raw value is only sent to the user)
       const token = crypto.randomBytes(32).toString('hex');
 
-      // Store token in cache with 1 hour TTL
-      await this.cacheManager.set(`pwd_reset:${token}`, user.id, 3600000); // 1h in ms
+      // Store only the hash of the token (issue #1012).
+      // Raw token is never written to cache/DB.
+      const tokenHash = this.hashResetToken(token);
+      await this.cacheManager.set(
+        `pwd_reset:${tokenHash}`,
+        user.id,
+        AuthService.PASSWORD_RESET_TTL_MS,
+      );
 
-      // Send email
+      // Send email with the raw token in the link
       await this.emailService.sendEmail({
         to: email,
         subject: 'Password Reset Request',
@@ -266,21 +284,27 @@ export class AuthService {
   async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
     const { token, newPassword } = dto;
 
-    // 1. Retrieve user ID from cache
-    const userId = await this.cacheManager.get<string>(`pwd_reset:${token}`);
+    if (!token || typeof token !== 'string' || token.length < 32) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    // Hash the provided token and look up by hash (raw token is never stored).
+    const tokenHash = this.hashResetToken(token);
+    const cacheKey = `pwd_reset:${tokenHash}`;
+    const userId = await this.cacheManager.get<string>(cacheKey);
 
     if (!userId) {
       throw new UnauthorizedException('Invalid or expired reset token');
     }
 
-    // 2. Hash new password
+    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // 3. Update password
+    // Update password
     await this.usersService.updatePassword(userId, hashedPassword);
 
-    // 4. Clear token from cache
-    await this.cacheManager.del(`pwd_reset:${token}`);
+    // Invalidate the token (single-use)
+    await this.cacheManager.del(cacheKey);
 
     return { message: 'Password has been successfully reset' };
   }
