@@ -17,10 +17,13 @@ import {
   WEBHOOK_DELIVERY_QUEUE,
   WEBHOOK_FAILURE_DISABLE_THRESHOLD,
   WEBHOOK_MAX_ATTEMPTS,
+  WEBHOOK_MAX_RESPONSE_BYTES,
   WEBHOOK_PERMANENTLY_FAILED_EVENT,
+  WEBHOOK_PERSISTED_RESPONSE_CHARS,
   WEBHOOK_REQUEST_TIMEOUT_MS,
   WebhookDeliveryJobData,
   calculateWebhookBackoffDelay,
+  classifyWebhookError,
 } from '../jobs/webhook-delivery.constants';
 
 @Injectable()
@@ -86,19 +89,11 @@ export class WebhookSenderService {
     const delivery = await this.getDeliveryForAttempt(deliveryId);
     const webhook = delivery.webhook;
     const payload = delivery.payload as unknown as WebhookPayload;
-    const signature = this.signatureGenerator.generateSignature(
-      payload,
-      webhook.secret,
-    );
 
     delivery.attempts = attempt;
 
     try {
-      const response = await axios.post(webhook.url, payload, {
-        headers: this.buildHeaders(payload, signature),
-        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
-      });
-
+      const response = await this.postWebhook(webhook, payload);
       await this.recordDeliverySuccess(
         delivery,
         response.status,
@@ -115,13 +110,6 @@ export class WebhookSenderService {
     }
   }
 
-  /**
-   * Performs a single HTTP delivery attempt on an EXISTING delivery record,
-   * updating it in-place. Used by the reconciliation job to avoid creating
-   * duplicate delivery records.
-   *
-   * Returns true if delivery succeeded, false otherwise.
-   */
   async retryInPlace(delivery: WebhookDelivery): Promise<boolean> {
     const webhook = delivery.webhook;
     if (!webhook?.active) {
@@ -132,19 +120,10 @@ export class WebhookSenderService {
     }
 
     const payload = delivery.payload as unknown as WebhookPayload;
-    const signature = this.signatureGenerator.generateSignature(
-      payload,
-      webhook.secret,
-    );
-
     delivery.attempts += 1;
 
     try {
-      const response = await axios.post(webhook.url, payload, {
-        headers: this.buildHeaders(payload, signature),
-        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
-      });
-
+      const response = await this.postWebhook(webhook, payload);
       await this.recordDeliverySuccess(
         delivery,
         response.status,
@@ -169,6 +148,27 @@ export class WebhookSenderService {
       );
       return false;
     }
+  }
+
+  /**
+   * Outbound POST with hard timeouts, response-size cap, and no redirects (#1031).
+   * Signs with current secret; during rotation also attaches next-secret signature (#1030).
+   */
+  private async postWebhook(webhook: Webhook, payload: WebhookPayload) {
+    const signature = this.signatureGenerator.generateSignature(
+      payload,
+      webhook.secret,
+    );
+    const headers = this.buildHeaders(payload, signature, webhook);
+
+    return axios.post(webhook.url, payload, {
+      headers,
+      timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+      maxRedirects: 0,
+      maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
+      maxBodyLength: WEBHOOK_MAX_RESPONSE_BYTES,
+      validateStatus: (s) => s >= 200 && s < 300,
+    });
   }
 
   private async enqueueDelivery(
@@ -229,12 +229,13 @@ export class WebhookSenderService {
     attempt: number,
     isFinalAttempt: boolean,
   ): Promise<void> {
+    const failureClass = classifyWebhookError(error);
     delivery.attempts = attempt;
     delivery.responseStatus = error.response?.status;
     delivery.responseBody = error.response
       ? this.serializeResponseBody(error.response.data)
       : undefined;
-    delivery.errorMessage = error.message;
+    delivery.errorMessage = `[${failureClass}] ${error.message}`;
 
     if (isFinalAttempt) {
       delivery.status = 'permanently_failed';
@@ -250,7 +251,7 @@ export class WebhookSenderService {
     await this.deliveryRepo.save(delivery);
 
     this.logger.warn(
-      `Webhook delivery attempt ${attempt}/${WEBHOOK_MAX_ATTEMPTS} failed: webhook=${delivery.webhook.id} event=${delivery.eventType} error=${error.message} nextRetry=${delivery.nextRetryAt.toISOString()}`,
+      `Webhook delivery attempt ${attempt}/${WEBHOOK_MAX_ATTEMPTS} failed (${failureClass}): webhook=${delivery.webhook.id} event=${delivery.eventType} error=${error.message} nextRetry=${delivery.nextRetryAt.toISOString()}`,
     );
   }
 
@@ -346,22 +347,43 @@ export class WebhookSenderService {
   private buildHeaders(
     payload: WebhookPayload,
     signature: string,
+    webhook: Webhook,
   ): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-StellarSwipe-Signature': `sha256=${signature}`,
       'X-StellarSwipe-Event': payload.event,
       'X-StellarSwipe-Delivery-Id': payload.deliveryId,
     };
+
+    // During rotation overlap, also sign with nextSecret so consumers can
+    // verify with either key until the window closes (issue #1030).
+    const now = Date.now();
+    const inWindow =
+      webhook.nextSecret &&
+      webhook.rotationStartedAt &&
+      webhook.rotationFinalizesAt &&
+      now >= webhook.rotationStartedAt.getTime() &&
+      now <= webhook.rotationFinalizesAt.getTime();
+
+    if (inWindow && webhook.nextSecret) {
+      const nextSig = this.signatureGenerator.generateSignature(
+        payload,
+        webhook.nextSecret,
+      );
+      headers['X-StellarSwipe-Signature-Next'] = `sha256=${nextSig}`;
+    }
+
+    return headers;
   }
 
   private serializeResponseBody(data: unknown): string | undefined {
     if (data === undefined) return undefined;
 
     try {
-      return JSON.stringify(data).slice(0, 1000);
+      return JSON.stringify(data).slice(0, WEBHOOK_PERSISTED_RESPONSE_CHARS);
     } catch {
-      return String(data).slice(0, 1000);
+      return String(data).slice(0, WEBHOOK_PERSISTED_RESPONSE_CHARS);
     }
   }
 }
