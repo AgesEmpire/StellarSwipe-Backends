@@ -97,6 +97,9 @@ export class WebhookSenderService {
       const response = await axios.post(webhook.url, payload, {
         headers: this.buildHeaders(payload, signature),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        // Do not follow redirects — a public host must not be able to
+        // redirect into a private/metadata range after the SSRF check (#1029).
+        maxRedirects: 0,
       });
 
       await this.recordDeliverySuccess(
@@ -143,6 +146,7 @@ export class WebhookSenderService {
       const response = await axios.post(webhook.url, payload, {
         headers: this.buildHeaders(payload, signature),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        maxRedirects: 0,
       });
 
       await this.recordDeliverySuccess(
