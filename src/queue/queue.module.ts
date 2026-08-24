@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 import { PriorityQueueService, PRIORITY_QUEUE, CRITICAL_QUEUE, LOW_PRIORITY_QUEUE } from './priority-queue.service';
 import { QueueBackpressureService } from './queue-backpressure.service';
+import { QueueLagService } from './queue-lag.service';
 import { queuePressureConfig } from './queue-pressure.config';
 
 @Module({
@@ -16,7 +17,7 @@ import { queuePressureConfig } from './queue-pressure.config';
     ConfigModule.forFeature(queuePressureConfig),
     ScheduleModule.forRoot(),
   ],
-  providers: [PriorityQueueService, QueueBackpressureService],
-  exports: [PriorityQueueService, QueueBackpressureService],
+  providers: [PriorityQueueService, QueueBackpressureService, QueueLagService],
+  exports: [PriorityQueueService, QueueBackpressureService, QueueLagService],
 })
 export class QueueModule {}
