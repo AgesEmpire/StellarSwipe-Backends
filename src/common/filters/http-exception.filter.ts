@@ -10,6 +10,7 @@ import { Request, Response } from 'express';
 import { CORRELATION_ID_HEADER } from '../correlation/correlation-id.store';
 import { ErrorCode } from '../error-classification/error-codes.enum';
 import { ErrorResponseDto } from '../dto/error-response.dto';
+import { TRACE_ID_HEADER } from '../../tracing/tracing.service';
 
 /**
  * Standardised error payload returned by every API endpoint.
@@ -18,6 +19,8 @@ import { ErrorResponseDto } from '../dto/error-response.dto';
  */
 export interface ErrorPayload extends ErrorResponseDto {
   requestId?: string;
+  error: string;
+  traceId?: string;
 }
 
 @Catch(HttpException)
@@ -33,16 +36,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const body = exception.getResponse();
     const message = this.extractMessage(body, exception.message);
     const errorCode = this.extractErrorCode(body, statusCode);
+    const error = this.statusToErrorName(statusCode);
     const details = this.extractDetails(body);
     const requestId = (req.headers[CORRELATION_ID_HEADER] as string | undefined) ?? undefined;
+    const traceId = (req.headers[TRACE_ID_HEADER] as string | undefined) ?? undefined;
 
     const payload: ErrorPayload = {
       statusCode,
+      error,
       errorCode,
       message,
       path: req.url,
       timestamp: new Date().toISOString(),
       ...(requestId ? { requestId } : {}),
+      ...(traceId ? { traceId } : {}),
       ...(details ? { details } : {}),
     };
 
@@ -51,6 +58,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
     );
 
     res.status(statusCode).json(payload);
+  }
+
+  private statusToErrorName(statusCode: number): string {
+    const nameMap: Record<number, string> = {
+      [HttpStatus.BAD_REQUEST]: 'BAD_REQUEST',
+      [HttpStatus.UNAUTHORIZED]: 'UNAUTHORIZED',
+      [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
+      [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
+      [HttpStatus.CONFLICT]: 'CONFLICT',
+      [HttpStatus.UNPROCESSABLE_ENTITY]: 'UNPROCESSABLE_ENTITY',
+      [HttpStatus.TOO_MANY_REQUESTS]: 'TOO_MANY_REQUESTS',
+      [HttpStatus.INTERNAL_SERVER_ERROR]: 'INTERNAL_SERVER_ERROR',
+    };
+    return nameMap[statusCode] ?? HttpStatus[statusCode] ?? 'UNKNOWN';
   }
 
   private extractMessage(body: unknown, fallback: string): string | string[] {

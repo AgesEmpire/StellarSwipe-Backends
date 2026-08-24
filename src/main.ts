@@ -6,7 +6,7 @@ import { VersioningType } from '@nestjs/common';
 import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
 import * as compression from 'compression';
 import { AppModule } from "./app.module";
-import { ExceptionFilter } from "./common/filters";
+import { ExceptionFilter, HttpExceptionFilter } from "./common/filters";
 import { ErrorClassificationService } from "./common/error-classification";
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import {
@@ -133,6 +133,7 @@ async function bootstrap() {
    const errorClassifier = app.get(ErrorClassificationService);
    app.useGlobalFilters(
      new ExceptionFilter(logger, sentryService, errorClassifier, configService),
+     new HttpExceptionFilter(),
      new I18nValidationExceptionFilter({ detailedErrors: false }),
    );
 
