@@ -57,6 +57,7 @@ import { TradeDlqController } from './trade-dlq.controller';
 import { TradeDlqMetricsService } from './services/trade-dlq-metrics.service';
 import { TradeDlqCleanupService } from './services/trade-dlq-cleanup.service';
 import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.service';
+import { IdempotencyModule } from '../common/idempotency/idempotency.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.servic
     AuditModule,
     NotificationsModule,
     CanaryRoutingModule,
+    IdempotencyModule,
     ClientsModule.registerAsync([
       {
         name: NOTIFICATION_TCP_CLIENT,
