@@ -1,0 +1,6 @@
+{
+  "contractId": 12345,
+  "method": true,
+  "params": "not-an-array",
+  "timeoutMs": "not-a-number"
+}

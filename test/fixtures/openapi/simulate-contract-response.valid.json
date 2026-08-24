@@ -1,0 +1,13 @@
+{
+  "success": true,
+  "resourceFee": "100",
+  "minResourceFee": "50",
+  "inclusionFee": "20",
+  "totalFee": "170",
+  "result": { "ok": true },
+  "footprint": {
+    "readOnly": ["AAA..."],
+    "readWrite": []
+  },
+  "auth": []
+}

@@ -1,0 +1,5 @@
+{
+  "method": "simulate",
+  "params": [],
+  "timeoutMs": 1000
+}
