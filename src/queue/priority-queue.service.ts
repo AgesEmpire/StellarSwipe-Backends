@@ -1,11 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import { Queue, Job, JobOptions } from 'bull';
+import { randomUUID } from 'crypto';
+import { CorrelationIdStore } from '../common/correlation/correlation-id.store';
 
 export const PRIORITY_QUEUE = 'priority-queue';
 export const CRITICAL_QUEUE = 'critical-queue';
 export const LOW_PRIORITY_QUEUE = 'low-priority-queue';
+
+/** Key used in job.data for the correlation ID (issue #1027). */
+export const JOB_CORRELATION_ID_KEY = 'correlationId';
 
 /**
  * Job priority levels for Bull queue.
@@ -28,6 +33,8 @@ export interface PriorityJobData {
   payload: unknown;
   priority: JobPriority;
   createdAt: Date;
+  /** Propagated correlation ID for end-to-end tracing (issue #1027). */
+  correlationId?: string;
 }
 
 /**
@@ -48,7 +55,31 @@ export class PriorityQueueService {
     @InjectQueue(LOW_PRIORITY_QUEUE)
     private readonly lowPriorityQueue: Queue<PriorityJobData>,
     private readonly configService: ConfigService,
+    @Optional() private readonly correlationStore?: CorrelationIdStore,
   ) {}
+
+  /**
+   * Resolve a correlation ID for a new job.
+   * Prefer the current HTTP request ID; otherwise generate a stable UUID
+   * so scheduled / background work is still traceable.
+   */
+  private resolveCorrelationId(): string {
+    const fromRequest = this.correlationStore?.getCorrelationId();
+    if (fromRequest && this.isValidCorrelationId(fromRequest)) {
+      return fromRequest;
+    }
+    return randomUUID();
+  }
+
+  /** Reject obviously malformed IDs (empty, too long, control chars). */
+  private isValidCorrelationId(id: string): boolean {
+    return (
+      typeof id === 'string' &&
+      id.length >= 8 &&
+      id.length <= 128 &&
+      !/[\x00-\x1f]/.test(id)
+    );
+  }
 
   /**
    * Returns the appropriate queue based on priority level.
@@ -71,6 +102,8 @@ export class PriorityQueueService {
    * Add a job with specified priority.
    * CRITICAL priority jobs are added to a dedicated CRITICAL queue,
    * LOW priority jobs to a dedicated LOW queue, and others to the shared priority queue.
+   *
+   * Always embeds a correlation ID (issue #1027).
    */
   async addJob(
     type: string,
@@ -78,11 +111,14 @@ export class PriorityQueueService {
     priority: JobPriority = JobPriority.NORMAL,
     options: Partial<JobOptions> = {},
   ): Promise<Job<PriorityJobData>> {
+    const correlationId = this.resolveCorrelationId();
+
     const jobData: PriorityJobData = {
       type,
       payload,
       priority,
       createdAt: new Date(),
+      correlationId,
     };
 
     const defaultAttempts =
@@ -107,7 +143,9 @@ export class PriorityQueueService {
     };
 
     const targetQueue = this.getQueueForPriority(priority);
-    this.logger.log(`Adding ${type} job with priority ${priority} to queue ${(targetQueue as any).name || 'priority-queue'}`);
+    this.logger.log(
+      `Adding ${type} job with priority ${priority} to queue ${(targetQueue as any).name || 'priority-queue'} [correlationId=${correlationId}]`,
+    );
     return targetQueue.add(type, jobData, jobOptions);
   }
 
