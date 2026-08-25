@@ -46,8 +46,9 @@ export class ApiKeysController {
   async rotate(
     @Request() req: any,
     @Param('id') id: string,
+    @Body('overlapMs') overlapMs?: number,
   ): Promise<ApiKeyResponseDto> {
-    return this.apiKeysService.rotate(req.userId, id);
+    return this.apiKeysService.rotate(req.userId, id, overlapMs);
   }
 
   @Delete(':id')
