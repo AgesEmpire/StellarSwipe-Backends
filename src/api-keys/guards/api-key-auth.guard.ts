@@ -40,7 +40,10 @@ export class ApiKeyAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
+    const request =
+      context.getType<string>() === 'graphql'
+        ? context.getArgByIndex(2).req
+        : context.switchToHttp().getRequest();
     const rawKey = this.extractApiKey(request);
 
     if (!rawKey) {

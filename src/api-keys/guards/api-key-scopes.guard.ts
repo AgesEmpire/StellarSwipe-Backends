@@ -45,7 +45,10 @@ export class ApiKeyScopesGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
+    const request =
+      context.getType<string>() === 'graphql'
+        ? context.getArgByIndex(2).req
+        : context.switchToHttp().getRequest();
     const apiKey = request.apiKey;
 
     if (!apiKey) {
