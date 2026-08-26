@@ -98,6 +98,10 @@ export const configSchema = Joi.object({
   // ─── Encryption — required ──────────────────────────────────────────────────
   ENCRYPTION_KEY: Joi.string().min(32).required(),
 
+  // ─── Two-Factor Authentication — required ──────────────────────────────────
+  TWO_FACTOR_ENCRYPTION_KEY: Joi.string().length(64).pattern(/^[0-9a-fA-F]+$/).required(),
+  TWO_FACTOR_CHANGE_COOLDOWN_SECONDS: Joi.number().integer().positive().default(300),
+
   // ─── N+1 Detection (development mode only) ────────────────────────────────────
   // Default: 25 queries
   NPLUS1_MAX_QUERIES: Joi.number().integer().positive().default(25),

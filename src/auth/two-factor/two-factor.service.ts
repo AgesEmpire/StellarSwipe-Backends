@@ -17,9 +17,10 @@ import * as crypto from 'crypto';
 import { TwoFactor } from './entities/two-factor.entity';
 import { Enable2faDto } from '../dto/enable-2fa.dto';
 import { Verify2faDto } from '../dto/verify-2fa.dto';
+import { RecoveryCodeService } from './recovery-code.service';
+import { AuditService } from '../../audit-log/audit.service';
+import { AuditAction, AuditStatus } from '../../audit-log/entities/audit-log.entity';
 
-const BACKUP_CODE_COUNT = 10;
-// const BACKUP_CODE_LENGTH = 10;
 const BCRYPT_ROUNDS = 12;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -39,6 +40,8 @@ export class TwoFactorService {
     private readonly twoFactorRepo: Repository<TwoFactor>,
     private readonly configService: ConfigService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly recoveryCodeService: RecoveryCodeService,
+    private readonly auditService: AuditService,
   ) {
     const key = this.configService.get<string>('TWO_FACTOR_ENCRYPTION_KEY');
     if (!key || Buffer.from(key, 'hex').length !== 32) {
@@ -222,17 +225,20 @@ export class TwoFactorService {
 
     await this.clearRateLimit(userId);
 
-    // Generate 10 plaintext backup codes and store hashed versions
-    const plaintextCodes = this.generateBackupCodes();
-    const hashedCodes = await Promise.all(
-      plaintextCodes.map((code) => bcrypt.hash(code, BCRYPT_ROUNDS)),
-    );
-
-    record.backupCodes = hashedCodes;
     record.enabled = true;
     record.enabledAt = new Date();
     record.lastSecurityChangeAt = new Date();
     await this.twoFactorRepo.save(record);
+
+    const plaintextCodes = await this.recoveryCodeService.generate(userId);
+
+    await this.auditService.log({
+      userId,
+      action: AuditAction.TWO_FA_ENABLED,
+      resource: 'two_factor_auth',
+      resourceId: record.id,
+      status: AuditStatus.SUCCESS,
+    });
 
     // Return plaintext codes only once — user must save them immediately
     return { backupCodes: plaintextCodes };
@@ -244,7 +250,11 @@ export class TwoFactorService {
    * Verify a TOTP token or backup code for a user.
    * Used as middleware enforcement for sensitive actions.
    */
-  async verify(userId: string, dto: Verify2faDto): Promise<void> {
+  async verify(
+    userId: string,
+    dto: Verify2faDto,
+    ipAddress?: string,
+  ): Promise<void> {
     const record = await this.twoFactorRepo.findOne({ where: { userId } });
     if (!record?.enabled) return; // 2FA not enabled — no enforcement needed
 
@@ -268,24 +278,15 @@ export class TwoFactorService {
     }
 
     if (dto.backupCode) {
-      const matchIndex = await this.findMatchingBackupCode(
+      const { remainingCodes } = await this.recoveryCodeService.consume(
+        userId,
         dto.backupCode,
-        record.backupCodes,
+        ipAddress,
       );
-      if (matchIndex === -1) {
-        throw new UnauthorizedException('Invalid backup code.');
-      }
-
-      // Consume backup code (one-time use)
-      record.backupCodes.splice(matchIndex, 1);
-      await this.twoFactorRepo.save(record);
-
       await this.clearRateLimit(userId);
-
-      if (record.backupCodes.length === 0) {
-        // Surface a warning — in production, send an email notification here
+      if (remainingCodes === 0) {
         throw new UnauthorizedException(
-          'All backup codes have been used. Please disable and re-enable 2FA to generate new codes.',
+          'All recovery codes have been used. Please regenerate your recovery codes.',
         );
       }
       return;
@@ -309,9 +310,13 @@ export class TwoFactorService {
   /**
    * Disable 2FA for a user. Requires a valid TOTP or backup code first.
    */
-  async disable(userId: string, dto: Verify2faDto): Promise<void> {
+  async disable(
+    userId: string,
+    dto: Verify2faDto,
+    ipAddress?: string,
+  ): Promise<void> {
     // Re-use verify to ensure the user proves possession before disabling
-    await this.verify(userId, dto);
+    await this.verify(userId, dto, ipAddress);
 
     const record = await this.twoFactorRepo.findOne({ where: { userId } });
     if (!record) return;
@@ -332,8 +337,15 @@ export class TwoFactorService {
   async regenerateBackupCodes(
     userId: string,
     dto: Verify2faDto,
+    ipAddress?: string,
   ): Promise<{ backupCodes: string[] }> {
-    await this.verify(userId, dto);
+    if (!dto.token) {
+      throw new BadRequestException(
+        'A valid TOTP token is required to regenerate recovery codes.',
+      );
+    }
+
+    await this.verify(userId, dto, ipAddress);
 
     const record = await this.twoFactorRepo.findOne({ where: { userId } });
     if (!record?.enabled) {
@@ -342,32 +354,13 @@ export class TwoFactorService {
 
     this.assertChangeCooldown(record);
 
-    const plaintextCodes = this.generateBackupCodes();
-    record.backupCodes = await Promise.all(
-      plaintextCodes.map((code) => bcrypt.hash(code, BCRYPT_ROUNDS)),
+    const backupCodes = await this.recoveryCodeService.regenerate(
+      userId,
+      ipAddress,
     );
-    record.lastSecurityChangeAt = new Date();
-    await this.twoFactorRepo.save(record);
-
-    return { backupCodes: plaintextCodes };
+    return { backupCodes };
   }
 
   // ─── Private Helpers ─────────────────────────────────────────────────────────
 
-  private generateBackupCodes(): string[] {
-    return Array.from(
-      { length: BACKUP_CODE_COUNT },
-      () => crypto.randomBytes(5).toString('hex').toUpperCase(), // 10-char hex string
-    );
-  }
-
-  private async findMatchingBackupCode(
-    provided: string,
-    hashed: string[],
-  ): Promise<number> {
-    const results = await Promise.all(
-      hashed.map((hash) => bcrypt.compare(provided, hash)),
-    );
-    return results.findIndex(Boolean);
-  }
 }

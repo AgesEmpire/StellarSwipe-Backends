@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { TwoFactorService } from './two-factor.service';
+import { RecoveryCodeService } from './recovery-code.service';
 import { Enable2faDto } from '../dto/enable-2fa.dto';
 import { Verify2faDto } from '../dto/verify-2fa.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -26,7 +27,10 @@ interface AuthenticatedRequest extends Request {
 @Controller('auth/2fa')
 @UseGuards(JwtAuthGuard)
 export class TwoFactorController {
-  constructor(private readonly twoFactorService: TwoFactorService) {}
+  constructor(
+    private readonly twoFactorService: TwoFactorService,
+    private readonly recoveryCodeService: RecoveryCodeService,
+  ) {}
 
   /**
    * GET /auth/2fa/status
@@ -90,7 +94,7 @@ export class TwoFactorController {
   @HttpCode(HttpStatus.OK)
   @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 5, window: 60 })
   async verify(@Req() req: AuthenticatedRequest, @Body() dto: Verify2faDto) {
-    await this.twoFactorService.verify(req.user.id, dto);
+    await this.twoFactorService.verify(req.user.id, dto, req.ip);
     return { verified: true };
   }
 
@@ -102,8 +106,18 @@ export class TwoFactorController {
   @HttpCode(HttpStatus.OK)
   @RateLimit({ tier: RateLimitTier.AUTHENTICATED, limit: 5, window: 60 })
   async disable(@Req() req: AuthenticatedRequest, @Body() dto: Verify2faDto) {
-    await this.twoFactorService.disable(req.user.id, dto);
+    await this.twoFactorService.disable(req.user.id, dto, req.ip);
     return { message: '2FA has been disabled.' };
+  }
+
+  /**
+   * GET /auth/2fa/backup-codes/status
+   * Returns remaining recovery code count and generation timestamp.
+   * Does NOT expose any hashes or plaintext codes.
+   */
+  @Get('backup-codes/status')
+  async getRecoveryCodeStatus(@Req() req: AuthenticatedRequest) {
+    return this.recoveryCodeService.getStatus(req.user.id);
   }
 
   /**
@@ -121,6 +135,7 @@ export class TwoFactorController {
     const { backupCodes } = await this.twoFactorService.regenerateBackupCodes(
       req.user.id,
       dto,
+      req.ip,
     );
     return {
       message: 'Backup codes regenerated. Previous codes are now invalid.',
