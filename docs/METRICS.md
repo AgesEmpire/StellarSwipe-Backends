@@ -48,7 +48,8 @@ The endpoint requires the `METRICS_API_KEY` or a valid bearer token
 | `db_pool_connections_total` | Gauge | – | Total pool connections |
 | `db_pool_connections_active` | Gauge | – | Pool connections executing a query |
 | `db_pool_connections_idle` | Gauge | – | Pool connections idle |
-| `db_pool_connections_waiting` | Gauge | – | Pool connections waiting |
+| `db_pool_connections_pending` | Gauge | – | Requests waiting to acquire a pool connection |
+| `db_pool_acquisition_timeouts_total` | Counter | – | Connection acquisition requests that timed out |
 | `db_pool_utilization_ratio` | Gauge | – | Pool utilisation (0–1) |
 
 ### Health
@@ -81,6 +82,10 @@ sum(rate(cache_hits_total[5m]))
 
 # DB pool utilisation
 db_pool_utilization_ratio
+
+# Pending acquisition requests and timeout rate
+db_pool_connections_pending
+rate(db_pool_acquisition_timeouts_total[5m])
 
 # Services that are currently down
 service_health_status == 0
@@ -143,6 +148,14 @@ groups:
           severity: warning
         annotations:
           summary: "DB connection pool > 85 % utilised"
+
+      - alert: DBPoolAcquisitionTimeouts
+        expr: rate(db_pool_acquisition_timeouts_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection acquisition requests are timing out"
 ```
 
 ### Grafana dashboard

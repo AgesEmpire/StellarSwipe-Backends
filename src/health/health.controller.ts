@@ -17,6 +17,7 @@ import {
   RedisHealthIndicator,
   QueueHealthIndicator,
   KafkaHealthIndicator,
+  DatabasePoolHealthIndicator,
 } from './indicators';
 import {
   HealthSummaryService,
@@ -39,6 +40,7 @@ export class HealthController implements OnApplicationBootstrap {
     private redisHealth: RedisHealthIndicator,
     private queueHealth: QueueHealthIndicator,
     private kafkaHealth: KafkaHealthIndicator,
+    private databasePoolHealth: DatabasePoolHealthIndicator,
     private healthSummary: HealthSummaryService,
   ) {}
 
@@ -77,6 +79,7 @@ export class HealthController implements OnApplicationBootstrap {
   async check(): Promise<HealthCheckResult> {
     return this.health.check([
       () => this.databaseHealth.isHealthy('database'),
+      () => this.databasePoolHealth.isHealthy('database_pool'),
       () => this.redisHealth.isHealthy('cache'),
       () => this.stellarHealth.isHealthy('stellar'),
       () => this.sorobanHealth.isHealthy('soroban'),
@@ -159,6 +162,7 @@ export class HealthController implements OnApplicationBootstrap {
   async readiness(): Promise<HealthCheckResult> {
     return this.health.check([
       () => this.databaseHealth.isHealthy('database'),
+      () => this.databasePoolHealth.isHealthy('database_pool'),
       () => this.redisHealth.isHealthy('cache'),
       () => this.queueHealth.isHealthy('queue'),
     ]);

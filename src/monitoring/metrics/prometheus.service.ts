@@ -36,8 +36,9 @@ export class PrometheusService implements OnModuleInit {
   readonly dbPoolTotal: Gauge;
   readonly dbPoolActive: Gauge;
   readonly dbPoolIdle: Gauge;
-  readonly dbPoolWaiting: Gauge;
+  readonly dbPoolPending: Gauge;
   readonly dbPoolUtilizationRatio: Gauge;
+  readonly dbPoolAcquireTimeoutsTotal: Counter;
 
   // Health check status gauges (1 = up, 0 = down)
   readonly serviceHealthStatus: Gauge;
@@ -142,15 +143,21 @@ export class PrometheusService implements OnModuleInit {
       registers: [this.registry],
     });
 
-    this.dbPoolWaiting = new Gauge({
-      name: 'db_pool_connections_waiting',
-      help: 'Connections waiting on a lock or client',
+    this.dbPoolPending = new Gauge({
+      name: 'db_pool_connections_pending',
+      help: 'Requests waiting to acquire a database connection',
       registers: [this.registry],
     });
 
     this.dbPoolUtilizationRatio = new Gauge({
       name: 'db_pool_utilization_ratio',
       help: 'Ratio of total pool connections to configured maximum (0–1)',
+      registers: [this.registry],
+    });
+
+    this.dbPoolAcquireTimeoutsTotal = new Counter({
+      name: 'db_pool_acquisition_timeouts_total',
+      help: 'Connection acquisition requests that timed out',
       registers: [this.registry],
     });
 

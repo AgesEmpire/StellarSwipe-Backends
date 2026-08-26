@@ -9,7 +9,8 @@ export interface PoolSnapshot {
   total: number;
   active: number;
   idle: number;
-  waiting: number;
+  pending: number;
+  timedOut: number;
   utilizationRatio: number;
   timestamp: Date;
 }
@@ -30,7 +31,9 @@ export class ConnectionPoolMetricsService implements OnModuleInit, OnModuleDestr
   private readonly pollIntervalMs: number;
 
   private pollTimer: NodeJS.Timeout | null = null;
+  private poolInstrumented = false;
   private lastSnapshot: PoolSnapshot | null = null;
+  private timedOut = 0;
   private consecutiveHighUtilization = 0;
 
   constructor(
@@ -46,6 +49,8 @@ export class ConnectionPoolMetricsService implements OnModuleInit, OnModuleDestr
   }
 
   onModuleInit(): void {
+    this.instrumentPoolTimeouts();
+    void this.collect();
     this.pollTimer = setInterval(() => this.collect(), this.pollIntervalMs);
     this.logger.log(
       `Connection pool metrics polling started (interval=${this.pollIntervalMs}ms, max=${this.poolMax})`,
@@ -61,29 +66,37 @@ export class ConnectionPoolMetricsService implements OnModuleInit, OnModuleDestr
 
   async collect(): Promise<PoolSnapshot> {
     try {
-      const [activityRow] = await this.dataSource.query<{ active: string; idle: string; waiting: string }[]>(`
-        SELECT
-          COUNT(*) FILTER (WHERE state = 'active')  AS active,
-          COUNT(*) FILTER (WHERE state = 'idle')    AS idle,
-          COUNT(*) FILTER (WHERE wait_event_type = 'Lock' OR wait_event_type = 'Client') AS waiting
-        FROM pg_stat_activity
-        WHERE datname = current_database()
-      `);
+      const pool = (this.dataSource.driver as { master?: {
+        totalCount?: number;
+        idleCount?: number;
+        waitingCount?: number;
+      } }).master;
+      if (!pool) {
+        throw new Error('PostgreSQL connection pool is unavailable');
+      }
 
-      const active = parseInt(activityRow.active, 10);
-      const idle = parseInt(activityRow.idle, 10);
-      const waiting = parseInt(activityRow.waiting, 10);
-      const total = active + idle;
+      const total = pool.totalCount ?? 0;
+      const idle = pool.idleCount ?? 0;
+      const active = Math.max(total - idle, 0);
+      const pending = pool.waitingCount ?? 0;
       const utilizationRatio = this.poolMax > 0 ? total / this.poolMax : 0;
 
-      const snapshot: PoolSnapshot = { total, active, idle, waiting, utilizationRatio, timestamp: new Date() };
+      const snapshot: PoolSnapshot = {
+        total,
+        active,
+        idle,
+        pending,
+        timedOut: this.timedOut,
+        utilizationRatio,
+        timestamp: new Date(),
+      };
       this.lastSnapshot = snapshot;
 
       // Update Prometheus gauges
       this.prometheus.dbPoolTotal.set(total);
       this.prometheus.dbPoolActive.set(active);
       this.prometheus.dbPoolIdle.set(idle);
-      this.prometheus.dbPoolWaiting.set(waiting);
+      this.prometheus.dbPoolPending.set(pending);
       this.prometheus.dbPoolUtilizationRatio.set(utilizationRatio);
 
       this.checkThresholds(snapshot);
@@ -98,8 +111,36 @@ export class ConnectionPoolMetricsService implements OnModuleInit, OnModuleDestr
     return this.lastSnapshot;
   }
 
+  recordAcquireTimeout(): void {
+    this.timedOut++;
+    this.prometheus.dbPoolAcquireTimeoutsTotal.inc();
+  }
+
+  private instrumentPoolTimeouts(): void {
+    const pool = (this.dataSource.driver as { master?: { connect?: Function } }).master;
+    if (!pool?.connect || this.poolInstrumented) return;
+
+    const connect = pool.connect.bind(pool);
+    pool.connect = (...args: unknown[]) => {
+      const result = connect(...args);
+      if (!result || typeof (result as Promise<unknown>).catch !== 'function') return result;
+      return (result as Promise<unknown>).catch((error) => {
+        if (/timeout|timed out/i.test((error as Error).message)) {
+          this.recordAcquireTimeout();
+        }
+        throw error;
+      });
+    };
+    this.poolInstrumented = true;
+  }
+
+  isReady(): boolean {
+    const snapshot = this.lastSnapshot;
+    return snapshot !== null && snapshot.utilizationRatio < 1 && snapshot.pending === 0;
+  }
+
   private checkThresholds(snapshot: PoolSnapshot): void {
-    const { utilizationRatio, waiting } = snapshot;
+    const { utilizationRatio, pending } = snapshot;
 
     if (utilizationRatio >= this.saturationThreshold) {
       this.logger.warn(
@@ -125,13 +166,13 @@ export class ConnectionPoolMetricsService implements OnModuleInit, OnModuleDestr
     }
 
     // Waiting connections with low utilization suggests a connection leak
-    if (waiting > 0 && utilizationRatio < this.highUtilizationThreshold) {
-      this.logger.warn(`Possible connection leak: ${waiting} waiting with only ${(utilizationRatio * 100).toFixed(1)}% utilization`);
+    if (pending > 0 && utilizationRatio < this.highUtilizationThreshold) {
+      this.logger.warn(`Possible connection leak: ${pending} pending with only ${(utilizationRatio * 100).toFixed(1)}% utilization`);
       this.eventEmitter.emit(POOL_EVENTS.LEAK_SUSPECTED, snapshot);
     }
   }
 
   private emptySnapshot(): PoolSnapshot {
-    return { total: 0, active: 0, idle: 0, waiting: 0, utilizationRatio: 0, timestamp: new Date() };
+    return { total: 0, active: 0, idle: 0, pending: 0, timedOut: this.timedOut, utilizationRatio: 0, timestamp: new Date() };
   }
 }
