@@ -180,9 +180,21 @@ export class TradesService {
               dto.takeProfitPrice?.toString() || signalData_.targetPrice,
             status: TradeStatus.PENDING,
           });
-          await this.tradeRepository.save(newTrade);
-          newTrade.status = TradeStatus.EXECUTING;
-          await this.tradeRepository.save(newTrade);
+          await this.dataSource.transaction(async (manager) => {
+            await manager.save(Trade, newTrade);
+            newTrade.status = TradeStatus.EXECUTING;
+            await manager.save(Trade, newTrade);
+            await this.outboxService.record(
+              manager,
+              'trade.order.created',
+              {
+                tradeId: newTrade.id,
+                userId: newTrade.userId,
+                signalId: newTrade.signalId,
+              },
+              `trade.order.created:${newTrade.id}`,
+            );
+          });
           return newTrade;
         },
       );
@@ -197,7 +209,19 @@ export class TradesService {
       if (!executionResult.success) {
         trade.status = TradeStatus.FAILED;
         trade.errorMessage = executionResult.error;
-        await this.tradeRepository.save(trade);
+        await this.dataSource.transaction(async (manager) => {
+          await manager.save(Trade, trade);
+          await this.outboxService.record(
+            manager,
+            'trade.execution.failed',
+            {
+              tradeId: trade.id,
+              userId: trade.userId,
+              error: trade.errorMessage,
+            },
+            `trade.execution.failed:${trade.id}`,
+          );
+        });
 
         this.tradeLatency.endFlow(trade.id, 'failure');
         this.logger.error(`Trade ${trade.id} failed: ${executionResult.error}`);
@@ -320,7 +344,15 @@ export class TradesService {
       trade.profitLossPercentage = profitLossPercentage;
       trade.closedAt = new Date();
 
-      await this.tradeRepository.save(trade);
+      await this.dataSource.transaction(async (manager) => {
+        await manager.save(Trade, trade);
+        await this.outboxService.record(
+          manager,
+          'trade.position.closed',
+          { tradeId: trade.id, userId: trade.userId, profitLoss },
+          `trade.position.closed:${trade.id}`,
+        );
+      });
 
       // Handle large loss for velocity tracking
       if (parseFloat(profitLoss) < -1000) {

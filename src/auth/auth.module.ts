@@ -28,6 +28,7 @@ import { AnomalousLoginListener } from './session/anomalous-login.listener';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
+import { RefreshTokenModule } from './refresh-token/refresh-token.module';
 
 @Module({
   imports: [
@@ -44,12 +45,24 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     }),
     CacheModule,
     AuditModule,
-    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint, RefreshToken]),
+    TypeOrmModule.forFeature([
+      User,
+      SocialConnection,
+      TwoFactor,
+      LoginFingerprint,
+      RefreshToken,
+    ]),
     UsersModule,
     EmailModule,
     AuthorizationModule,
+    RefreshTokenModule,
   ],
-  controllers: [AuthController, SocialAuthController, TwoFactorController, WebauthnController],
+  controllers: [
+    AuthController,
+    SocialAuthController,
+    TwoFactorController,
+    WebauthnController,
+  ],
   providers: [
     AuthService,
     JwtStrategy,

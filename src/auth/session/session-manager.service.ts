@@ -1,4 +1,11 @@
-import { Injectable, Logger, Inject, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  Optional,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
@@ -11,6 +18,8 @@ export interface SessionData {
   createdAt: number;
   lastActivity: number;
   metadata?: Record<string, any>;
+  familyId?: string;
+  refreshTokenHash?: string;
 }
 
 interface TokenPair {
@@ -31,13 +40,20 @@ export class SessionManagerService {
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private configService: ConfigService,
     private jwtService: JwtService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {
-    this.sessionTTL = this.configService.get('auth.sessionTTL', 3600);       // 1 h access
-    this.refreshTTL = this.configService.get('auth.refreshTTL', 604800);     // 7 d refresh
-    this.maxSessionsPerUser = this.configService.get('auth.maxSessionsPerUser', 5);
+    this.sessionTTL = this.configService.get('auth.sessionTTL', 3600); // 1 h access
+    this.refreshTTL = this.configService.get('auth.refreshTTL', 604800); // 7 d refresh
+    this.maxSessionsPerUser = this.configService.get(
+      'auth.maxSessionsPerUser',
+      5,
+    );
 
     // Derive a 32-byte AES-256 key from the JWT secret so no extra config is needed
-    const secret = this.configService.get<string>('jwt.secret', 'change-this-secret-key');
+    const secret = this.configService.get<string>(
+      'jwt.secret',
+      'change-this-secret-key',
+    );
     this.encryptionKey = crypto.createHash('sha256').update(secret).digest();
   }
 
@@ -51,6 +67,7 @@ export class SessionManagerService {
     userId: string,
     publicKey: string,
     metadata?: Record<string, any>,
+    familyId: string = crypto.randomUUID(),
   ): Promise<TokenPair> {
     const sessionId = crypto.randomUUID();
     const refreshToken = crypto.randomBytes(40).toString('hex');
@@ -60,8 +77,15 @@ export class SessionManagerService {
       { expiresIn: this.sessionTTL },
     );
 
-    await this.createSession(sessionId, userId, publicKey, metadata);
-    await this.storeRefreshToken(refreshToken, sessionId, userId);
+    await this.createSession(
+      sessionId,
+      userId,
+      publicKey,
+      metadata,
+      familyId,
+      this.hashToken(refreshToken),
+    );
+    await this.storeRefreshToken(refreshToken, sessionId, userId, familyId);
 
     return { accessToken, refreshToken, expiresIn: this.sessionTTL };
   }
@@ -73,12 +97,18 @@ export class SessionManagerService {
   async refreshTokens(refreshToken: string): Promise<TokenPair> {
     const payload = await this.consumeRefreshToken(refreshToken);
     const session = await this.getSession(payload.sessionId);
-    if (!session) throw new UnauthorizedException('Session not found or expired');
+    if (!session)
+      throw new UnauthorizedException('Session not found or expired');
 
     // Revoke old session before issuing new one (token rotation)
-    await this.deleteSession(payload.sessionId);
+    await this.deleteSession(payload.sessionId, true);
 
-    return this.issueTokens(session.userId, session.publicKey, session.metadata);
+    return this.issueTokens(
+      session.userId,
+      session.publicKey,
+      session.metadata,
+      payload.familyId,
+    );
   }
 
   // ── Session CRUD ─────────────────────────────────────────────────────────
@@ -88,9 +118,19 @@ export class SessionManagerService {
     userId: string,
     publicKey: string,
     metadata?: Record<string, any>,
+    familyId?: string,
+    refreshTokenHash?: string,
   ): Promise<void> {
     const now = Date.now();
-    const sessionData: SessionData = { userId, publicKey, createdAt: now, lastActivity: now, metadata };
+    const sessionData: SessionData = {
+      userId,
+      publicKey,
+      createdAt: now,
+      lastActivity: now,
+      metadata,
+      familyId,
+      refreshTokenHash,
+    };
 
     await this.cacheManager.set(
       `session:${sessionId}`,
@@ -124,9 +164,17 @@ export class SessionManagerService {
     );
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(
+    sessionId: string,
+    preserveRefreshToken = false,
+  ): Promise<void> {
     const session = await this.getSession(sessionId);
-    if (session) await this.removeUserSession(session.userId, sessionId);
+    if (session) {
+      await this.removeUserSession(session.userId, sessionId);
+      if (!preserveRefreshToken && session.refreshTokenHash) {
+        await this.cacheManager.del(`refresh:${session.refreshTokenHash}`);
+      }
+    }
     await this.cacheManager.del(`session:${sessionId}`);
     this.logger.log(`Session revoked: ${sessionId}`);
   }
@@ -134,7 +182,7 @@ export class SessionManagerService {
   /** Revoke all sessions for a user (logout everywhere / suspicious activity). */
   async deleteAllUserSessions(userId: string): Promise<void> {
     const sessions = await this.getUserSessions(userId);
-    await Promise.all(sessions.map((id) => this.cacheManager.del(`session:${id}`)));
+    await Promise.all(sessions.map((id) => this.deleteSession(id)));
     await this.cacheManager.del(`user_sessions:${userId}`);
     this.logger.log(`All sessions revoked for user ${userId}`);
   }
@@ -142,7 +190,11 @@ export class SessionManagerService {
   async getUserSessions(userId: string): Promise<string[]> {
     const raw = await this.cacheManager.get<string>(`user_sessions:${userId}`);
     if (!raw) return [];
-    try { return JSON.parse(raw); } catch { return []; }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
   }
 
   async getActiveSessionCount(): Promise<number> {
@@ -155,10 +207,16 @@ export class SessionManagerService {
     token: string,
     sessionId: string,
     userId: string,
+    familyId: string,
   ): Promise<void> {
-    const payload = JSON.stringify({ sessionId, userId });
+    const payload = JSON.stringify({
+      sessionId,
+      userId,
+      familyId,
+      consumed: false,
+    });
     await this.cacheManager.set(
-      `refresh:${token}`,
+      `refresh:${this.hashToken(token)}`,
       this.encrypt(payload),
       this.refreshTTL * 1000,
     );
@@ -166,17 +224,43 @@ export class SessionManagerService {
 
   private async consumeRefreshToken(
     token: string,
-  ): Promise<{ sessionId: string; userId: string }> {
-    const raw = await this.cacheManager.get<string>(`refresh:${token}`);
-    if (!raw) throw new UnauthorizedException('Invalid or expired refresh token');
-
-    // One-time use: delete immediately
-    await this.cacheManager.del(`refresh:${token}`);
+  ): Promise<{ sessionId: string; userId: string; familyId: string }> {
+    const key = `refresh:${this.hashToken(token)}`;
+    const raw = await this.cacheManager.get<string>(key);
+    if (!raw)
+      throw new UnauthorizedException('Invalid or expired refresh token');
 
     try {
-      return JSON.parse(this.decrypt(raw));
-    } catch {
+      const payload = JSON.parse(this.decrypt(raw));
+      if (payload.consumed) {
+        await this.deleteTokenFamily(payload.userId, payload.familyId);
+        this.events?.emit('security.refresh_token_reuse', payload);
+        throw new UnauthorizedException('Refresh token reuse detected');
+      }
+      await this.cacheManager.set(
+        key,
+        this.encrypt(JSON.stringify({ ...payload, consumed: true })),
+        this.refreshTTL * 1000,
+      );
+      return payload;
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException('Malformed refresh token');
+    }
+  }
+
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private async deleteTokenFamily(
+    userId: string,
+    familyId: string,
+  ): Promise<void> {
+    const ids = await this.getUserSessions(userId);
+    for (const id of ids) {
+      const session = await this.getSession(id);
+      if (session?.familyId === familyId) await this.deleteSession(id);
     }
   }
 
@@ -185,7 +269,10 @@ export class SessionManagerService {
   private encrypt(plaintext: string): string {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', this.encryptionKey, iv);
-    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const encrypted = Buffer.concat([
+      cipher.update(plaintext, 'utf8'),
+      cipher.final(),
+    ]);
     const tag = cipher.getAuthTag();
     return Buffer.concat([iv, tag, encrypted]).toString('base64');
   }
@@ -195,14 +282,21 @@ export class SessionManagerService {
     const iv = buf.subarray(0, 12);
     const tag = buf.subarray(12, 28);
     const encrypted = buf.subarray(28);
-    const decipher = crypto.createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm',
+      this.encryptionKey,
+      iv,
+    );
     decipher.setAuthTag(tag);
     return decipher.update(encrypted) + decipher.final('utf8');
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private async addUserSession(userId: string, sessionId: string): Promise<void> {
+  private async addUserSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<void> {
     const sessions = await this.getUserSessions(userId);
     if (sessions.length >= this.maxSessionsPerUser) {
       const oldest = sessions.shift()!;
@@ -217,8 +311,13 @@ export class SessionManagerService {
     );
   }
 
-  private async removeUserSession(userId: string, sessionId: string): Promise<void> {
-    const sessions = (await this.getUserSessions(userId)).filter((id) => id !== sessionId);
+  private async removeUserSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const sessions = (await this.getUserSessions(userId)).filter(
+      (id) => id !== sessionId,
+    );
     if (sessions.length > 0) {
       await this.cacheManager.set(
         `user_sessions:${userId}`,
