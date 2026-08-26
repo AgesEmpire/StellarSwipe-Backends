@@ -27,6 +27,7 @@ export class PrometheusService implements OnModuleInit {
   // Cache metrics
   readonly cacheHitsTotal: Counter;
   readonly cacheMissesTotal: Counter;
+  readonly bullShutdownForcedTotal: Counter;
 
   // DB metrics
   readonly dbQueryDuration: Histogram;
@@ -108,6 +109,12 @@ export class PrometheusService implements OnModuleInit {
       name: 'cache_misses_total',
       help: 'Total cache misses',
       labelNames: ['layer'],
+      registers: [this.registry],
+    });
+
+    this.bullShutdownForcedTotal = new Counter({
+      name: 'bullmq_shutdown_forced_total',
+      help: 'BullMQ workers forcibly interrupted during shutdown',
       registers: [this.registry],
     });
 

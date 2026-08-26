@@ -62,6 +62,10 @@ The endpoint requires the `METRICS_API_KEY` or a valid bearer token
 
 `nodejs_*` — heap, event-loop lag, GC pauses, active handles. Collected automatically by `prom-client`.
 
+### BullMQ shutdown
+
+`BULL_SHUTDOWN_GRACE_PERIOD_MS` controls how long workers are allowed to finish active jobs during a deploy. Workers pause before draining, and queued jobs remain in Redis for the next worker. `bullmq_shutdown_forced_total` counts jobs that may have been interrupted after the grace period.
+
 ---
 
 ## Sample PromQL queries
