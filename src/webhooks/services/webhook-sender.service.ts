@@ -86,9 +86,14 @@ export class WebhookSenderService {
     const delivery = await this.getDeliveryForAttempt(deliveryId);
     const webhook = delivery.webhook;
     const payload = delivery.payload as unknown as WebhookPayload;
+
+    // Issue #1030: during a rotation window, sign with nextSecret so the
+    // consumer adopts the new key. Falls back to the current secret when no
+    // rotation is in progress.
+    const signingSecret = this.resolveSigningSecret(webhook);
     const signature = this.signatureGenerator.generateSignature(
       payload,
-      webhook.secret,
+      signingSecret,
     );
 
     delivery.attempts = attempt;
@@ -132,9 +137,10 @@ export class WebhookSenderService {
     }
 
     const payload = delivery.payload as unknown as WebhookPayload;
+    const signingSecret = this.resolveSigningSecret(webhook);
     const signature = this.signatureGenerator.generateSignature(
       payload,
-      webhook.secret,
+      signingSecret,
     );
 
     delivery.attempts += 1;
