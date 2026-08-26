@@ -28,6 +28,7 @@ export interface ValidatedEnvironment {
   DATABASE_POOL_MAX: number;
   DATABASE_POOL_IDLE_TIMEOUT: number;
   DATABASE_POOL_CONNECTION_TIMEOUT: number;
+  BULL_SHUTDOWN_GRACE_PERIOD_MS: number;
   DATABASE_STATEMENT_TIMEOUT: number;
   DATABASE_MAX_QUERY_TIME: number;
   REDIS_HOST: string;
@@ -100,6 +101,7 @@ export const configSchema = Joi.object<ValidatedEnvironment>({
     .integer()
     .min(100)
     .default(2000),
+  BULL_SHUTDOWN_GRACE_PERIOD_MS: Joi.number().integer().min(0).max(900000).default(30000),
   DATABASE_STATEMENT_TIMEOUT: Joi.number().integer().min(1000).default(100000),
   DATABASE_MAX_QUERY_TIME: Joi.number().integer().min(1).default(10000),
 

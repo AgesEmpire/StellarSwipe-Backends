@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
+import { BullShutdownCoordinator } from '../../common/bull/bull-shutdown.coordinator';
 import { WebhookSenderService } from '../services/webhook-sender.service';
 import {
   WEBHOOK_DELIVERY_JOB,
@@ -18,8 +19,15 @@ import {
 export class WebhookDeliveryProcessor extends WorkerHost {
   private readonly logger = new Logger(WebhookDeliveryProcessor.name);
 
-  constructor(private readonly webhookSender: WebhookSenderService) {
+  constructor(
+    private readonly webhookSender: WebhookSenderService,
+    private readonly shutdown: BullShutdownCoordinator,
+  ) {
     super();
+  }
+
+  onModuleInit(): void {
+    this.shutdown.register(WebhookDeliveryProcessor.name, () => this.worker);
   }
 
   async process(job: Job<WebhookDeliveryJobData>): Promise<void> {
