@@ -17,6 +17,7 @@ import { UsersModule } from '../users/users.module';
 import { TwoFactor } from './two-factor/entities/two-factor.entity';
 import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
+import { RecoveryCodeService } from './two-factor/recovery-code.service';
 import { AuthAuditService } from './auth-audit.service';
 import { AuditModule } from '../audit-log/audit.module';
 import { SessionManagerService } from './session/session-manager.service';
@@ -70,6 +71,7 @@ import { RefreshTokenModule } from './refresh-token/refresh-token.module';
     WsJwtAuthGuard,
     TwitterOauthService,
     TwoFactorService,
+    RecoveryCodeService,
     AuthAuditService,
     SessionManagerService,
     SessionCleanupService,
@@ -84,6 +86,7 @@ import { RefreshTokenModule } from './refresh-token/refresh-token.module';
     WsJwtAuthGuard,
     TwitterOauthService,
     TwoFactorService,
+    RecoveryCodeService,
     AuthAuditService,
     SessionManagerService,
     SessionFingerprintService,
