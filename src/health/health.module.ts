@@ -9,6 +9,7 @@ import {
   RedisHealthIndicator,
   QueueHealthIndicator,
   KafkaHealthIndicator,
+  DatabasePoolHealthIndicator,
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
@@ -19,6 +20,7 @@ import { User } from '../users/entities/user.entity';
 import { Signal } from '../signals/entities/signal.entity';
 import { Trade } from '../trades/entities/trade.entity';
 import { StreamingModule } from '../streaming/streaming.module';
+import { DatabaseOptimizationModule } from '../database/database.module';
 
 @Module({
   imports: [
@@ -27,6 +29,7 @@ import { StreamingModule } from '../streaming/streaming.module';
     BullModule.registerQueue({ name: 'priority-queue' }),
     TypeOrmModule.forFeature([User, Signal, Trade]),
     StreamingModule,
+    DatabaseOptimizationModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -37,6 +40,7 @@ import { StreamingModule } from '../streaming/streaming.module';
     RedisHealthIndicator,
     QueueHealthIndicator,
     KafkaHealthIndicator,
+    DatabasePoolHealthIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
   ],
@@ -47,6 +51,7 @@ import { StreamingModule } from '../streaming/streaming.module';
     RedisHealthIndicator,
     QueueHealthIndicator,
     KafkaHealthIndicator,
+    DatabasePoolHealthIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
   ],
