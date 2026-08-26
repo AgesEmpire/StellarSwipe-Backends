@@ -7,39 +7,22 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { CORRELATION_ID_HEADER } from '../correlation/correlation-id.store';
+import { ErrorCode } from '../error-classification/error-codes.enum';
+import { ErrorResponseDto } from '../dto/error-response.dto';
 import { TRACE_ID_HEADER } from '../../tracing/tracing.service';
 
 /**
  * Standardised error payload returned by every API endpoint.
- * All fields are always present; `traceId` is included when request tracing
- * is active (see TracingMiddleware in src/tracing/tracing.service.ts).
+ * This filter ensures HttpException responses follow the same schema as other
+ * global failures and include field-specific validation details when available.
  */
-export interface ErrorPayload {
-  statusCode: number;
+export interface ErrorPayload extends ErrorResponseDto {
+  requestId?: string;
   error: string;
-  message: string | string[];
-  path: string;
-  timestamp: string;
   traceId?: string;
 }
 
-/**
- * #366 — HTTP exception filter.
- *
- * Normalises every HttpException into the standard ErrorPayload shape so all
- * API endpoints return consistent error responses regardless of where the
- * exception originates.
- *
- * This filter handles HttpException only (@Catch(HttpException)).
- * Unknown / unhandled errors continue to be handled by GlobalExceptionFilter
- * (src/common/filters/global-exception.filter.ts) which also reports to Sentry.
- *
- * Registration order in main.ts:
- *   app.useGlobalFilters(
- *     new GlobalExceptionFilter(logger, sentryService),  // catches unknown errors
- *     new HttpExceptionFilter(),                          // normalises HTTP errors
- *   );
- */
 @Catch(HttpException)
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -50,28 +33,48 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const res = ctx.getResponse<Response>();
 
     const statusCode = exception.getStatus();
-    const message = this.extractMessage(exception);
-    const traceId = req.headers[TRACE_ID_HEADER] as string | undefined;
+    const body = exception.getResponse();
+    const message = this.extractMessage(body, exception.message);
+    const errorCode = this.extractErrorCode(body, statusCode);
+    const error = this.statusToErrorName(statusCode);
+    const details = this.extractDetails(body);
+    const requestId = (req.headers[CORRELATION_ID_HEADER] as string | undefined) ?? undefined;
+    const traceId = (req.headers[TRACE_ID_HEADER] as string | undefined) ?? undefined;
 
     const payload: ErrorPayload = {
       statusCode,
-      error: HttpStatus[statusCode] ?? 'HttpException',
+      error,
+      errorCode,
       message,
       path: req.url,
       timestamp: new Date().toISOString(),
-      ...(traceId && { traceId }),
+      ...(requestId ? { requestId } : {}),
+      ...(traceId ? { traceId } : {}),
+      ...(details ? { details } : {}),
     };
 
     this.logger.warn(
-      `${req.method} ${req.url} → ${statusCode}${traceId ? ` [${traceId}]` : ''}`,
+      `${req.method} ${req.url} → ${statusCode}${requestId ? ` [${requestId}]` : ''}`,
     );
 
     res.status(statusCode).json(payload);
   }
 
-  private extractMessage(exception: HttpException): string | string[] {
-    const body = exception.getResponse();
+  private statusToErrorName(statusCode: number): string {
+    const nameMap: Record<number, string> = {
+      [HttpStatus.BAD_REQUEST]: 'BAD_REQUEST',
+      [HttpStatus.UNAUTHORIZED]: 'UNAUTHORIZED',
+      [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
+      [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
+      [HttpStatus.CONFLICT]: 'CONFLICT',
+      [HttpStatus.UNPROCESSABLE_ENTITY]: 'UNPROCESSABLE_ENTITY',
+      [HttpStatus.TOO_MANY_REQUESTS]: 'TOO_MANY_REQUESTS',
+      [HttpStatus.INTERNAL_SERVER_ERROR]: 'INTERNAL_SERVER_ERROR',
+    };
+    return nameMap[statusCode] ?? HttpStatus[statusCode] ?? 'UNKNOWN';
+  }
 
+  private extractMessage(body: unknown, fallback: string): string | string[] {
     if (typeof body === 'string') return body;
 
     if (typeof body === 'object' && body !== null) {
@@ -80,6 +83,37 @@ export class HttpExceptionFilter implements ExceptionFilter {
       if (typeof msg === 'string' || Array.isArray(msg)) return msg;
     }
 
-    return exception.message;
+    return fallback;
+  }
+
+  private extractDetails(body: unknown): Record<string, unknown> | undefined {
+    if (typeof body === 'object' && body !== null) {
+      const b = body as Record<string, unknown>;
+      const details = b['details'];
+      if (details && typeof details === 'object') {
+        return details as Record<string, unknown>;
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractErrorCode(body: unknown, statusCode: number): string {
+    if (typeof body === 'object' && body !== null) {
+      const b = body as Record<string, unknown>;
+      const code = b['code'];
+      if (typeof code === 'string' && code.length > 0) return code;
+    }
+
+    const codeMap: Record<number, string> = {
+      [HttpStatus.BAD_REQUEST]: ErrorCode.INVALID_INPUT,
+      [HttpStatus.UNAUTHORIZED]: ErrorCode.AUTH_FAILED,
+      [HttpStatus.FORBIDDEN]: ErrorCode.ACCESS_DENIED,
+      [HttpStatus.NOT_FOUND]: ErrorCode.RESOURCE_NOT_FOUND,
+      [HttpStatus.CONFLICT]: ErrorCode.DUPLICATE_ENTRY,
+      [HttpStatus.TOO_MANY_REQUESTS]: ErrorCode.RATE_LIMIT_EXCEEDED,
+    };
+
+    return codeMap[statusCode] ?? ErrorCode.UNKNOWN_ERROR;
   }
 }

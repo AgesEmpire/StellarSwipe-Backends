@@ -1,0 +1,91 @@
+import {
+  computeBackoffDelayMs,
+  extractRetryAfterMs,
+  isRetryableError,
+} from './retry.util';
+
+describe('isRetryableError', () => {
+  it('treats connection timeouts as retryable', () => {
+    expect(isRetryableError({ code: 'ETIMEDOUT' })).toBe(true);
+    expect(isRetryableError({ code: 'ECONNABORTED' })).toBe(true);
+    expect(isRetryableError({ code: 'ECONNRESET' })).toBe(true);
+  });
+
+  it('treats named timeout/abort errors as retryable', () => {
+    expect(isRetryableError({ name: 'TimeoutError' })).toBe(true);
+    expect(isRetryableError({ name: 'AbortError' })).toBe(true);
+  });
+
+  it('treats HTTP 429 rate limiting as retryable', () => {
+    expect(isRetryableError({ status: 429 })).toBe(true);
+    expect(isRetryableError({ response: { status: 429 } })).toBe(true);
+  });
+
+  it('treats 5xx server errors as retryable', () => {
+    expect(isRetryableError({ status: 500 })).toBe(true);
+    expect(isRetryableError({ statusCode: 503 })).toBe(true);
+    expect(isRetryableError({ response: { status: 502 } })).toBe(true);
+  });
+
+  it('does not treat 4xx client errors (other than 429) as retryable', () => {
+    expect(isRetryableError({ status: 400 })).toBe(false);
+    expect(isRetryableError({ status: 401 })).toBe(false);
+    expect(isRetryableError({ status: 404 })).toBe(false);
+  });
+
+  it('does not treat unrecognized errors as retryable', () => {
+    expect(isRetryableError(new Error('validation failed'))).toBe(false);
+    expect(isRetryableError({})).toBe(false);
+    expect(isRetryableError(undefined)).toBe(false);
+  });
+});
+
+describe('extractRetryAfterMs', () => {
+  it('parses a delay-seconds Retry-After header', () => {
+    const ms = extractRetryAfterMs({ response: { headers: { 'retry-after': '2' } } });
+    expect(ms).toBe(2000);
+  });
+
+  it('parses an HTTP-date Retry-After header', () => {
+    const future = new Date(Date.now() + 5000).toUTCString();
+    const ms = extractRetryAfterMs({ response: { headers: { 'retry-after': future } } });
+    expect(ms).toBeGreaterThan(0);
+    expect(ms).toBeLessThanOrEqual(5000);
+  });
+
+  it('returns undefined when no header is present', () => {
+    expect(extractRetryAfterMs({ response: { headers: {} } })).toBeUndefined();
+    expect(extractRetryAfterMs({})).toBeUndefined();
+  });
+
+  it('returns undefined for an unparsable header value', () => {
+    const ms = extractRetryAfterMs({ response: { headers: { 'retry-after': 'not-a-date' } } });
+    expect(ms).toBeUndefined();
+  });
+});
+
+describe('computeBackoffDelayMs', () => {
+  it('doubles the base delay per attempt with jitter disabled', () => {
+    expect(computeBackoffDelayMs(1, 100, 10_000, 'none')).toBe(100);
+    expect(computeBackoffDelayMs(2, 100, 10_000, 'none')).toBe(200);
+    expect(computeBackoffDelayMs(3, 100, 10_000, 'none')).toBe(400);
+    expect(computeBackoffDelayMs(4, 100, 10_000, 'none')).toBe(800);
+  });
+
+  it('caps the delay at maxDelayMs', () => {
+    expect(computeBackoffDelayMs(10, 100, 1_000, 'none')).toBe(1_000);
+  });
+
+  it('applies full jitter within [0, cappedDelay]', () => {
+    const samples = Array.from({ length: 50 }, () =>
+      computeBackoffDelayMs(3, 100, 10_000, 'full'),
+    );
+    for (const sample of samples) {
+      expect(sample).toBeGreaterThanOrEqual(0);
+      expect(sample).toBeLessThan(400); // base(100) * 2^2 = 400
+    }
+    // With jitter enabled, repeated calls should not all collapse to the
+    // same value (extremely unlikely across 50 samples if jitter works).
+    expect(new Set(samples).size).toBeGreaterThan(1);
+  });
+});

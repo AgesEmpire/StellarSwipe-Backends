@@ -1,6 +1,17 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
-import { PriorityQueueService, PRIORITY_QUEUE, CRITICAL_QUEUE, LOW_PRIORITY_QUEUE } from './priority-queue.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ConfigModule } from '@nestjs/config';
+import {
+  PriorityQueueService,
+  PRIORITY_QUEUE,
+  CRITICAL_QUEUE,
+  LOW_PRIORITY_QUEUE,
+} from './priority-queue.service';
+import { QueueBackpressureService } from './queue-backpressure.service';
+import { QueueMetricsService } from './queue-metrics.service';
+import { queuePressureConfig } from './queue-pressure.config';
+import { CorrelationModule } from '../common/correlation/correlation.module';
 
 @Module({
   imports: [
@@ -9,8 +20,19 @@ import { PriorityQueueService, PRIORITY_QUEUE, CRITICAL_QUEUE, LOW_PRIORITY_QUEU
       { name: CRITICAL_QUEUE },
       { name: LOW_PRIORITY_QUEUE },
     ),
+    ConfigModule.forFeature(queuePressureConfig),
+    ScheduleModule.forRoot(),
+    CorrelationModule,
   ],
-  providers: [PriorityQueueService],
-  exports: [PriorityQueueService],
+  providers: [
+    PriorityQueueService,
+    QueueBackpressureService,
+    QueueMetricsService,
+  ],
+  exports: [
+    PriorityQueueService,
+    QueueBackpressureService,
+    QueueMetricsService,
+  ],
 })
 export class QueueModule {}

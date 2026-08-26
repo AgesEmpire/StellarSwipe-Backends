@@ -26,12 +26,11 @@ import {
 import { Signal } from './entities/signal.entity';
 import { I18nAppService } from '../i18n/i18n.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CreateSignalDto } from './dto';
+import { CreateSignalDto, PaginatedSignalsQueryDto } from './dto';
 import { IdempotencyInterceptor } from '../common/interceptors/idempotency.interceptor';
 import { RequireIdempotencyKeyGuard } from '../common/guards/require-idempotency-key.guard';
 import { RequireScopes } from '../api-keys/decorators/require-scopes.decorator';
 import { ApiKeyScope } from '../api-keys/enums/api-key-scope.enum';
-import { CursorPaginationQueryDto } from '../common/pagination/cursor-pagination-query.dto';
 
 @Controller('signals')
 @UseInterceptors(IdempotencyInterceptor)
@@ -97,18 +96,12 @@ export class SignalsController {
    * Cursor-based: GET /signals?after=<cursor>&limit=20
    * Offset-based: GET /signals?page=1&limit=20  (backward compatible)
    *
-   * Issue #887 — standardized pagination
+   * Issue #991 — cursor-based pagination for signals feed
    */
   @Get()
   @RequireScopes(ApiKeyScope.SIGNALS_READ)
-  async findAll(
-    @Query() query: CursorPaginationQueryDto,
-  ) {
-    return this.signalsService.findPaginated(
-      query.page ?? 1,
-      query.limit ?? 20,
-      'createdAt',
-    );
+  async findAll(@Query() query: PaginatedSignalsQueryDto) {
+    return this.signalsService.findAll(query);
   }
 
   @Get(':id')

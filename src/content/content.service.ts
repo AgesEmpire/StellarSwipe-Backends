@@ -1,11 +1,13 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ProviderContent,
   ContentType,
@@ -26,11 +28,14 @@ import {
 
 @Injectable()
 export class ContentService {
+  private readonly logger = new Logger(ContentService.name);
+
   constructor(
     @InjectRepository(ProviderContent)
     private contentRepository: Repository<ProviderContent>,
     @InjectRepository(ContentEngagement)
     private engagementRepository: Repository<ContentEngagement>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(
@@ -59,6 +64,9 @@ export class ContentService {
     });
 
     const saved = await this.contentRepository.save(content);
+    if (saved.status === ContentStatus.PUBLISHED) {
+      this.emitSafely('content.created', saved);
+    }
     return this.toResponseDto(saved);
   }
 
@@ -157,6 +165,12 @@ export class ContentService {
     }
 
     const updated = await this.contentRepository.save(content);
+    if (updated.status === ContentStatus.PUBLISHED) {
+      this.emitSafely('content.updated', updated);
+    } else {
+      // No longer published — remove it from the search index.
+      this.emitSafely('content.deleted', updated.id);
+    }
     return this.toResponseDto(updated);
   }
 
@@ -172,6 +186,19 @@ export class ContentService {
     }
 
     await this.contentRepository.remove(content);
+    this.emitSafely('content.deleted', id);
+  }
+
+  /**
+   * Fire an entity-change event without letting a listener failure (e.g. a
+   * search-index refresh error) break the write path that triggered it.
+   */
+  private emitSafely(event: string, payload: unknown): void {
+    try {
+      this.eventEmitter.emit(event, payload);
+    } catch (error) {
+      this.logger.warn(`Failed to emit '${event}' event`, (error as Error).message);
+    }
   }
 
   async recordEngagement(

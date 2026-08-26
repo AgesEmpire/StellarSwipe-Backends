@@ -4,6 +4,9 @@ import { Repository } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { ElasticsearchConfigService } from '../services/elasticsearch.service';
 import { OnEvent } from '@nestjs/event-emitter';
+import { FeatureFlagsService } from '../../feature-flags/feature-flags.service';
+
+const SEARCH_INDEX_REFRESH_FLAG = 'search-index-refresh';
 
 @Injectable()
 export class ProviderIndexerService {
@@ -14,21 +17,33 @@ export class ProviderIndexerService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly elasticsearchService: ElasticsearchConfigService,
+    private readonly featureFlagsService: FeatureFlagsService,
   ) {}
 
   @OnEvent('provider.created')
   async handleProviderCreated(provider: User) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.indexProvider(provider);
   }
 
   @OnEvent('provider.updated')
   async handleProviderUpdated(provider: User) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.updateProviderIndex(provider);
   }
 
   @OnEvent('provider.deleted')
   async handleProviderDeleted(providerId: string) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.deleteProviderIndex(providerId);
+  }
+
+  private async isRefreshEnabled(): Promise<boolean> {
+    const enabled = await this.featureFlagsService.isFlagEnabled(SEARCH_INDEX_REFRESH_FLAG);
+    if (!enabled) {
+      this.logger.debug(`Search index refresh skipped — '${SEARCH_INDEX_REFRESH_FLAG}' flag is disabled`);
+    }
+    return enabled;
   }
 
   async indexProvider(provider: User): Promise<void> {

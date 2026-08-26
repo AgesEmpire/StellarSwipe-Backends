@@ -3,9 +3,19 @@ import { EncryptionService } from './encryption.service';
 import { EncryptedColumnTransformer, encryptedColumn } from './encrypted-column.transformer';
 
 const VALID_KEY = 'a-sufficiently-long-encryption-key-for-tests!!';
+const ROTATED_KEY = 'a-brand-new-post-rotation-encryption-key-here!!';
 
 function makeService(key = VALID_KEY): EncryptionService {
   const config = { get: jest.fn().mockReturnValue(key) } as unknown as ConfigService;
+  return new EncryptionService(config);
+}
+
+function makeServiceWithRotation(currentKey: string, previousKeys: string): EncryptionService {
+  const config = {
+    get: jest.fn((name: string) =>
+      name === 'ENCRYPTION_KEY_PREVIOUS' ? previousKeys : currentKey,
+    ),
+  } as unknown as ConfigService;
   return new EncryptionService(config);
 }
 
@@ -74,6 +84,78 @@ describe('EncryptionService', () => {
   it('isEncrypted returns false for plain strings', () => {
     expect(svc.isEncrypted('plain-text')).toBe(false);
     expect(svc.isEncrypted('a:b:c')).toBe(false); // wrong lengths
+  });
+});
+
+// ── Key rotation ───────────────────────────────────────────────────────────────
+
+describe('EncryptionService key rotation', () => {
+  it('decrypts ciphertext from the current key when no previous keys are configured', () => {
+    const svc = makeServiceWithRotation(VALID_KEY, '');
+    const ciphertext = svc.encrypt('rotation-test');
+    expect(svc.decrypt(ciphertext)).toBe('rotation-test');
+  });
+
+  it('decrypts ciphertext written under a retired key after rotation', () => {
+    // Simulate data encrypted before the rotation.
+    const preRotation = makeService(VALID_KEY);
+    const legacyCiphertext = preRotation.encrypt('old-secret');
+
+    // After rotation: ENCRYPTION_KEY is now ROTATED_KEY, and the old key is
+    // preserved in ENCRYPTION_KEY_PREVIOUS.
+    const postRotation = makeServiceWithRotation(ROTATED_KEY, VALID_KEY);
+
+    expect(postRotation.decrypt(legacyCiphertext)).toBe('old-secret');
+  });
+
+  it('encrypts new values under the current (rotated) key, not the previous one', () => {
+    const postRotation = makeServiceWithRotation(ROTATED_KEY, VALID_KEY);
+    const ciphertext = postRotation.encrypt('new-secret');
+
+    // A service that only knows the old key must not be able to decrypt it.
+    const oldKeyOnly = makeService(VALID_KEY);
+    expect(() => oldKeyOnly.decrypt(ciphertext)).toThrow();
+
+    // But the rotated service (current key) can.
+    expect(postRotation.decrypt(ciphertext)).toBe('new-secret');
+  });
+
+  it('supports multiple comma-separated previous keys', () => {
+    const veryOldKey = 'a-very-old-encryption-key-from-two-rotations-ago!!';
+    const veryOldService = makeService(veryOldKey);
+    const veryOldCiphertext = veryOldService.encrypt('ancient-secret');
+
+    const current = makeServiceWithRotation(
+      ROTATED_KEY,
+      `${VALID_KEY}, ${veryOldKey}`,
+    );
+
+    expect(current.decrypt(veryOldCiphertext)).toBe('ancient-secret');
+  });
+
+  it('throws when no key (current or previous) can decrypt the ciphertext', () => {
+    const unrelatedKey = 'a-totally-unrelated-encryption-key-value-here!!';
+    const unrelatedService = makeService(unrelatedKey);
+    const ciphertext = unrelatedService.encrypt('unreadable');
+
+    const current = makeServiceWithRotation(ROTATED_KEY, VALID_KEY);
+    expect(() => current.decrypt(ciphertext)).toThrow();
+  });
+
+  describe('reEncrypt', () => {
+    it('re-wraps ciphertext from a previous key under the current key', () => {
+      const preRotation = makeService(VALID_KEY);
+      const legacyCiphertext = preRotation.encrypt('migrate-me');
+
+      const postRotation = makeServiceWithRotation(ROTATED_KEY, VALID_KEY);
+      const migrated = postRotation.reEncrypt(legacyCiphertext);
+
+      // Migrated ciphertext still decrypts to the same plaintext...
+      expect(postRotation.decrypt(migrated)).toBe('migrate-me');
+      // ...but is no longer decryptable using only the old key.
+      const oldKeyOnly = makeService(VALID_KEY);
+      expect(() => oldKeyOnly.decrypt(migrated)).toThrow();
+    });
   });
 });
 

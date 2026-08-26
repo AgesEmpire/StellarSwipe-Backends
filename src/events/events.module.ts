@@ -10,14 +10,13 @@ import { SignalEventListener } from './listeners/signal-event.listener';
 import { PortfolioEventListener } from './listeners/portfolio-event.listener';
 import { ReferralEventListener } from './referral-event.listener';
 import { ReferralsModule } from '../referrals/referrals.module';
+import { OutboxModule } from './outbox/outbox.module';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
-import { OutboxEvent } from './entities/outbox-event.entity';
-import { OutboxService } from './outbox.service';
-import { OutboxPublisherService } from './outbox-publisher.service';
 
 @Global()
 @Module({
   imports: [
+    OutboxModule,
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot({
       global: true,
@@ -29,7 +28,7 @@ import { OutboxPublisherService } from './outbox-publisher.service';
       verboseMemoryLeak: true,
       ignoreErrors: false,
     }),
-    TypeOrmModule.forFeature([AuditLog, OutboxEvent]),
+    TypeOrmModule.forFeature([AuditLog]),
     ReferralsModule,
   ],
   providers: [
@@ -40,9 +39,12 @@ import { OutboxPublisherService } from './outbox-publisher.service';
     SignalEventListener,
     PortfolioEventListener,
     ReferralEventListener,
-    OutboxService,
-    OutboxPublisherService,
   ],
-  exports: [EventEmitterService, EventReplayService, EventSerializerService, OutboxService],
+  exports: [
+    EventEmitterService,
+    EventReplayService,
+    EventSerializerService,
+    OutboxModule,
+  ],
 })
 export class EventsModule {}

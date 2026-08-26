@@ -87,4 +87,15 @@ export class UsersController {
     ): Promise<void> {
         return this.usersService.softDelete(walletAddress);
     }
+
+    /**
+     * Restore a soft-deleted user account
+     */
+    @Post('wallet/:walletAddress/restore')
+    @HttpCode(HttpStatus.OK)
+    async restoreUser(
+        @Param('walletAddress') walletAddress: string,
+    ): Promise<User> {
+        return this.usersService.restore(walletAddress);
+    }
 }

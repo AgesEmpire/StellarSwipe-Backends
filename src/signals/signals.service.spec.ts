@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, TooManyRequestsException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SignalsService } from './signals.service';
 import { CacheService } from '../cache/cache.service';
 import { SignalQuotaService } from './quota/signal-quota.service';
@@ -16,6 +17,7 @@ describe('SignalsService', () => {
   let mockRepository: any;
   let quotaService: { checkAndConsume: jest.Mock };
   let cacheService: { getOrSetWithLock: jest.Mock; del: jest.Mock };
+  let eventEmitter: { emit: jest.Mock };
 
   beforeEach(async () => {
     mockRepository = createMockRepository();
@@ -24,6 +26,7 @@ describe('SignalsService', () => {
       getOrSetWithLock: jest.fn((_key, fetchFn) => fetchFn()),
       del: jest.fn(),
     };
+    eventEmitter = { emit: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -34,6 +37,7 @@ describe('SignalsService', () => {
         },
         { provide: CacheService, useValue: cacheService },
         { provide: SignalQuotaService, useValue: quotaService },
+        { provide: EventEmitter2, useValue: eventEmitter },
       ],
     }).compile();
 
@@ -62,6 +66,18 @@ describe('SignalsService', () => {
       expect(result).toBeDefined();
       expect(mockRepository.create).toHaveBeenCalled();
       expect(mockRepository.save).toHaveBeenCalled();
+    });
+
+    it('emits a signal.created event so search indexes stay in sync', async () => {
+      const dto = createSignalDtoFactory({ providerId: 'user-123' });
+      const expectedSignal = signalFactory(dto);
+
+      mockRepository.create.mockReturnValue(expectedSignal);
+      mockRepository.save.mockResolvedValue(expectedSignal);
+
+      const result = await service.create(dto);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith('signal.created', result);
     });
 
 
@@ -207,6 +223,25 @@ describe('SignalsService', () => {
       expect(mockRepository.update).toHaveBeenCalledWith('signal-123', {
         status: SignalStatus.CLOSED,
       });
+    });
+
+    it('emits a signal.updated event so search indexes stay in sync', async () => {
+      const signal = signalFactory({ status: SignalStatus.CLOSED });
+      mockRepository.update.mockResolvedValue({ affected: 1 } as any);
+      mockRepository.findOneBy.mockResolvedValue(signal);
+
+      await service.updateSignalStatus('signal-123', SignalStatus.CLOSED);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith('signal.updated', signal);
+    });
+
+    it('does not emit an event when the signal cannot be found', async () => {
+      mockRepository.update.mockResolvedValue({ affected: 1 } as any);
+      mockRepository.findOneBy.mockResolvedValue(null);
+
+      await service.updateSignalStatus('missing-signal', SignalStatus.CLOSED);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('should update signal status with correct version (optimistic locking)', async () => {

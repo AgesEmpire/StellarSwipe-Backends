@@ -11,9 +11,11 @@ import {
 import { Reflector } from '@nestjs/core';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ConfigService } from '@nestjs/config';
+import { GqlExecutionContext } from '@nestjs/graphql';
 import { Cache } from 'cache-manager';
 import { RATE_LIMIT_KEY, RateLimitConfig, RateLimitTier } from '../decorators/rate-limit.decorator';
 import { SubscriptionsService } from '../../subscriptions/subscriptions.service';
+import { TenantConfigService } from '../../config/tenant-config.service';
 
 interface RateLimitInfo {
   count: number;
@@ -70,6 +72,9 @@ export class RateLimitGuard implements CanActivate {
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @Optional() private configService?: ConfigService,
     @Optional() private subscriptionsService?: SubscriptionsService,
+    // #943 — tenant-specific rate-limit overrides. Optional so existing
+    // tests/wiring that don't provide one keep working (no-op fallback).
+    @Optional() private tenantConfig?: TenantConfigService,
   ) {
     this.limits = this.buildTierLimits();
     this.accountLimits = this.buildAccountTierLimits();
@@ -121,6 +126,52 @@ export class RateLimitGuard implements CanActivate {
     return raw !== undefined && raw !== null && !Number.isNaN(parsed) ? parsed : fallback;
   }
 
+  /**
+   * #943 — Layers a tenant-specific override (if any, for the currently
+   * active tenant) on top of the already-resolved limit/window (tier
+   * default merged with any per-endpoint decorator override). `scope`
+   * namespaces the override lookup so IP-level, per-account, and per-wallet
+   * limits for the same tier can be overridden independently — mirroring
+   * how RATE_LIMIT_<TIER>, RATE_LIMIT_<TIER>_ACCOUNT and
+   * RATE_LIMIT_<TIER>_WALLET env vars are already kept independent above.
+   */
+  private resolveEffectiveLimits(
+    scope: string,
+    base: { limit: number; window: number },
+  ): { limit: number; window: number } {
+    const resolved = this.tenantConfig?.resolveRateLimit(scope, base) ?? base;
+    return {
+      limit: resolved.limit ?? base.limit,
+      window: resolved.window ?? base.window,
+    };
+  }
+
+  /**
+   * Resolves the underlying HTTP request regardless of transport.
+   *
+   * `context.switchToHttp()` only returns a usable request/response pair for
+   * the REST transport — for GraphQL resolvers (context type `'graphql'`)
+   * it returns an adapter whose `getRequest`/`getResponse` are no-ops, which
+   * silently broke rate-limit headers (and the identifier lookups that key
+   * off `request.headers`/`request.user`) for every GraphQL endpoint. Route
+   * through `GqlExecutionContext` when applicable so both transports share
+   * the same request/response objects.
+   */
+  private getRequest(context: ExecutionContext): any {
+    if (context.getType<'graphql'>() === 'graphql') {
+      return GqlExecutionContext.create(context).getContext().req;
+    }
+    return context.switchToHttp().getRequest();
+  }
+
+  /** See {@link getRequest} — same rationale, resolves the HTTP response. */
+  private getResponse(context: ExecutionContext): any {
+    if (context.getType<'graphql'>() === 'graphql') {
+      return GqlExecutionContext.create(context).getContext().res;
+    }
+    return context.switchToHttp().getResponse();
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const config = this.reflector.get<RateLimitConfig>(
       RATE_LIMIT_KEY,
@@ -147,7 +198,7 @@ export class RateLimitGuard implements CanActivate {
 
     // Per-account check when keyBy is specified
     if (config?.keyBy?.length) {
-      const request = context.switchToHttp().getRequest();
+      const request = this.getRequest(context);
       const accountId = this.extractAccountIdentifier(request, config.keyBy);
       if (accountId) {
         await this.checkAccountLimit(
@@ -164,7 +215,7 @@ export class RateLimitGuard implements CanActivate {
   }
 
   private async resolveUserTier(context: ExecutionContext): Promise<RateLimitTier> {
-    const request = context.switchToHttp().getRequest();
+    const request = this.getRequest(context);
     const userId = request.user?.id;
 
     if (!userId || !this.subscriptionsService) {
@@ -194,8 +245,8 @@ export class RateLimitGuard implements CanActivate {
     customLimit?: number,
     customWindow?: number,
   ): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const response = context.switchToHttp().getResponse();
+    const request = this.getRequest(context);
+    const response = this.getResponse(context);
 
     const identifier = this.getIdentifier(request, tier);
     const { limit, window } = this.limits[tier];
@@ -253,7 +304,7 @@ export class RateLimitGuard implements CanActivate {
     customLimit?: number,
     customWindow?: number,
   ): Promise<void> {
-    const response = context.switchToHttp().getResponse();
+    const response = this.getResponse(context);
     const { limit: defaultLimit, window: defaultWindow } = this.accountLimits[tier];
     const finalLimit = customLimit ?? defaultLimit;
     const finalWindow = customWindow ?? defaultWindow;
@@ -301,7 +352,7 @@ export class RateLimitGuard implements CanActivate {
   }
 
   private extractWalletAddress(context: ExecutionContext): string | null {
-    const request = context.switchToHttp().getRequest();
+    const request = this.getRequest(context);
     const wallet = request.user?.walletAddress ?? request.user?.wallet ?? null;
     return typeof wallet === 'string' && wallet.length > 0 ? wallet.toLowerCase() : null;
   }
@@ -313,7 +364,7 @@ export class RateLimitGuard implements CanActivate {
     customLimit?: number,
     customWindow?: number,
   ): Promise<void> {
-    const response = context.switchToHttp().getResponse();
+    const response = this.getResponse(context);
     const { limit: defaultLimit, window: defaultWindow } = this.walletLimits[tier];
     const finalLimit = customLimit ?? defaultLimit;
     const finalWindow = customWindow ?? defaultWindow;

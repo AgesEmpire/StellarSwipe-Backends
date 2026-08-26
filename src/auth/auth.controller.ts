@@ -1,15 +1,19 @@
 
-import { Controller, Post, Body, HttpCode, HttpStatus, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Body, HttpCode, HttpStatus, Req, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { SessionManagerService } from './session/session-manager.service';
 import { AuthChallengeDto } from './dto/auth-challenge.dto';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
+import { UnlockAccountDto } from './dto/unlock-account.dto';
 import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
 import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from '../authorization/guards/roles.guard';
+import { Roles } from '../authorization/decorators/roles.decorator';
 import { Request } from 'express';
 
 @ApiTags('auth')
@@ -54,7 +58,8 @@ export class AuthController {
 
     @Post('challenge')
     @HttpCode(HttpStatus.OK)
-    @RateLimit({ tier: RateLimitTier.AUTH, limit: 20, window: 60, keyBy: ['publicKey'], accountLimit: 10, accountWindow: 60 })
+    @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60, keyBy: ['publicKey'], accountLimit: 5, accountWindow: 60 })
     async getChallenge(@Body() dto: AuthChallengeDto) {
         if (!dto.publicKey) {
             throw new Error('Public Key is required for now');
@@ -65,9 +70,22 @@ export class AuthController {
     @Post('verify')
     @Audit({ action: AuditAction.LOGIN, resource: 'auth' })
     @HttpCode(HttpStatus.OK)
-    @RateLimit({ tier: RateLimitTier.AUTH, limit: 10, window: 60, keyBy: ['publicKey'], accountLimit: 5, accountWindow: 300 })
+    @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 10, window: 60, keyBy: ['publicKey'], accountLimit: 10, accountWindow: 900 })
     async verify(@Body() dto: VerifySignatureDto, @Req() req: Request) {
         return this.authService.verifySignature(dto, req);
+    }
+
+    @Post('unlock')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @ApiBearerAuth()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Unlock an account locked out after repeated failed login attempts (admin only)' })
+    @ApiResponse({ status: 200, description: 'Account unlocked' })
+    @ApiResponse({ status: 403, description: 'Administrative privileges required' })
+    async unlock(@Body() dto: UnlockAccountDto) {
+        return this.authService.unlockAccount(dto.publicKey);
     }
 
     @Post('refresh')

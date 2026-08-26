@@ -4,17 +4,23 @@ import { AuthModule } from '../../auth/auth.module';
 import { TenantUsage } from './entities/tenant-usage.entity';
 import { TenantQuotaService } from './tenant-quota.service';
 import { ReportController } from './report.controller';
-import { TenantDataSourceFactory } from '../../tenancy/tenant-connection.factory';
-import { TenantConnectionProvider } from '../../tenancy/tenant-connection.provider';
+import { TenancyModule } from '../../tenancy/tenancy.module';
 
+/**
+ * #942 — Per-tenant usage reporting.
+ *
+ * Imports TenancyModule for tenant DataSource/connection routing instead of
+ * re-declaring its own copies of those providers, so both modules share a
+ * single instance rather than duplicating tenant-connection state.
+ */
 @Module({
-  imports: [TypeOrmModule.forFeature([TenantUsage]), AuthModule],
-  controllers: [ReportController],
-  providers: [
-    TenantQuotaService,
-    TenantDataSourceFactory,
-    TenantConnectionProvider,
+  imports: [
+    TypeOrmModule.forFeature([TenantUsage]),
+    AuthModule,
+    TenancyModule,
   ],
+  controllers: [ReportController],
+  providers: [TenantQuotaService],
   exports: [TenantQuotaService],
 })
 export class QuotaReportingModule {}

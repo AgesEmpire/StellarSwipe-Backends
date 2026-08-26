@@ -1,6 +1,6 @@
 export interface AppConfig {
   port: number;
-  environment: 'development' | 'testnet' | 'mainnet';
+  environment: 'development' | 'test' | 'testnet' | 'mainnet';
   host: string;
   apiPrefix: string;
   apiVersion: string;

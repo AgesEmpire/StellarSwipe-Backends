@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
@@ -17,9 +17,14 @@ import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
-import { configSchema } from './config/schemas/config.schema';
+import { queueRetryConfig } from './queue/queue-retry.config';
+import { retryPolicyConfig } from './common/retry/retry-policy.config';
+import { RetryModule } from './common/retry/retry.module';
+import { validateEnvironment } from './config/schemas/config.schema';
+import { ConfigValidationService } from './config/config-validation.service';
 import { StellarConfigService } from './config/stellar.service';
 import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
+import { TenancyModule } from './tenancy/tenancy.module';
 
 import { LoggerModule } from './common/logger';
 import { CorrelationModule } from './common/correlation';
@@ -62,8 +67,11 @@ import { MarketIntelligenceModule } from './market-intelligence/market-intellige
 import { DocumentationModule } from './documentation/documentation.module';
 import { CompetitionsModule } from './competitions/competitions.module';
 import { NftModule } from './nft/nft.module';
+import { RequestValidationMiddleware } from './common/middleware/request-validation.middleware';
 import { HealthModule } from './health/health.module';
 import { RateLimitModule } from './common/rate-limit.module';
+import { DiscordBotModule } from './integrations/discord/discord-bot.module';
+import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 // feature/295-discord-community-integration
@@ -74,16 +82,21 @@ import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 
 // feature/293-mobile-api-optimizations
 import { MobileModule } from './mobile/mobile.module';
-
 import { AutomationModule } from './integrations/automation-platforms/automation.module';
 import { CurrencyModule } from './currency/currency.module';
 import { ImportModule } from './import/import.module';
 import { ExportsModule } from './exports/exports.module';
 import { HttpRetryModule } from './http/http.module';
+import { ComplianceModule } from './compliance/compliance.module';
+import { PriceOracleModule } from './prices/price-oracle.module';
+import { PaymentsModule } from './payments/payments.module';
+import { LocalPaymentModule } from './payments/local-methods/local-payment.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { I18nModule } from './i18n/i18n.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditModule } from './audit-log/audit.module';
+import { RetentionModule } from './common/retention/retention.module';
 import { AssetsModule } from './assets/assets.module';
 import { SocialExportModule } from './social-export/social-export.module';
 import { LowBalanceAlertModule } from './alerts/low-balance-alert.module';
@@ -95,6 +108,10 @@ import { WalletModule } from './wallet/wallet.module';
 import { FreighterModule } from './freighter/freighter.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
 import { PrivacyModule } from './privacy/privacy.module';
+import { TracingModule } from './tracing/tracing.module';
+import { PaymentsModule } from './payments/payments.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -113,15 +130,13 @@ import { PrivacyModule } from './privacy/privacy.module';
         connectionPoolReplicaConfig,
         configuration,
         nplus1DetectionConfig,
+        queueRetryConfig,
+        retryPolicyConfig,
       ],
       // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
       cache: true,
-      validationSchema: configSchema,
-      validationOptions: {
-        allowUnknown: true,
-        abortEarly: false,
-      },
+      validate: validateEnvironment,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -177,7 +192,8 @@ import { PrivacyModule } from './privacy/privacy.module';
       useFactory: (configService: ConfigService) => ({
         type: 'postgres' as const,
         host: configService.get<string>('database.replica.host'),
-        port: configService.get<number>('database.replica.port'),n        username: configService.get<string>('database.replica.username'),
+        port: configService.get<number>('database.replica.port'),
+        username: configService.get<string>('database.replica.username'),
         password: configService.get<string>('database.replica.password'),
         database: configService.get<string>('database.replica.database'),
         synchronize: false,
@@ -217,6 +233,7 @@ import { PrivacyModule } from './privacy/privacy.module';
     CorrelationModule,
     LoggerModule,
     SentryModule,
+    RetryModule,
     ErrorClassificationModule,
     MaxCallDepthModule,
     IdempotentModule,
@@ -251,6 +268,9 @@ import { PrivacyModule } from './privacy/privacy.module';
     BackupModule,
     AdminAnalyticsModule,
     AdminModule,
+    MonitoringModule,
+    WebhooksModule,
+    DrModule,
     MetadataExtractorService,
     NPlus1DetectionInterceptor,
     MarketIntelligenceModule,
@@ -259,6 +279,8 @@ import { PrivacyModule } from './privacy/privacy.module';
     NftModule,
     HealthModule,
     RateLimitModule,
+    DiscordBotModule,
+    TelegramBotModule,
     // feature/295-discord-community-integration
     DiscordBotModule,
 
@@ -267,16 +289,21 @@ import { PrivacyModule } from './privacy/privacy.module';
 
     // feature/293-mobile-api-optimizations
     MobileModule,
-
     AutomationModule,
     CurrencyModule,
     ImportModule,
     ExportsModule,
     HttpRetryModule,
+    ComplianceModule,
+    PriceOracleModule,
+    PaymentsModule,
+    LocalPaymentModule,
+    FeatureFlagsModule,
     I18nModule,
     PortfolioModule,
     NotificationsModule,
     AuditModule,
+    RetentionModule,
     AssetsModule,
     SocialExportModule,
     LowBalanceAlertModule,
@@ -288,8 +315,14 @@ import { PrivacyModule } from './privacy/privacy.module';
     FreighterModule,
     HorizonBulkheadModule,
     PrivacyModule,
+    TracingModule,
+    TenancyModule,
   ],
-  providers: [StellarConfigService, RateLimitMiddleware],
+  providers: [
+    StellarConfigService,
+    RateLimitMiddleware,
+    ConfigValidationService,
+  ],
   exports: [StellarConfigService],
 })
-export class AppModule { }
+export class AppModule {}

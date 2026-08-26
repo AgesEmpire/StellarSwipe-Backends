@@ -43,6 +43,23 @@ export class NotificationPreference {
   @Column({ name: 'marketing_push', default: false })
   marketingPush: boolean;
 
+  // Quiet hours: suppress non-critical notifications between start and end (HH:mm, in `timezone`)
+  @Column({ name: 'quiet_hours_enabled', default: false })
+  quietHoursEnabled: boolean;
+
+  @Column({ name: 'quiet_hours_start', type: 'varchar', length: 5, nullable: true })
+  quietHoursStart?: string;
+
+  @Column({ name: 'quiet_hours_end', type: 'varchar', length: 5, nullable: true })
+  quietHoursEnd?: string;
+
+  @Column({ name: 'timezone', default: 'UTC' })
+  timezone: string;
+
+  // Per-type minimum thresholds (e.g. minimum signal score) below which a notification is suppressed
+  @Column({ name: 'thresholds', type: 'jsonb', nullable: true })
+  thresholds?: Partial<Record<'tradeUpdates' | 'signalPerformance' | 'systemAlerts' | 'marketing', number>>;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

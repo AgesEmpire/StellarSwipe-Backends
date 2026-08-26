@@ -341,4 +341,76 @@ describe('FeatureFlagsService', () => {
       expect(result.allowed).toBe(false);
     });
   });
+
+  describe('isFlagEnabled', () => {
+    it('returns true when the flag is enabled in the store', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      mockFlagRepository.findOne.mockResolvedValue({
+        name: 'search-index-refresh',
+        type: 'boolean',
+        enabled: true,
+      });
+
+      const result = await service.isFlagEnabled('search-index-refresh');
+      expect(result).toBe(true);
+    });
+
+    it('returns false when the flag is disabled in the store', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      mockFlagRepository.findOne.mockResolvedValue({
+        name: 'search-index-refresh',
+        type: 'boolean',
+        enabled: false,
+      });
+
+      const result = await service.isFlagEnabled('search-index-refresh');
+      expect(result).toBe(false);
+    });
+
+    it('returns false (fail closed) when the flag does not exist', async () => {
+      mockCacheManager.get.mockResolvedValue(undefined);
+      mockFlagRepository.findOne.mockResolvedValue(null);
+
+      const result = await service.isFlagEnabled('nonexistent-flag');
+      expect(result).toBe(false);
+    });
+
+    it('respects an env override without hitting the store', async () => {
+      mockConfigService.get.mockReturnValue('search-index-refresh=true');
+
+      const module = await Test.createTestingModule({
+        providers: [
+          FeatureFlagsService,
+          { provide: getRepositoryToken(FeatureFlag), useValue: mockFlagRepository },
+          { provide: getRepositoryToken(FlagAssignment), useValue: mockAssignmentRepository },
+          { provide: CACHE_MANAGER, useValue: mockCacheManager },
+          { provide: ConfigService, useValue: mockConfigService },
+        ],
+      }).compile();
+
+      const svc = module.get<FeatureFlagsService>(FeatureFlagsService);
+      const result = await svc.isFlagEnabled('search-index-refresh');
+      expect(result).toBe(true);
+      expect(mockFlagRepository.findOne).not.toHaveBeenCalled();
+    });
+
+    it('respects an env override set to false', async () => {
+      mockConfigService.get.mockReturnValue('search-index-refresh=false');
+
+      const module = await Test.createTestingModule({
+        providers: [
+          FeatureFlagsService,
+          { provide: getRepositoryToken(FeatureFlag), useValue: mockFlagRepository },
+          { provide: getRepositoryToken(FlagAssignment), useValue: mockAssignmentRepository },
+          { provide: CACHE_MANAGER, useValue: mockCacheManager },
+          { provide: ConfigService, useValue: mockConfigService },
+        ],
+      }).compile();
+
+      const svc = module.get<FeatureFlagsService>(FeatureFlagsService);
+      const result = await svc.isFlagEnabled('search-index-refresh');
+      expect(result).toBe(false);
+      expect(mockFlagRepository.findOne).not.toHaveBeenCalled();
+    });
+  });
 });

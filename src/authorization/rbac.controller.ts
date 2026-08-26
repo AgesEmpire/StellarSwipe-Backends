@@ -22,6 +22,7 @@ import {
   RejectRequestDto,
   AccessRequestQueryDto,
 } from './dto/access-request.dto';
+import { AssignRoleDto } from './dto/assign-role.dto';
 import { RequirePermissions, RequireWorkflowApproval } from './decorators/require-permissions.decorator';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
@@ -66,6 +67,28 @@ export class RbacController {
     return this.rbacService.getRoles({ teamId, organizationId });
   }
 
+  @Get('audit-log')
+  @RequirePermissions('audit:read')
+  async getPermissionAuditLog(
+    @Query('actorId') actorId?: string,
+    @Query('targetUserId') targetUserId?: string,
+    @Query('action') action?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.rbacService.queryPermissionAuditLog({
+      actorId,
+      targetUserId,
+      action: action as any,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+  }
+
   // Permission Management Endpoints
   @Post('permissions/assign')
   @RequirePermissions('permissions:assign')
@@ -86,7 +109,7 @@ export class RbacController {
   async assignRoleToUser(
     @Param('userId') userId: string,
     @Param('roleId') roleId: string,
-    @Body() body: { teamId?: string; organizationId?: string; expiresAt?: Date },
+    @Body() body: AssignRoleDto,
     @Request() req: any,
   ) {
     return this.rbacService.assignRoleToUser(userId, roleId, req.user.id, body);

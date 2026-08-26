@@ -56,6 +56,18 @@ describe('LowBalanceAlertService', () => {
   // ── Threshold evaluation ────────────────────────────────────────────────────
 
   describe('balance evaluation', () => {
+    it('does not alert for malformed or negative balances', async () => {
+      await expect(service.checkAndAlert(buildCtx('not-a-number'))).resolves.toMatchObject({
+        alerted: false,
+        reason: 'invalid_balance',
+      });
+      await expect(service.checkAndAlert(buildCtx('-1'))).resolves.toMatchObject({
+        alerted: false,
+        reason: 'invalid_balance',
+      });
+      expect(mockNotificationService.send).not.toHaveBeenCalled();
+    });
+
     it('returns balance_sufficient when balance is above threshold', async () => {
       const result = await service.checkAndAlert(buildCtx('100'));
 

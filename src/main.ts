@@ -6,7 +6,7 @@ import { VersioningType } from '@nestjs/common';
 import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
 import * as compression from 'compression';
 import { AppModule } from "./app.module";
-import { GlobalExceptionFilter } from "./common/filters";
+import { ExceptionFilter, HttpExceptionFilter } from "./common/filters";
 import { ErrorClassificationService } from "./common/error-classification";
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import {
@@ -16,6 +16,7 @@ import {
   ResponseEnvelopeInterceptor,
   StellarMemoInterceptor,
   StripInternalFieldsInterceptor,
+  CorrelationIdInterceptor,
 } from './common/interceptors';
 import { LoggerService } from './common/logger';
 import { CorrelationIdStore } from './common/correlation/correlation-id.store';
@@ -38,7 +39,12 @@ initTracing();
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
+    rawBody: true,
   });
+
+  // Align the body-parser limit with RequestValidationMiddleware's max payload size
+  app.useBodyParser('json', { limit: '5mb' });
+  app.useBodyParser('urlencoded', { limit: '5mb', extended: true });
 
   // Get services
   const configService = app.get(ConfigService);
@@ -126,19 +132,26 @@ async function bootstrap() {
 // Global filters
    const errorClassifier = app.get(ErrorClassificationService);
    app.useGlobalFilters(
-     new GlobalExceptionFilter(logger, sentryService, errorClassifier, configService),
+     new ExceptionFilter(logger, sentryService, errorClassifier, configService),
+     new HttpExceptionFilter(),
      new I18nValidationExceptionFilter({ detailedErrors: false }),
    );
 
   // Global interceptors
   app.useGlobalInterceptors(new DeadlockRetryInterceptor());
   app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
+  // CorrelationIdInterceptor runs early so every subsequent interceptor and
+  // the exception filter can rely on the x-correlation-id header being set
+  // on the response and the ID being readable from CorrelationIdStore.
+  app.useGlobalInterceptors(
+    new CorrelationIdInterceptor(app.get(CorrelationIdStore)),
+  );
   app.useGlobalInterceptors(
     new LoggingInterceptor(logger, app.get(CorrelationIdStore), configService),
   );
   app.useGlobalInterceptors(new ResponseEnvelopeInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new StripInternalFieldsInterceptor());
-  app.useGlobalInterceptors(new SensitiveDataInterceptor());
+  app.useGlobalInterceptors(new SensitiveDataInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new StellarMemoInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));

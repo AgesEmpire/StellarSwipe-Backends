@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { LocalPayment } from '../entities/local-payment.entity';
 import { LocalPaymentStatus } from '../providers/base-local.provider';
 import { MpesaProvider } from '../providers/mpesa.provider';
+import { WebhookIdempotencyService } from '../../../common/services/webhook-idempotency.service';
 
 @Injectable()
 export class MpesaWebhookHandler {
@@ -13,6 +14,7 @@ export class MpesaWebhookHandler {
     @InjectRepository(LocalPayment)
     private readonly paymentRepo: Repository<LocalPayment>,
     private readonly mpesaProvider: MpesaProvider,
+    private readonly idempotency: WebhookIdempotencyService,
   ) {}
 
   async handle(payload: Record<string, any>, signature: string): Promise<void> {
@@ -22,6 +24,11 @@ export class MpesaWebhookHandler {
     if (!stkCallback) return;
 
     const { ResultCode, CheckoutRequestID, CallbackMetadata } = stkCallback;
+
+    if (CheckoutRequestID) {
+      const isFirstDelivery = await this.idempotency.markProcessed('mpesa', CheckoutRequestID);
+      if (!isFirstDelivery) return;
+    }
 
     const payment = await this.paymentRepo.findOne({
       where: { externalRef: CheckoutRequestID, provider: 'mpesa' },

@@ -21,6 +21,7 @@ import { EvaluateTradeDto } from './rule-engine/dto/evaluate-trade.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ExportRequestDto } from './dto/export-request.dto';
 import { ComplianceReportDto } from './dto/compliance-report.dto';
+import { ScreenUserDto, ScreenWalletDto } from './dto/screen-user.dto';
 
 @Controller('compliance')
 @UseGuards(JwtAuthGuard)
@@ -88,13 +89,13 @@ export class ComplianceController {
   }
 
   @Post('screen-wallet')
-  async screenWallet(@Body('address') address: string) {
-    return this.sanctionsService.screenWalletAddress(address);
+  async screenWallet(@Body() dto: ScreenWalletDto) {
+    return this.sanctionsService.screenWalletAddress(dto.address);
   }
 
   @Post('screen-user')
   async screenUser(
-    @Body() data: { walletAddress?: string; email?: string; name?: string },
+    @Body() data: ScreenUserDto,
   ) {
     return this.sanctionsService.screenUser(data);
   }

@@ -14,8 +14,8 @@
  *   • Concurrent requests with the same cache key are serialised so only one
  *     execution happens; the others await and share its result.
  *
- * The cache is in-memory and per-instance. Swap the store for a shared cache
- * (e.g. Redis) for multi-instance deployments.
+ * Completed responses and request fingerprints are persisted in the configured
+ * shared cache; the local map remains a fallback for direct/unit construction.
  */
 import {
   BadRequestException,
@@ -23,8 +23,12 @@ import {
   ConflictException,
   ExecutionContext,
   Injectable,
+  Inject,
+  Optional,
   NestInterceptor,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { Observable, firstValueFrom, from } from 'rxjs';
 import { createHash } from 'crypto';
 
@@ -48,8 +52,13 @@ function hashBody(body: unknown): string {
 export class IdempotencyInterceptor implements NestInterceptor {
   private readonly store = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly cache?: Cache;
+  private readonly ttlMs: number;
 
-  constructor(private readonly ttlMs: number = DEFAULT_TTL_MS) {}
+  constructor(@Optional() @Inject(CACHE_MANAGER) cacheOrTtl?: Cache | number) {
+    this.cache = typeof cacheOrTtl === 'object' ? cacheOrTtl : undefined;
+    this.ttlMs = typeof cacheOrTtl === 'number' ? cacheOrTtl : DEFAULT_TTL_MS;
+  }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest();
@@ -88,10 +97,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
     bodyHash: string,
     next: CallHandler,
   ): Promise<unknown> {
-    const cached = this.store.get(cacheKey);
+    const cached = this.cache
+      ? await this.cache.get<CacheEntry>(cacheKey)
+      : this.store.get(cacheKey);
     if (cached) {
       if (cached.expiresAt <= Date.now()) {
-        this.store.delete(cacheKey);
+        this.cache
+          ? await this.cache.del(cacheKey)
+          : this.store.delete(cacheKey);
       } else {
         if (cached.bodyHash !== bodyHash) {
           throw new ConflictException(
@@ -116,6 +129,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
         bodyHash,
         expiresAt: Date.now() + this.ttlMs,
       });
+      if (this.cache) {
+        await this.cache.set(cacheKey, this.store.get(cacheKey), this.ttlMs);
+      }
       return response;
     })();
 

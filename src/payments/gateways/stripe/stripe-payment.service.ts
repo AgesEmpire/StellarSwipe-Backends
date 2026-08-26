@@ -1,5 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { WebhookIdempotencyService } from '../../../common/services/webhook-idempotency.service';
+import { PaymentAuditService } from '../../payment-audit.service';
 
 // Stripe types (install with: npm install stripe)
 interface StripePaymentIntent {
@@ -23,7 +25,11 @@ export class StripePaymentService {
   private stripe: any; // Will be Stripe instance when stripe package is installed
   private readonly apiKey: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private readonly idempotency: WebhookIdempotencyService,
+    private readonly paymentAuditService: PaymentAuditService,
+  ) {
     this.apiKey = this.configService.get<string>('stripe.apiKey');
     
     // Initialize Stripe when package is available
@@ -134,6 +140,11 @@ export class StripePaymentService {
 
       this.logger.log(`Webhook received: ${event.type}`);
 
+      const isFirstDelivery = await this.idempotency.markProcessed('stripe', event.id);
+      if (!isFirstDelivery) {
+        return event;
+      }
+
       switch (event.type) {
         case 'payment_intent.succeeded':
           await this.handlePaymentSuccess(event.data.object);
@@ -157,17 +168,38 @@ export class StripePaymentService {
 
   private async handlePaymentSuccess(paymentIntent: StripePaymentIntent): Promise<void> {
     this.logger.log(`Payment succeeded: ${paymentIntent.id}`);
-    // Implement business logic for successful payment
+    await this.paymentAuditService.logPaymentConfirmed({
+      userId: (paymentIntent as any).metadata?.userId,
+      paymentId: paymentIntent.id,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      gateway: 'stripe',
+    });
   }
 
   private async handlePaymentFailure(paymentIntent: StripePaymentIntent): Promise<void> {
     this.logger.warn(`Payment failed: ${paymentIntent.id}`);
-    // Implement business logic for failed payment
+    await this.paymentAuditService.logPaymentFailed(
+      {
+        userId: (paymentIntent as any).metadata?.userId,
+        paymentId: paymentIntent.id,
+        amount: paymentIntent.amount,
+        currency: paymentIntent.currency,
+        gateway: 'stripe',
+      },
+      'Stripe reported payment_intent.payment_failed',
+    );
   }
 
   private async handleRefund(charge: StripeCharge): Promise<void> {
     this.logger.log(`Refund processed: ${charge.id}`);
-    // Implement business logic for refund
+    await this.paymentAuditService.logPaymentRefunded({
+      userId: (charge as any).metadata?.userId,
+      paymentId: charge.id,
+      amount: charge.amount,
+      currency: charge.currency,
+      gateway: 'stripe',
+    });
   }
 
   async listPaymentMethods(customerId: string): Promise<any[]> {

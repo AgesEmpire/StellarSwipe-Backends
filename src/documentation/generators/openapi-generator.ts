@@ -23,7 +23,7 @@ Every request is assigned a unique correlation ID for end-to-end traceability.
 - **Client-supplied**: Clients may send their own UUID in this header; the API will echo it back and propagate it through all internal calls and logs. This allows you to correlate API responses with your own request logs.
 - **Server-generated**: If the header is absent the server generates a fresh UUID automatically.
 - **Response header**: The resolved correlation ID is always echoed back in the \`${CORRELATION_ID_HEADER}\` response header.
-- **Error responses**: All error payloads include the correlation ID as \`requestId\` for easy support lookups.`,
+- **Error responses**: All error payloads follow the standard schema with \`statusCode\`, \`errorCode\`, \`message\`, \`path\`, \`timestamp\`, and optional \`details\`. Validation and auth failures also include the request correlation ID as \`requestId\` for easy support lookups.`,
     )
     .setVersion('2.0')
     .addBearerAuth(
