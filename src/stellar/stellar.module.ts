@@ -14,15 +14,21 @@ import { HorizonStreamController } from './services/horizon-stream.controller';
 import { HorizonStreamService } from './services/horizon-stream.service';
 import { EventProcessorService } from './services/event-processor.service';
 import { StellarIntegrationService } from './services/stellar-integration.service';
+import { StellarProviderService } from './services/stellar-provider.service';
 import { WalletBalanceSyncJob } from './jobs/wallet-balance-sync.job';
 import { User } from '../users/entities/user.entity';
 import { OnChainEvent } from './entities/on-chain-event.entity';
+import { IngestionCheckpoint } from './entities/ingestion-checkpoint.entity';
+import { SubmittedOperation } from './entities/submitted-operation.entity';
 import { OnChainSyncService } from './on-chain-sync.service';
 import { OnChainSyncJob } from './on-chain-sync.job';
+import { StellarTxReconciliationService } from './reconciliation/stellar-tx-reconciliation.service';
+import { StellarTxReconciliationJob } from './reconciliation/stellar-tx-reconciliation.job';
 import { FeeBumpModule } from './fee-bump/fee-bump.module';
 import { ClaimableBalanceModule } from './claimable-balance/claimable-balance.module';
 import { SponsoredReservesModule } from './sponsored-reserves/sponsored-reserves.module';
 import { HorizonExceptionFilter } from './errors/horizon-error.filter';
+import { HttpRetryModule } from '../http/http.module';
 
 @Module({
   imports: [
@@ -30,10 +36,11 @@ import { HorizonExceptionFilter } from './errors/horizon-error.filter';
     EventEmitterModule.forRoot(),
     CacheModule,
     ScheduleModule.forRoot(),
-    TypeOrmModule.forFeature([User, OnChainEvent]),
+    TypeOrmModule.forFeature([User, OnChainEvent, IngestionCheckpoint, SubmittedOperation]),
     FeeBumpModule,
     ClaimableBalanceModule,
     SponsoredReservesModule,
+    HttpRetryModule,
   ],
   controllers: [TrustlineController, HorizonStreamController],
   providers: [
@@ -44,9 +51,12 @@ import { HorizonExceptionFilter } from './errors/horizon-error.filter';
     HorizonStreamService,
     EventProcessorService,
     StellarIntegrationService,
+    StellarProviderService,
     WalletBalanceSyncJob,
     OnChainSyncService,
     OnChainSyncJob,
+    StellarTxReconciliationService,
+    StellarTxReconciliationJob,
     { provide: APP_FILTER, useClass: HorizonExceptionFilter },
   ],
   exports: [
@@ -57,6 +67,7 @@ import { HorizonExceptionFilter } from './errors/horizon-error.filter';
     HorizonStreamService,
     EventProcessorService,
     StellarIntegrationService,
+    StellarProviderService,
     WalletBalanceSyncJob,
     OnChainSyncService,
     FeeBumpModule,
