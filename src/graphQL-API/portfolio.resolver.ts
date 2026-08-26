@@ -11,6 +11,8 @@ import {
 import { AssetMetaType } from '../types/asset.type';
 import { PortfolioService } from '../../portfolio/portfolio.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { GqlOwnershipGuard } from '../authorization/guards/gql-ownership.guard';
+import { FieldOwner } from '../authorization/decorators/field-owner.decorator';
 
 @UseGuards(GqlAuthGuard)
 @Resolver(() => PortfolioType)
@@ -33,12 +35,16 @@ export class PortfolioResolver {
   // ─── Field resolvers ───────────────────────────────────────────────────────
   // These are resolved lazily — clients only pay the cost if they select the field.
 
+  @UseGuards(GqlOwnershipGuard)
+  @FieldOwner()
   @ResolveField(() => [PositionType])
   async openPositions(@Parent() portfolio: PortfolioType): Promise<PositionType[]> {
     const positions = await this.portfolioService.getOpenPositions(portfolio.userId);
     return positions;
   }
 
+  @UseGuards(GqlOwnershipGuard)
+  @FieldOwner()
   @ResolveField(() => [AssetMetaType], { nullable: true })
   async assets(@Parent() portfolio: PortfolioType, @Context() ctx: any): Promise<AssetMetaType[]> {
     // Example: batch-fetch asset metadata for all positions in the portfolio
@@ -48,11 +54,15 @@ export class PortfolioResolver {
     return assets as AssetMetaType[];
   }
 
+  @UseGuards(GqlOwnershipGuard)
+  @FieldOwner()
   @ResolveField(() => [AllocationItemType])
   async allocation(@Parent() portfolio: PortfolioType): Promise<AllocationItemType[]> {
     return this.portfolioService.getAllocation(portfolio.userId);
   }
 
+  @UseGuards(GqlOwnershipGuard)
+  @FieldOwner()
   @ResolveField(() => PortfolioPerformanceType)
   async performance(@Parent() portfolio: PortfolioType): Promise<PortfolioPerformanceType> {
     return this.portfolioService.getPerformance(portfolio.userId);

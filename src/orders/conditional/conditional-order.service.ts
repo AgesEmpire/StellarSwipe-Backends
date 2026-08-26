@@ -18,6 +18,12 @@ import {
   ConditionOperator,
 } from './dto/order-condition.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { assertOwnership } from '../../authorization/utils/assert-ownership.util';
+
+export interface OwnershipActor {
+  id: string;
+  roles?: string[];
+}
 
 export interface PriceSnapshot {
   assetCode: string;
@@ -38,7 +44,10 @@ export class ConditionalOrderService {
   /**
    * Create a new conditional order.
    */
-  async create(dto: CreateConditionalOrderDto): Promise<ConditionalOrder> {
+  async create(dto: CreateConditionalOrderDto, actor?: OwnershipActor): Promise<ConditionalOrder> {
+    if (actor) {
+      assertOwnership({ requesterId: actor.id, ownerId: dto.userId, requesterRoles: actor.roles, resource: 'order' });
+    }
     this.logger.log(`Creating conditional order for user ${dto.userId}`);
 
     if (!dto.conditionGroups || dto.conditionGroups.length === 0) {
@@ -66,10 +75,13 @@ export class ConditionalOrderService {
   /**
    * Find a conditional order by ID.
    */
-  async findById(id: string): Promise<ConditionalOrder> {
+  async findById(id: string, actor?: OwnershipActor): Promise<ConditionalOrder> {
     const order = await this.conditionalOrderRepo.findOne({ where: { id } });
     if (!order) {
       throw new NotFoundException(`Conditional order ${id} not found`);
+    }
+    if (actor) {
+      assertOwnership({ requesterId: actor.id, ownerId: order.userId, requesterRoles: actor.roles, resource: 'order' });
     }
     return order;
   }
@@ -80,7 +92,11 @@ export class ConditionalOrderService {
   async findByUser(
     userId: string,
     status?: ConditionalOrderStatus,
+    actor?: OwnershipActor,
   ): Promise<ConditionalOrder[]> {
+    if (actor) {
+      assertOwnership({ requesterId: actor.id, ownerId: userId, requesterRoles: actor.roles, resource: 'orders' });
+    }
     const where: any = { userId };
     if (status) {
       where.status = status;
@@ -97,8 +113,9 @@ export class ConditionalOrderService {
   async update(
     id: string,
     dto: UpdateConditionalOrderDto,
+    actor?: OwnershipActor,
   ): Promise<ConditionalOrder> {
-    const order = await this.findById(id);
+    const order = await this.findById(id, actor);
 
     if (
       order.status !== ConditionalOrderStatus.PENDING &&
@@ -122,8 +139,8 @@ export class ConditionalOrderService {
   /**
    * Cancel a conditional order.
    */
-  async cancel(id: string): Promise<ConditionalOrder> {
-    const order = await this.findById(id);
+  async cancel(id: string, actor?: OwnershipActor): Promise<ConditionalOrder> {
+    const order = await this.findById(id, actor);
 
     if (
       order.status === ConditionalOrderStatus.FILLED ||
@@ -188,8 +205,9 @@ export class ConditionalOrderService {
   async executeTriggeredOrder(
     orderId: string,
     tradeId?: string,
+    actor?: OwnershipActor,
   ): Promise<ConditionalOrder> {
-    const order = await this.findById(orderId);
+    const order = await this.findById(orderId, actor);
 
     if (order.status !== ConditionalOrderStatus.TRIGGERED) {
       throw new BadRequestException(
