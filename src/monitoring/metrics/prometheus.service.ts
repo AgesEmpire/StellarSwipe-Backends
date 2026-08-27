@@ -27,6 +27,10 @@ export class PrometheusService implements OnModuleInit {
   // Cache metrics
   readonly cacheHitsTotal: Counter;
   readonly cacheMissesTotal: Counter;
+  readonly cacheFallbacksTotal: Counter;
+  readonly cacheOperationTimeoutsTotal: Counter;
+  readonly cacheSingleFlightTotal: Counter;
+  readonly cacheSingleFlightFailuresTotal: Counter;
   readonly bullShutdownForcedTotal: Counter;
 
   // DB metrics
@@ -109,6 +113,34 @@ export class PrometheusService implements OnModuleInit {
       name: 'cache_misses_total',
       help: 'Total cache misses',
       labelNames: ['layer'],
+      registers: [this.registry],
+    });
+
+    this.cacheFallbacksTotal = new Counter({
+      name: 'cache_fallbacks_total',
+      help: 'Cache operations that used their documented degraded-mode fallback',
+      labelNames: ['operation', 'policy'],
+      registers: [this.registry],
+    });
+
+    this.cacheOperationTimeoutsTotal = new Counter({
+      name: 'cache_operation_timeouts_total',
+      help: 'Cache commands that exceeded their operation timeout',
+      labelNames: ['operation'],
+      registers: [this.registry],
+    });
+
+    this.cacheSingleFlightTotal = new Counter({
+      name: 'cache_single_flight_waiters_total',
+      help: 'Requests coalesced behind an in-flight cache fill',
+      labelNames: ['key_type'],
+      registers: [this.registry],
+    });
+
+    this.cacheSingleFlightFailuresTotal = new Counter({
+      name: 'cache_single_flight_failures_total',
+      help: 'Failed single-flight cache fills',
+      labelNames: ['key_type'],
       registers: [this.registry],
     });
 

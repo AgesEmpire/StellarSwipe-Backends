@@ -10,7 +10,7 @@ export const createRedisClusterConfig = async (
     socket: {
       host: configService.get('redis.host', 'localhost'),
       port: configService.get('redis.port', 6379),
-      connectTimeout: 10000,
+      connectTimeout: configService.get('redisCache.operationTimeoutMs', 500),
       reconnectStrategy: (retries) => {
         if (retries > 10) {
           return new Error('Redis connection failed after 10 retries');

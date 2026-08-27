@@ -39,6 +39,7 @@ import { Signal } from '../signals/entities/signal.entity';
           socket: {
             host: configService.get<string>('redisCache.host'),
             port: configService.get<number>('redisCache.port'),
+            connectTimeout: configService.get<number>('redisCache.operationTimeoutMs') || 500,
           },
           password: configService.get<string>('redisCache.password'),
           database: configService.get<number>('redisCache.db'),

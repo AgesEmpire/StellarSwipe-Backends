@@ -28,6 +28,8 @@ export interface ValidatedEnvironment {
   DATABASE_POOL_MAX: number;
   DATABASE_POOL_IDLE_TIMEOUT: number;
   DATABASE_POOL_CONNECTION_TIMEOUT: number;
+  DATABASE_READ_TIMEOUT_MS: number;
+  DATABASE_WRITE_TIMEOUT_MS: number;
   BULL_SHUTDOWN_GRACE_PERIOD_MS: number;
   DATABASE_STATEMENT_TIMEOUT: number;
   DATABASE_MAX_QUERY_TIME: number;
@@ -35,6 +37,11 @@ export interface ValidatedEnvironment {
   REDIS_PORT: number;
   REDIS_DB: number;
   REDIS_PASSWORD?: string;
+  REDIS_OPERATION_TIMEOUT_MS: number;
+  REDIS_RECOVERY_ALERT_THRESHOLD: number;
+  REDIS_CACHE_FAILURE_POLICY: 'fail-open' | 'fail-closed';
+  REDIS_SESSION_FAILURE_POLICY: 'fail-open' | 'fail-closed';
+  REDIS_RATE_LIMIT_FAILURE_POLICY: 'fail-open' | 'fail-closed';
   STELLAR_NETWORK: StellarNetwork;
   STELLAR_HORIZON_URL: string;
   STELLAR_SOROBAN_RPC_URL: string;
@@ -102,13 +109,21 @@ export const configSchema = Joi.object<ValidatedEnvironment>({
     .min(100)
     .default(2000),
   BULL_SHUTDOWN_GRACE_PERIOD_MS: Joi.number().integer().min(0).max(900000).default(30000),
-  DATABASE_STATEMENT_TIMEOUT: Joi.number().integer().min(1000).default(100000),
+  DATABASE_STATEMENT_TIMEOUT: Joi.number().integer().min(1000).default(10000),
   DATABASE_MAX_QUERY_TIME: Joi.number().integer().min(1).default(10000),
 
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().integer().min(1).max(65535).default(6379),
   REDIS_DB: Joi.number().integer().min(0).max(15).default(0),
   REDIS_PASSWORD: Joi.string().optional().allow(''),
+  REDIS_OPERATION_TIMEOUT_MS: Joi.number().integer().min(50).max(30000).default(500),
+  REDIS_RECOVERY_ALERT_THRESHOLD: Joi.number().integer().min(1).default(3),
+  REDIS_CACHE_FAILURE_POLICY: Joi.string().valid('fail-open', 'fail-closed').default('fail-open'),
+  REDIS_SESSION_FAILURE_POLICY: Joi.string().valid('fail-open', 'fail-closed').default('fail-closed'),
+  REDIS_RATE_LIMIT_FAILURE_POLICY: Joi.string().valid('fail-open', 'fail-closed').default('fail-open'),
+  DATABASE_READ_TIMEOUT_MS: Joi.number().integer().min(1000).default(5000),
+  DATABASE_WRITE_TIMEOUT_MS: Joi.number().integer().min(1000).default(10000),
+  DATABASE_QUERY_TIMEOUT: Joi.number().integer().min(1000).default(5000),
 
   STELLAR_NETWORK: Joi.string().valid('testnet', 'public').default('testnet'),
   STELLAR_HORIZON_URL: Joi.string().uri().required(),
