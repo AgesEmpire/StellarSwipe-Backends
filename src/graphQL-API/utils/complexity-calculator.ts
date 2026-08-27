@@ -9,18 +9,29 @@ const BASE_COST = 1;
 const DEFAULT_LIST_MULTIPLIER = 10;
 const MAX_LIST_MULTIPLIER = 100;
 
-// ─── Role-based complexity limits ────────────────────────────────────────────
+// ─── Client-class complexity budgets (Issue #1035) ───────────────────────────
 //
-// Override via environment variables so ops can tune limits without deploys:
-//   GRAPHQL_COMPLEXITY_LIMIT_ADMIN=5000
-//   GRAPHQL_COMPLEXITY_LIMIT_PRO=1500
-//   GRAPHQL_COMPLEXITY_LIMIT_DEFAULT=500
+// Three authentication classes map to explicit budgets:
+//   anonymous  — unauthenticated / no token
+//   user       — authenticated regular user
+//   trusted    — service-to-service / admin / pro
 //
-// Falls back to the values below when the env vars are absent.
+// Override via environment variables without a redeploy:
+//   GRAPHQL_COMPLEXITY_LIMIT_TRUSTED=5000
+//   GRAPHQL_COMPLEXITY_LIMIT_USER=1000
+//   GRAPHQL_COMPLEXITY_LIMIT_ANONYMOUS=100
+//   GRAPHQL_COMPLEXITY_LIMIT_ADMIN=2000   (legacy — maps to trusted)
+//   GRAPHQL_COMPLEXITY_LIMIT_PRO=1000     (legacy — maps to user)
+//   GRAPHQL_COMPLEXITY_LIMIT_DEFAULT=500  (legacy — maps to user)
 
 const DEFAULT_LIMITS: Record<string, number> = {
-  admin: Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_ADMIN) || 2000,
-  pro: Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_PRO) || 1000,
+  // Named client classes
+  anonymous: Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_ANONYMOUS) || 100,
+  user:      Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_USER)      || 500,
+  trusted:   Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_TRUSTED)   || 2000,
+  // Legacy role aliases kept for backward compatibility
+  admin:   Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_ADMIN)   || 2000,
+  pro:     Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_PRO)     || 1000,
   premium: Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_PREMIUM) || 750,
   default: Number(process.env.GRAPHQL_COMPLEXITY_LIMIT_DEFAULT) || 500,
 };
@@ -84,25 +95,38 @@ export function simpleComplexityEstimator() {
 }
 
 /**
- * Returns the maximum allowed complexity for a given user role.
+ * Returns the maximum allowed complexity for a given role or client class.
  *
  * Resolution order:
- *   1. Exact role match in `DEFAULT_LIMITS`
- *   2. `DEFAULT_LIMITS.default`
- *
- * Callers can pass the role string from `req.user.role` (or the highest role
- * when a user holds multiple).
+ *   1. Exact match in DEFAULT_LIMITS (client class or legacy role)
+ *   2. DEFAULT_LIMITS.default
  *
  * @example
- * // Unauthenticated / unknown role → 500
- * getComplexityLimit()
- *
- * // Authenticated admin → 2000 (or GRAPHQL_COMPLEXITY_LIMIT_ADMIN if set)
- * getComplexityLimit('admin')
+ * getComplexityLimit()              // anonymous → 100
+ * getComplexityLimit('user')        // authenticated user → 500
+ * getComplexityLimit('trusted')     // service/admin → 2000
+ * getComplexityLimit('admin')       // legacy alias → 2000
  */
 export function getComplexityLimit(role?: string): number {
-  if (!role) return DEFAULT_LIMITS.default;
+  if (!role) return DEFAULT_LIMITS.anonymous;
   return DEFAULT_LIMITS[role.toLowerCase()] ?? DEFAULT_LIMITS.default;
+}
+
+/**
+ * Maps a raw user object to one of the three client classes:
+ *   'anonymous' | 'user' | 'trusted'
+ *
+ * Trusted = admin, pro, or service-to-service tokens.
+ * Anonymous = no user object present.
+ */
+export function resolveClientClass(
+  user?: { role?: string; roles?: string[] } | null,
+): 'anonymous' | 'user' | 'trusted' {
+  if (!user) return 'anonymous';
+  const roles = user.roles ?? (user.role ? [user.role] : []);
+  if (roles.some((r) => ['admin', 'pro', 'trusted'].includes(r.toLowerCase()))) return 'trusted';
+  if (roles.length > 0) return 'user';
+  return 'anonymous';
 }
 
 /**
