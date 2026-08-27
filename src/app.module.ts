@@ -181,6 +181,10 @@ import { SearchModule } from './search/search.module';
             configService.get<number>(
               'connectionPool.connectionTimeoutMillis',
             ) ?? 2000,
+          statement_timeout:
+            configService.get<number>('database.writeTimeoutMs') ?? 10000,
+          query_timeout:
+            configService.get<number>('database.readTimeoutMs') ?? 5000,
         },
       }),
     }),
@@ -203,6 +207,10 @@ import { SearchModule } from './search/search.module';
         extra: {
           min: configService.get<number>('connectionPoolReplica.min') ?? 5,
           max: configService.get<number>('connectionPoolReplica.max') ?? 20,
+          statement_timeout:
+            configService.get<number>('database.readTimeoutMs') ?? 5000,
+          query_timeout:
+            configService.get<number>('database.readTimeoutMs') ?? 5000,
           idleTimeoutMillis:
             configService.get<number>(
               'connectionPoolReplica.idleTimeoutMillis',
