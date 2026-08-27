@@ -13,6 +13,7 @@ import {
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
+import { ReadinessService } from './readiness.service';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { SyntheticMonitoringService } from './synthetic-monitoring.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -43,6 +44,7 @@ import { DatabaseOptimizationModule } from '../database/database.module';
     DatabasePoolHealthIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
+    ReadinessService,
   ],
   exports: [
     StellarHealthIndicator,
@@ -54,6 +56,7 @@ import { DatabaseOptimizationModule } from '../database/database.module';
     DatabasePoolHealthIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
+    ReadinessService,
   ],
 })
 export class HealthModule {}
