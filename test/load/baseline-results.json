@@ -1,0 +1,13 @@
+{
+  "_comment": "Baseline load test results — update after each baseline run",
+  "lastUpdated": null,
+  "environment": "local",
+  "thresholds": {
+    "http_req_failed": { "target": "rate<0.05", "baseline": null },
+    "http_req_duration_p95": { "target": "<2000ms", "baseline": null },
+    "health_p99": { "target": "<500ms", "baseline": null },
+    "auth_p95": { "target": "<3000ms", "baseline": null },
+    "trades_p95": { "target": "<5000ms", "baseline": null }
+  },
+  "refreshProcedure": "Run `npm run test:load` against a clean local environment with docker-compose services running. Copy the k6 summary output into this file."
+}
