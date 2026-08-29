@@ -46,13 +46,14 @@ export class ApiKeyRateLimitService {
     apiKeyHash: string,
     tier: ApiKeyTier,
     endpointPath: string,
+    tenantId?: string,
   ): Promise<ApiKeyRateLimitResult> {
     const endpointGroup = this.resolveEndpointGroup(endpointPath);
     const limits = this.tierLimits[tier] ?? this.tierLimits[ApiKeyTier.FREE];
 
     // Try burst window first
     const burstResult = await this.checkWindow(
-      this.burstKey(apiKeyHash, endpointGroup),
+      this.burstKey(apiKeyHash, endpointGroup, tenantId),
       limits.burstLimit,
       limits.burstWindowSeconds,
     );
@@ -63,7 +64,7 @@ export class ApiKeyRateLimitService {
 
     // Fall back to standard window
     const standardResult = await this.checkWindow(
-      this.standardKey(apiKeyHash, endpointGroup),
+      this.standardKey(apiKeyHash, endpointGroup, tenantId),
       limits.limit,
       limits.windowSeconds,
     );
@@ -75,14 +76,15 @@ export class ApiKeyRateLimitService {
     apiKeyHash: string,
     tier: ApiKeyTier,
     endpointPath: string,
+    tenantId?: string,
   ): Promise<Record<string, string>> {
     const limits = this.tierLimits[tier] ?? this.tierLimits[ApiKeyTier.FREE];
     const endpointGroup = this.resolveEndpointGroup(endpointPath);
 
-    const standardInfo = await this.getWindowInfo(this.standardKey(apiKeyHash, endpointGroup));
-    const burstInfo = await this.getWindowInfo(this.burstKey(apiKeyHash, endpointGroup));
+    const standardInfo = await this.getWindowInfo(this.standardKey(apiKeyHash, endpointGroup, tenantId));
+    const burstInfo = await this.getWindowInfo(this.burstKey(apiKeyHash, endpointGroup, tenantId));
 
-    return {
+    const headers: Record<string, string> = {
       'X-RateLimit-Limit': String(limits.limit),
       'X-RateLimit-Remaining': String(Math.max(0, limits.limit - standardInfo.count)),
       'X-RateLimit-Reset': String(Math.ceil(standardInfo.resetTime / 1000)),
@@ -90,6 +92,10 @@ export class ApiKeyRateLimitService {
       'X-RateLimit-Burst-Remaining': String(Math.max(0, limits.burstLimit - burstInfo.count)),
       'X-RateLimit-Tier': tier,
     };
+    if (tenantId) {
+      headers['X-RateLimit-Tenant'] = tenantId;
+    }
+    return headers;
   }
 
   resolveEndpointGroup(path: string): EndpointGroup {
@@ -139,12 +145,14 @@ export class ApiKeyRateLimitService {
     return { count: 0, resetTime: Date.now(), isBurst: false };
   }
 
-  private standardKey(apiKeyHash: string, group: EndpointGroup): string {
-    return `rate_limit:api_key:${group}:${apiKeyHash}`;
+  private standardKey(apiKeyHash: string, group: EndpointGroup, tenantId?: string): string {
+    const prefix = tenantId ? `tenant:${tenantId}:` : '';
+    return `rate_limit:${prefix}api_key:${group}:${apiKeyHash}`;
   }
 
-  private burstKey(apiKeyHash: string, group: EndpointGroup): string {
-    return `rate_limit:api_key:burst:${group}:${apiKeyHash}`;
+  private burstKey(apiKeyHash: string, group: EndpointGroup, tenantId?: string): string {
+    const prefix = tenantId ? `tenant:${tenantId}:` : '';
+    return `rate_limit:${prefix}api_key:burst:${group}:${apiKeyHash}`;
   }
 
   private loadTierLimits(): Record<string, ApiKeyTierLimits> {
