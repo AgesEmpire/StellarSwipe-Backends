@@ -11,6 +11,7 @@ export interface AppConfig {
   corsOrigin: string[];
   corsCredentials: boolean;
   slippageToleranceBps: number;
+  shutdownDrainTimeoutMs: number;
 }
 
 export interface DatabaseConfig {

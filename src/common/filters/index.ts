@@ -3,3 +3,4 @@ export { AllExceptionsFilter } from './all-exceptions.filter';
 export { HttpExceptionFilter } from './http-exception.filter';
 export { GlobalExceptionFilter as ExceptionFilter } from './global-exception.filter';
 export type { ErrorPayload } from './http-exception.filter';
+export { ProblemDetailsFilter } from './problem-details.filter';

@@ -28,6 +28,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
 
 import { LoggerModule } from './common/logger';
 import { CorrelationModule } from './common/correlation';
+import { ShutdownModule } from './common/shutdown';
 import { SentryModule } from './common/sentry';
 import { ErrorClassificationModule } from './common/error-classification/error-classification.module';
 import { CacheModule } from './cache/cache.module';
@@ -239,6 +240,7 @@ import { SearchModule } from './search/search.module';
     }),
 
     CorrelationModule,
+    ShutdownModule,
     LoggerModule,
     SentryModule,
     RetryModule,

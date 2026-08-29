@@ -20,6 +20,12 @@ export const appConfig = registerAs('app', (): AppConfig => ({
     process.env.SLIPPAGE_TOLERANCE_BPS || '50',
     10,
   ),
+  // #1058 — max time to wait for in-flight HTTP requests to drain after
+  // SIGTERM/SIGINT before the shutdown proceeds to close resources anyway.
+  shutdownDrainTimeoutMs: parseInt(
+    process.env.SHUTDOWN_DRAIN_TIMEOUT_MS || '30000',
+    10,
+  ),
 }));
 
 export const sentryConfig = registerAs('sentry', (): SentryConfig => ({
