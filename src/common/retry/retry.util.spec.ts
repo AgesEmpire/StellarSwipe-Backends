@@ -1,6 +1,7 @@
 import {
   computeBackoffDelayMs,
   extractRetryAfterMs,
+  isIdempotentMethod,
   isRetryableError,
 } from './retry.util';
 
@@ -87,5 +88,29 @@ describe('computeBackoffDelayMs', () => {
     // With jitter enabled, repeated calls should not all collapse to the
     // same value (extremely unlikely across 50 samples if jitter works).
     expect(new Set(samples).size).toBeGreaterThan(1);
+  });
+});
+
+describe('isIdempotentMethod', () => {
+  it.each(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS'])(
+    'treats %s as idempotent',
+    (method) => {
+      expect(isIdempotentMethod(method)).toBe(true);
+    },
+  );
+
+  it.each(['get', 'head', 'put', 'delete', 'options'])(
+    'is case-insensitive for %s',
+    (method) => {
+      expect(isIdempotentMethod(method)).toBe(true);
+    },
+  );
+
+  it.each(['POST', 'PATCH'])('treats %s as non-idempotent', (method) => {
+    expect(isIdempotentMethod(method)).toBe(false);
+  });
+
+  it('treats an unknown/omitted method as idempotent (preserves prior behavior)', () => {
+    expect(isIdempotentMethod(undefined)).toBe(true);
   });
 });

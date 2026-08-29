@@ -8,9 +8,16 @@ import { SignalsModule } from '../../signals/signals.module';
 import { TradesModule } from '../../trades/trades.module';
 import { PortfolioModule } from '../../portfolio/portfolio.module';
 import { WebhookVerifierService } from '../webhooks/webhook-verifier.service';
+import { defaultHttpModuleOptions } from '../../http/http-client-defaults';
 
 @Module({
-  imports: [ConfigModule, HttpModule, SignalsModule, TradesModule, PortfolioModule],
+  imports: [
+    ConfigModule,
+    HttpModule.register(defaultHttpModuleOptions()),
+    SignalsModule,
+    TradesModule,
+    PortfolioModule,
+  ],
   controllers: [AutomationController],
   providers: [ZapierService, MakeService, WebhookVerifierService],
   exports: [ZapierService, MakeService],

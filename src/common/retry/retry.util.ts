@@ -78,3 +78,15 @@ export function computeBackoffDelayMs(
   if (jitter === 'none') return capped;
   return Math.floor(Math.random() * capped);
 }
+
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']);
+
+/**
+ * Whether an HTTP method is safe to retry automatically without an explicit
+ * opt-in. POST and PATCH are excluded by default since a retried request
+ * could duplicate a non-idempotent side effect.
+ */
+export function isIdempotentMethod(method: string | undefined): boolean {
+  if (!method) return true; // unknown method: preserve prior behavior (retry), caller should pass method when known
+  return IDEMPOTENT_METHODS.has(method.toUpperCase());
+}
