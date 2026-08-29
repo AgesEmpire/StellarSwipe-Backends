@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -19,6 +20,10 @@ import {
 } from './dto/order-condition.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { assertOwnership } from '../../authorization/utils/assert-ownership.util';
+import { AtomicTransactionHelper } from '../../common/database/atomic-transaction.helper';
+import { OutboxService } from '../../events/outbox/outbox.service';
+import { assertTransitionAllowed } from './conditional-order-state-machine';
+import { updateWithVersionCheck } from '../../common/utils/optimistic-update.util';
 
 export interface OwnershipActor {
   id: string;
@@ -39,6 +44,8 @@ export class ConditionalOrderService {
   constructor(
     @InjectRepository(ConditionalOrder)
     private readonly conditionalOrderRepo: Repository<ConditionalOrder>,
+    private readonly atomicTransaction: AtomicTransactionHelper,
+    private readonly outboxService: OutboxService,
   ) {}
 
   /**
@@ -109,6 +116,13 @@ export class ConditionalOrderService {
 
   /**
    * Update an existing conditional order (amount, price, conditions).
+   *
+   * Uses the shared optimistic-concurrency helper: the update only applies
+   * if the row's version still matches `expectedVersion` (the version the
+   * caller supplied, or the one we just read when they didn't), bumping
+   * the version atomically as part of the same UPDATE. A concurrent
+   * modification between our read and this write is therefore detected
+   * as an OptimisticLockException (409) instead of silently overwritten.
    */
   async update(
     id: string,
@@ -126,34 +140,68 @@ export class ConditionalOrderService {
       );
     }
 
-    if (dto.amount !== undefined) order.amount = dto.amount;
-    if (dto.limitPrice !== undefined) order.limitPrice = dto.limitPrice;
-    if (dto.conditionGroups !== undefined)
-      order.conditions = dto.conditionGroups as any;
-    if (dto.expiresAt !== undefined)
-      order.expiresAt = new Date(dto.expiresAt);
+    const expectedVersion = dto.expectedVersion ?? order.version;
 
-    return this.conditionalOrderRepo.save(order);
+    const changes: Partial<ConditionalOrder> = {};
+    if (dto.amount !== undefined) changes.amount = dto.amount;
+    if (dto.limitPrice !== undefined) changes.limitPrice = dto.limitPrice;
+    if (dto.conditionGroups !== undefined)
+      changes.conditions = dto.conditionGroups as any;
+    if (dto.expiresAt !== undefined)
+      changes.expiresAt = new Date(dto.expiresAt);
+
+    await updateWithVersionCheck(
+      this.conditionalOrderRepo,
+      'ConditionalOrder',
+      id,
+      expectedVersion,
+      changes,
+    );
+
+    return this.findById(id, actor);
   }
 
   /**
    * Cancel a conditional order.
+   *
+   * Runs inside a DB transaction and takes a pessimistic write lock on the
+   * order row before re-checking its status, so a concurrent fill
+   * (evaluateConditions -> executeTriggeredOrder) racing against this
+   * cancel cannot both apply their effects: whichever transaction acquires
+   * the row lock first commits its terminal state, and the other's
+   * re-checked transition is then rejected by assertTransitionAllowed.
+   * The status change and its outbox event are written atomically, so a
+   * failure anywhere in the transaction rolls back both.
    */
   async cancel(id: string, actor?: OwnershipActor): Promise<ConditionalOrder> {
-    const order = await this.findById(id, actor);
+    // Ownership check up front, before taking any lock.
+    await this.findById(id, actor);
 
-    if (
-      order.status === ConditionalOrderStatus.FILLED ||
-      order.status === ConditionalOrderStatus.CANCELLED
-    ) {
-      throw new BadRequestException(
-        `Cannot cancel order in status ${order.status}`,
+    return this.atomicTransaction.run(async (queryRunner) => {
+      const manager = queryRunner.manager;
+      const order = await manager.findOne(ConditionalOrder, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException(`Conditional order ${id} not found`);
+      }
+
+      assertTransitionAllowed(order.status, ConditionalOrderStatus.CANCELLED);
+
+      order.status = ConditionalOrderStatus.CANCELLED;
+      order.cancelledAt = new Date();
+      const saved = await manager.save(ConditionalOrder, order);
+
+      await this.outboxService.record(
+        manager,
+        'conditional_order.cancelled',
+        { orderId: order.id, userId: order.userId },
+        `conditional_order.cancelled:${order.id}`,
       );
-    }
 
-    order.status = ConditionalOrderStatus.CANCELLED;
-    order.cancelledAt = new Date();
-    return this.conditionalOrderRepo.save(order);
+      return saved;
+    });
   }
 
   /**
@@ -183,11 +231,11 @@ export class ConditionalOrderService {
         const isMet = this.evaluateConditionGroups(conditionGroups, priceSnapshots);
 
         if (isMet) {
-          order.status = ConditionalOrderStatus.TRIGGERED;
-          order.triggeredAt = new Date();
-          await this.conditionalOrderRepo.save(order);
-          triggered.push(order.id);
-          this.logger.log(`Conditional order ${order.id} triggered`);
+          const wasTriggered = await this.tryTriggerOrder(order.id);
+          if (wasTriggered) {
+            triggered.push(order.id);
+            this.logger.log(`Conditional order ${order.id} triggered`);
+          }
         }
       } catch (error) {
         this.logger.error(
@@ -200,28 +248,89 @@ export class ConditionalOrderService {
   }
 
   /**
-   * Execute a triggered order (creates a real trade).
+   * Execute a triggered order (creates a real trade) — the "fill" side of
+   * the cancellation-vs-fill race. Locks the row, re-validates the
+   * transition, and writes the status change plus its outbox event in one
+   * transaction so exactly one balance-affecting fill is ever applied for
+   * a given order, and a concurrent cancel cannot silently overwrite it
+   * (or vice versa).
    */
   async executeTriggeredOrder(
     orderId: string,
     tradeId?: string,
     actor?: OwnershipActor,
   ): Promise<ConditionalOrder> {
-    const order = await this.findById(orderId, actor);
+    await this.findById(orderId, actor);
 
-    if (order.status !== ConditionalOrderStatus.TRIGGERED) {
-      throw new BadRequestException(
-        `Order ${orderId} is not in TRIGGERED state (current: ${order.status})`,
+    return this.atomicTransaction.run(async (queryRunner) => {
+      const manager = queryRunner.manager;
+      const order = await manager.findOne(ConditionalOrder, {
+        where: { id: orderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException(`Conditional order ${orderId} not found`);
+      }
+
+      assertTransitionAllowed(order.status, ConditionalOrderStatus.FILLED);
+
+      order.status = ConditionalOrderStatus.FILLED;
+      order.filledAt = new Date();
+      if (tradeId) {
+        order.resultingTradeId = tradeId;
+      }
+
+      const saved = await manager.save(ConditionalOrder, order);
+
+      await this.outboxService.record(
+        manager,
+        'conditional_order.filled',
+        { orderId: order.id, userId: order.userId, tradeId },
+        `conditional_order.filled:${order.id}`,
       );
-    }
 
-    order.status = ConditionalOrderStatus.FILLED;
-    order.filledAt = new Date();
-    if (tradeId) {
-      order.resultingTradeId = tradeId;
-    }
+      return saved;
+    });
+  }
 
-    return this.conditionalOrderRepo.save(order);
+  /**
+   * Locks and transitions a single order from PENDING/ACTIVE to TRIGGERED,
+   * used by the condition-evaluation sweep. Returns false (rather than
+   * throwing) when the order was concurrently cancelled/expired/filled
+   * since it was read for evaluation — that is an expected outcome of the
+   * race, not a failure worth surfacing as an error.
+   */
+  private async tryTriggerOrder(orderId: string): Promise<boolean> {
+    try {
+      return await this.atomicTransaction.run(async (queryRunner) => {
+        const manager = queryRunner.manager;
+        const order = await manager.findOne(ConditionalOrder, {
+          where: { id: orderId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!order) return false;
+
+        assertTransitionAllowed(order.status, ConditionalOrderStatus.TRIGGERED);
+
+        order.status = ConditionalOrderStatus.TRIGGERED;
+        order.triggeredAt = new Date();
+        await manager.save(ConditionalOrder, order);
+
+        await this.outboxService.record(
+          manager,
+          'conditional_order.triggered',
+          { orderId: order.id, userId: order.userId },
+          `conditional_order.triggered:${order.id}`,
+        );
+
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   /**

@@ -96,6 +96,14 @@ export class CreateConditionalOrderDto {
 }
 
 export class UpdateConditionalOrderDto {
+  @ApiPropertyOptional({
+    description:
+      'Version last read by the client. If supplied, the update is rejected with a 409 conflict when the order was modified since that read.',
+  })
+  @IsOptional()
+  @IsNumber()
+  expectedVersion?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
