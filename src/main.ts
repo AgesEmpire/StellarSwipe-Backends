@@ -3,10 +3,10 @@ import { MicroserviceOptions, Transport } from "@nestjs/microservices";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import { VersioningType } from '@nestjs/common';
-import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
+import { I18nValidationPipe } from 'nestjs-i18n';
 import * as compression from 'compression';
 import { AppModule } from "./app.module";
-import { ExceptionFilter, HttpExceptionFilter } from "./common/filters";
+import { ProblemDetailsFilter } from "./common/filters";
 import { ErrorClassificationService } from "./common/error-classification";
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import {
@@ -22,6 +22,8 @@ import { LoggerService } from './common/logger';
 import { CorrelationIdStore } from './common/correlation/correlation-id.store';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { SentryService } from './common/sentry';
+import { ShutdownService, ShutdownGuardMiddleware } from './common/shutdown';
+import { ReadinessService } from './health/readiness.service';
 import { SanitizationPipe } from './common/pipes';
 import { RedisIoAdapter } from './websocket/adapters/redis-io.adapter';
 import { InstanceCoordinatorService } from './scaling/instance-coordinator.service';
@@ -92,6 +94,14 @@ async function bootstrap() {
   const correlationIdMiddleware = app.get(CorrelationIdMiddleware);
   app.use(correlationIdMiddleware.use.bind(correlationIdMiddleware));
 
+  // Reject new traffic as soon as graceful shutdown begins (#1058), ahead of
+  // rate limiting and routing so a request that arrives mid-drain gets an
+  // immediate 503 instead of being handled with resources that are
+  // mid-teardown.
+  const shutdownService = app.get(ShutdownService);
+  const shutdownGuardMiddleware = app.get(ShutdownGuardMiddleware);
+  app.use(shutdownGuardMiddleware.use.bind(shutdownGuardMiddleware));
+
   // Apply global rate limiting middleware before any request reaches route handlers
   const rateLimitMiddleware = app.get(RateLimitMiddleware);
   app.use(rateLimitMiddleware.use.bind(rateLimitMiddleware));
@@ -105,7 +115,15 @@ async function bootstrap() {
     next();
   });
 
-  app.enableShutdownHooks();
+  // NOTE: we deliberately do NOT call app.enableShutdownHooks() here. It
+  // would register its own SIGTERM/SIGINT listeners that call
+  // callShutdownHook() (running onModuleDestroy/onApplicationShutdown on
+  // every provider — closing the DB, Redis clients and BullMQ workers)
+  // immediately on signal receipt, racing with the bounded in-flight drain
+  // below. Lifecycle hooks still fire correctly because app.close() (called
+  // explicitly in gracefulShutdown) always runs them — enableShutdownHooks()
+  // only wires up automatic signal handling, which we do ourselves so we
+  // control the order: reject new traffic → drain → close.
 
   // Global pipes
   app.useGlobalPipes(
@@ -129,13 +147,12 @@ async function bootstrap() {
   const instanceCoordinator = app.get(InstanceCoordinatorService);
   logger.info(`Application started on instance: ${instanceCoordinator.getInstanceId()}`);
 
-// Global filters
-   const errorClassifier = app.get(ErrorClassificationService);
-   app.useGlobalFilters(
-     new ExceptionFilter(logger, sentryService, errorClassifier, configService),
-     new HttpExceptionFilter(),
-     new I18nValidationExceptionFilter({ detailedErrors: false }),
-   );
+// Global filter — single RFC 7807 Problem Details filter for every
+  // validation, domain, authentication and unexpected error (#1056).
+  const errorClassifier = app.get(ErrorClassificationService);
+  app.useGlobalFilters(
+    new ProblemDetailsFilter(logger, sentryService, errorClassifier, configService),
+  );
 
   // Global interceptors
   app.useGlobalInterceptors(new DeadlockRetryInterceptor());
@@ -205,29 +222,56 @@ async function bootstrap() {
     setTimeout(() => process.exit(1), 1000);
   });
 
-  process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received: starting graceful shutdown');
+  // Orderly shutdown (#1058): reject new traffic → mark not-ready → drain
+  // in-flight requests up to a bounded, configurable timeout → close the app
+  // (HTTP server, TCP microservice, and every provider's onModuleDestroy /
+  // onApplicationShutdown hook — DB via TypeORM, Redis clients, BullMQ
+  // workers via BullShutdownCoordinator) → flush Sentry → exit.
+  const readinessService = app.get(ReadinessService);
+  const drainTimeoutMs = configService.get<number>('app.shutdownDrainTimeoutMs') ?? 30_000;
+  let shuttingDown = false;
 
-    // Stop accepting new connections
-    await app.close();
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
 
-    // Drain in-flight requests (max 30 s)
-    const drainTimeout = 30_000;
+    logger.info(`${signal} received: starting graceful shutdown`);
+
+    // Reject new HTTP requests immediately and fail the readiness probe so
+    // the orchestrator stops routing traffic here.
+    shutdownService.beginShutdown(signal);
+    readinessService.markNotReady(`shutdown_signal:${signal}`);
+
     const drainStart = Date.now();
-    while (inFlightRequests > 0 && Date.now() - drainStart < drainTimeout) {
+    let forced = false;
+    while (inFlightRequests > 0) {
+      if (Date.now() - drainStart >= drainTimeoutMs) {
+        forced = true;
+        break;
+      }
       logger.info(`Draining ${inFlightRequests} in-flight request(s)…`);
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    if (inFlightRequests > 0) {
-      logger.warn(`Shutdown forced with ${inFlightRequests} request(s) still in-flight`);
+    if (forced) {
+      logger.warn(
+        `Shutdown drain timeout (${drainTimeoutMs}ms) exceeded with ${inFlightRequests} request(s) still in-flight — proceeding to close resources`,
+      );
     } else {
-      logger.info('All in-flight requests drained. Shutdown complete.');
+      logger.info('All in-flight requests drained.');
     }
 
+    // Closes the HTTP server and TCP microservice, and runs onModuleDestroy /
+    // onApplicationShutdown on every provider (DB, cache, queue connections).
+    await app.close();
+    logger.info(`Resource cleanup complete. Shutdown ${forced ? 'forced' : 'graceful'}.`);
+
     await sentryService.flush();
-    process.exit(0);
-  });
+    process.exit(forced ? 1 : 0);
+  };
+
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 }
 
 bootstrap().catch((err) => {
