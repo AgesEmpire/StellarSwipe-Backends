@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  VersionColumn,
   Index,
   ManyToOne,
   JoinColumn,
@@ -85,4 +86,8 @@ export class ConditionalOrder {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  /** Optimistic concurrency token — bumped on every update. */
+  @VersionColumn()
+  version!: number;
 }
