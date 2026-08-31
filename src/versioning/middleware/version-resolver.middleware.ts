@@ -11,10 +11,16 @@ export class VersionResolverMiddleware implements NestMiddleware {
     const headerVersion = req.headers['api-version'] as string;
     
     const requestedVersion = urlVersion || headerVersion || this.versionManager.getDefaultVersion();
-    
+
     if (!this.versionManager.isSupported(requestedVersion)) {
       throw new NotFoundException(`API Version ${requestedVersion} is no longer supported or invalid.`);
     }
+
+    // Version negotiation: surface the resolved version and the full set of
+    // currently supported versions on every response (not just deprecated
+    // ones) so clients can negotiate/introspect without guessing from docs.
+    res.setHeader('X-API-Version', requestedVersion);
+    res.setHeader('X-API-Supported-Versions', this.versionManager.getSupportedVersions().join(', '));
 
     const metadata = this.versionManager.getVersionMetadata(requestedVersion);
     if (metadata) {

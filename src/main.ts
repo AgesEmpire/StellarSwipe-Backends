@@ -35,6 +35,8 @@ import { initTracing } from './monitoring/tracing/jaeger.config';
 import { DocGeneratorService } from './documentation/doc-generator.service';
 import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
 import { DeprecationInterceptor } from './versioning/interceptors/deprecation.interceptor';
+import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
+import { VersionManagerService } from './versioning/version-manager.service';
 
 initTracing();
 
@@ -78,6 +80,16 @@ async function bootstrap() {
   // Register deprecation interceptor globally so @Deprecated() headers are
   // emitted on any handler decorated with it, without touching auth logic.
   app.useGlobalInterceptors(new DeprecationInterceptor(app.get(Reflector)));
+
+  // Enforce @ApiVersion()-pinned handlers against the live version registry
+  // (rejects sunset versions with 410 Gone, mirrors deprecation headers for
+  // deprecated ones). Registered on the HTTP app instance — like the
+  // interceptor above — rather than via the APP_GUARD DI token, so it only
+  // applies to HTTP routes and never intercepts the TCP microservice
+  // listener's @MessagePattern handlers connected further below.
+  app.useGlobalGuards(
+    new VersionCompatibilityGuard(app.get(Reflector), app.get(VersionManagerService)),
+  );
 
   // Enable CORS
   // Build CORS options using helper which validates production config
