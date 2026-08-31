@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { JobSchedulerService, JobDefinition } from './job-scheduler.service';
+import { PermanentError } from '../common/retry';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -173,6 +174,117 @@ describe('JobSchedulerService', () => {
       const history = svc.getHistory('test.job');
       expect(history.some(e => e.status === 'success')).toBe(true);
       jest.useRealTimers();
+    });
+  });
+
+  describe('exponential backoff with jitter and cap (Issue #1075)', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    function delaysFromHistory(history: ReturnType<JobSchedulerService['getHistory']>): number[] {
+      return history
+        .map((e) => e.error?.match(/in (\d+)ms/)?.[1])
+        .filter((d): d is string => d !== undefined)
+        .map(Number);
+    }
+
+    it('doubles the delay per attempt and caps it at maxRetryDelayMs (jitter disabled)', async () => {
+      jest.useFakeTimers();
+      const { svc } = await buildService();
+      const handler = jest.fn().mockRejectedValue(new Error('transient'));
+
+      // maxRetries=5, baseDelayMs=100, maxRetryDelayMs=300, jitter=none
+      await (svc as any).runWithRetry('backoff.job', handler, 5, 100, 1, 300, 'none');
+      await jest.runAllTimersAsync();
+
+      expect(handler).toHaveBeenCalledTimes(5);
+
+      const history = svc.getHistory('backoff.job').reverse(); // chronological order
+      expect(delaysFromHistory(history)).toEqual([100, 200, 300, 300]);
+      expect(history.at(-1)).toMatchObject({ status: 'failed', outcome: 'retries-exhausted' });
+    });
+
+    it('applies jitter so the scheduled delay varies within [0, cappedDelay]', async () => {
+      jest.useFakeTimers();
+      const { svc } = await buildService();
+      const handler = jest.fn().mockRejectedValue(new Error('transient'));
+
+      // Uncapped-then-capped exponential sequence for attempts 1..5 (base=100, cap=1000):
+      // 100, 200, 400, 800, 1000(capped)
+      const caps = [100, 200, 400, 800, 1000];
+
+      await (svc as any).runWithRetry('jitter.job', handler, 6, 100, 1, 1_000, 'full');
+      await jest.runAllTimersAsync();
+
+      const history = svc.getHistory('jitter.job').reverse();
+      const delays = delaysFromHistory(history);
+
+      expect(delays).toHaveLength(caps.length);
+      delays.forEach((delay, i) => {
+        expect(delay).toBeGreaterThanOrEqual(0);
+        expect(delay).toBeLessThanOrEqual(caps[i]);
+      });
+      // With full jitter, it would be astronomically unlikely for every
+      // sampled delay to land exactly on its cap — confirms randomization
+      // is actually applied rather than jitter being a no-op.
+      expect(delays.some((delay, i) => delay < caps[i])).toBe(true);
+    });
+
+    it('stops immediately on a PermanentError without scheduling a retry', async () => {
+      jest.useFakeTimers();
+      const { svc } = await buildService();
+      const handler = jest.fn().mockRejectedValue(new PermanentError('bad payload'));
+
+      await (svc as any).runWithRetry('permanent.job', handler, 5, 100, 1, 1_000, 'none');
+      await jest.runAllTimersAsync();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      const history = svc.getHistory('permanent.job');
+      expect(history[0]).toMatchObject({ status: 'failed', outcome: 'permanent-failure' });
+    });
+
+    it('classifies a validation-style message as permanent without an explicit marker class', async () => {
+      jest.useFakeTimers();
+      const { svc } = await buildService();
+      const handler = jest.fn().mockRejectedValue(new Error('Validation failed: missing field'));
+
+      await (svc as any).runWithRetry('validation.job', handler, 5, 100, 1, 1_000, 'none');
+      await jest.runAllTimersAsync();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      const history = svc.getHistory('validation.job');
+      expect(history[0]).toMatchObject({ status: 'failed', outcome: 'permanent-failure' });
+    });
+
+    it('stops retrying a retryable error once maxRetries attempts are used up', async () => {
+      jest.useFakeTimers();
+      const { svc } = await buildService();
+      const handler = jest.fn().mockRejectedValue(new Error('ETIMEDOUT'));
+
+      await (svc as any).runWithRetry('exhausted.job', handler, 3, 10, 1, 1_000, 'none');
+      await jest.runAllTimersAsync();
+
+      expect(handler).toHaveBeenCalledTimes(3);
+      const history = svc.getHistory('exhausted.job');
+      expect(history[0]).toMatchObject({ status: 'failed', outcome: 'retries-exhausted' });
+    });
+
+    it('recovers once the transient failure clears within the retry budget', async () => {
+      jest.useFakeTimers();
+      const { svc } = await buildService();
+      const handler = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('transient'))
+        .mockRejectedValueOnce(new Error('transient'))
+        .mockResolvedValue(undefined);
+
+      await (svc as any).runWithRetry('recovers.job', handler, 5, 10, 1, 1_000, 'none');
+      await jest.runAllTimersAsync();
+
+      expect(handler).toHaveBeenCalledTimes(3);
+      const history = svc.getHistory('recovers.job');
+      expect(history[0]).toMatchObject({ status: 'success', outcome: 'success' });
     });
   });
 

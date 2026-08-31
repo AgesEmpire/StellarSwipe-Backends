@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { ConfigService } from '@nestjs/config';
+import { computeBackoffDelayMs, isPermanentJobError } from '../common/retry';
 
 export interface JobDefinition {
   /** Unique name used as the key in SchedulerRegistry */
@@ -16,6 +17,14 @@ export interface JobDefinition {
   maxRetries?: number;
   /** Base delay in ms for exponential backoff (default 5000) */
   retryDelayMs?: number;
+  /** Upper bound in ms on the computed backoff delay (default 60000) */
+  maxRetryDelayMs?: number;
+  /**
+   * Jitter strategy applied to the computed backoff delay: "full" (default)
+   * picks a random delay in [0, backoff] to avoid synchronized retry storms
+   * across job instances; "none" disables randomization (useful in tests).
+   */
+  jitter?: 'full' | 'none';
 }
 
 export interface JobExecution {
@@ -25,6 +34,14 @@ export interface JobExecution {
   status: 'running' | 'success' | 'failed';
   error?: string;
   attempt: number;
+  /**
+   * Final disposition of this attempt, set once the job settles:
+   * "success" — handler resolved; "permanent-failure" — a non-retryable
+   * error short-circuited retries; "retries-exhausted" — every attempt
+   * failed with a retryable error. Left undefined while a retry is still
+   * pending (the failure isn't final yet).
+   */
+  outcome?: 'success' | 'permanent-failure' | 'retries-exhausted';
 }
 
 /**
@@ -36,7 +53,13 @@ export interface JobExecution {
  *  - Cron expressions are read from environment variables, falling back to
  *    hardcoded defaults — no code change needed to reschedule.
  *  - Tracks the last N executions per job (in-memory ring buffer, size 20).
- *  - Retries failed handlers with exponential backoff before marking failed.
+ *  - Retries failed handlers with jittered exponential backoff (capped at
+ *    `maxRetryDelayMs`, computed via the shared `computeBackoffDelayMs`
+ *    from `src/common/retry`) before marking the job permanently failed.
+ *  - Classifies handler errors via `isPermanentJobError`: a permanent
+ *    failure (bad input, auth, not-found, or an explicit `PermanentError`)
+ *    short-circuits retries immediately instead of burning through
+ *    `maxRetries` on an error that will never succeed.
  */
 @Injectable()
 export class JobSchedulerService implements OnModuleDestroy {
@@ -58,9 +81,19 @@ export class JobSchedulerService implements OnModuleDestroy {
     const cron = this.config.get<string>(def.cronEnvKey) ?? def.defaultCron;
     const maxRetries = def.maxRetries ?? 3;
     const retryDelayMs = def.retryDelayMs ?? 5_000;
+    const maxRetryDelayMs = def.maxRetryDelayMs ?? 60_000;
+    const jitter = def.jitter ?? 'full';
 
     const job = new CronJob(cron, () => {
-      void this.runWithRetry(def.name, def.handler, maxRetries, retryDelayMs);
+      void this.runWithRetry(
+        def.name,
+        def.handler,
+        maxRetries,
+        retryDelayMs,
+        1,
+        maxRetryDelayMs,
+        jitter,
+      );
     });
 
     // Replace if already registered
@@ -126,6 +159,8 @@ export class JobSchedulerService implements OnModuleDestroy {
     maxRetries: number,
     baseDelayMs: number,
     attempt = 1,
+    maxRetryDelayMs = 60_000,
+    jitter: 'full' | 'none' = 'full',
   ): Promise<void> {
     const exec: JobExecution = {
       jobName: name,
@@ -138,25 +173,51 @@ export class JobSchedulerService implements OnModuleDestroy {
     try {
       await handler();
       exec.status = 'success';
+      exec.outcome = 'success';
       exec.finishedAt = new Date().toISOString();
       this.logger.log(`Job "${name}" completed (attempt ${attempt})`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       exec.finishedAt = new Date().toISOString();
 
+      // Permanent failures (bad input, auth, not-found, or an explicit
+      // PermanentError) will not succeed on retry — stop immediately
+      // rather than burning through maxRetries.
+      if (isPermanentJobError(err)) {
+        exec.status = 'failed';
+        exec.outcome = 'permanent-failure';
+        exec.error = message;
+        this.logger.error(
+          `Job "${name}" failed permanently on attempt ${attempt}, not retrying: ${message}`,
+        );
+        return;
+      }
+
       if (attempt < maxRetries) {
         exec.status = 'failed';
-        exec.error = `${message} — retrying (${attempt}/${maxRetries})`;
-        this.logger.warn(`Job "${name}" failed (attempt ${attempt}/${maxRetries}): ${message}`);
+        const delay = computeBackoffDelayMs(attempt, baseDelayMs, maxRetryDelayMs, jitter);
+        exec.error = `${message} — retrying (${attempt}/${maxRetries}) in ${delay}ms`;
+        this.logger.warn(
+          `Job "${name}" failed (attempt ${attempt}/${maxRetries}): ${message}; retrying in ${delay}ms`,
+        );
 
-        const delay = baseDelayMs * Math.pow(2, attempt - 1);
         const timer = setTimeout(
-          () => void this.runWithRetry(name, handler, maxRetries, baseDelayMs, attempt + 1),
+          () =>
+            void this.runWithRetry(
+              name,
+              handler,
+              maxRetries,
+              baseDelayMs,
+              attempt + 1,
+              maxRetryDelayMs,
+              jitter,
+            ),
           delay,
         );
         this.retryTimers.push(timer);
       } else {
         exec.status = 'failed';
+        exec.outcome = 'retries-exhausted';
         exec.error = message;
         this.logger.error(`Job "${name}" exhausted ${maxRetries} attempts: ${message}`);
       }
