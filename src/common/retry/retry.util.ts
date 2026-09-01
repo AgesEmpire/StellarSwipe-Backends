@@ -79,6 +79,78 @@ export function computeBackoffDelayMs(
   return Math.floor(Math.random() * capped);
 }
 
+/**
+ * #1075 — Marker errors for background-job handlers.
+ *
+ * Throwing one of these bypasses pattern/status-based classification
+ * entirely, letting a handler state its intent explicitly: `PermanentError`
+ * short-circuits retries (e.g. "this payload will never validate"),
+ * `RetryableError` forces a retry even if the message happens to match a
+ * permanent-looking pattern.
+ */
+export class PermanentError extends Error {
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'PermanentError';
+  }
+}
+
+export class RetryableError extends Error {
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'RetryableError';
+  }
+}
+
+/**
+ * Message patterns that indicate a background job failed for a reason that
+ * will not clear up on its own — bad input, missing resources, or an
+ * authorization problem. Retrying these just delays the (identical) final
+ * failure and wastes attempts/worker time.
+ */
+const PERMANENT_JOB_ERROR_PATTERNS = [
+  /unauthorized/i,
+  /forbidden/i,
+  /not found/i,
+  /validation failed/i,
+  /invalid input/i,
+];
+
+/**
+ * Classifies a background-job failure as permanent (should not be retried)
+ * or retryable (transient, worth another attempt).
+ *
+ * This is deliberately the mirror image of `isRetryableError` above: that
+ * helper is for outbound HTTP/integration calls and defaults to NOT
+ * retrying anything it doesn't recognize (a false-positive retry there can
+ * duplicate a side effect). Job handlers are different — most job failures
+ * (a transient DB error, a downstream blip, an unhandled edge case) *are*
+ * safe to retry, so an error thrown by a job handler is assumed retryable
+ * unless it is explicitly marked `PermanentError` or matches a known
+ * permanent-failure pattern (auth/validation/not-found) or a non-429 4xx
+ * status. Callers that need the opposite default for a specific error can
+ * throw `PermanentError`/`RetryableError` to override this heuristic.
+ */
+export function isPermanentJobError(error: unknown): boolean {
+  if (error instanceof PermanentError) return true;
+  if (error instanceof RetryableError) return false;
+
+  const err = (error ?? {}) as ClassifiableError;
+  const status = err.status ?? err.statusCode ?? err.response?.status;
+  if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return PERMANENT_JOB_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']);
 
 /**

@@ -2,7 +2,10 @@ import {
   computeBackoffDelayMs,
   extractRetryAfterMs,
   isIdempotentMethod,
+  isPermanentJobError,
   isRetryableError,
+  PermanentError,
+  RetryableError,
 } from './retry.util';
 
 describe('isRetryableError', () => {
@@ -88,6 +91,44 @@ describe('computeBackoffDelayMs', () => {
     // With jitter enabled, repeated calls should not all collapse to the
     // same value (extremely unlikely across 50 samples if jitter works).
     expect(new Set(samples).size).toBeGreaterThan(1);
+  });
+});
+
+describe('isPermanentJobError (Issue #1075)', () => {
+  it('honors an explicit PermanentError marker', () => {
+    expect(isPermanentJobError(new PermanentError('will never work'))).toBe(true);
+  });
+
+  it('honors an explicit RetryableError marker even if the message looks permanent', () => {
+    expect(isPermanentJobError(new RetryableError('validation failed but retry anyway'))).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    'Unauthorized request',
+    'Forbidden resource',
+    'Not found',
+    'Validation failed: amount',
+    'Invalid input provided',
+  ])('classifies "%s" as permanent', (message) => {
+    expect(isPermanentJobError(new Error(message))).toBe(true);
+  });
+
+  it('classifies a non-429 4xx status as permanent', () => {
+    expect(isPermanentJobError({ status: 400 })).toBe(true);
+    expect(isPermanentJobError({ statusCode: 404 })).toBe(true);
+  });
+
+  it('classifies 429 and 5xx statuses as retryable (not permanent)', () => {
+    expect(isPermanentJobError({ status: 429 })).toBe(false);
+    expect(isPermanentJobError({ status: 503 })).toBe(false);
+  });
+
+  it('defaults an unrecognized/generic error to retryable — jobs assume transient unless proven otherwise', () => {
+    expect(isPermanentJobError(new Error('connection reset'))).toBe(false);
+    expect(isPermanentJobError(new Error('boom'))).toBe(false);
+    expect(isPermanentJobError({})).toBe(false);
   });
 });
 
