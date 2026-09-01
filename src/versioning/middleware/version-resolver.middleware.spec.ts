@@ -123,4 +123,50 @@ describe('VersionResolverMiddleware', () => {
 
     expect(() => middleware.use(req, res as any, next)).toThrow(NotFoundException);
   });
+
+  describe('version negotiation headers', () => {
+    it('sets X-API-Version to the resolved version for a supported, non-deprecated request', () => {
+      const req = buildMockReq('/api/v2/signals');
+      const res = buildMockRes();
+      const next = jest.fn();
+
+      middleware.use(req, res as any, next);
+
+      expect(res.setHeader).toHaveBeenCalledWith('X-API-Version', '2');
+    });
+
+    it('sets X-API-Supported-Versions listing every supported version', () => {
+      const req = buildMockReq('/api/v2/signals');
+      const res = buildMockRes();
+      const next = jest.fn();
+
+      middleware.use(req, res as any, next);
+
+      const call = (res.setHeader as jest.Mock).mock.calls.find(
+        (c: any[]) => c[0] === 'X-API-Supported-Versions',
+      );
+      expect(call).toBeDefined();
+      expect(call[1]).toContain('1');
+      expect(call[1]).toContain('2');
+    });
+
+    it('sets X-API-Version even when falling back to the default version', () => {
+      const req = buildMockReq('/health');
+      const res = buildMockRes();
+      const next = jest.fn();
+
+      middleware.use(req, res as any, next);
+
+      expect(res.setHeader).toHaveBeenCalledWith('X-API-Version', versionManager.getDefaultVersion());
+    });
+
+    it('does NOT set negotiation headers when the version is rejected', () => {
+      const req = buildMockReq('/api/v99/signals');
+      const res = buildMockRes();
+      const next = jest.fn();
+
+      expect(() => middleware.use(req, res as any, next)).toThrow(NotFoundException);
+      expect(res.setHeader).not.toHaveBeenCalledWith('X-API-Version', '99');
+    });
+  });
 });

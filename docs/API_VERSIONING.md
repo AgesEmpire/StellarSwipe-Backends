@@ -20,6 +20,15 @@ api-version: 2
 
 When both are present, the URI version takes precedence.
 
+## Version Negotiation Headers
+
+`VersionResolverMiddleware` sets these on **every** response, not just deprecated ones, so clients can negotiate/introspect without consulting this document:
+
+```
+X-API-Version: 2
+X-API-Supported-Versions: 1, 2
+```
+
 ## Current Versions
 
 | Version | Status     | Sunset Date | Notes                        |
@@ -59,16 +68,29 @@ Link: </api/v2>; rel="successor-version"
 X-Deprecation-Notice: This endpoint is deprecated. Use /new-endpoint instead. Sunset date: 2025-12-31. Please migrate to v2.
 ```
 
+### Handler-pinned version enforcement (opt-in)
+
+Use the `@ApiVersion()` decorator to pin a controller or handler to a specific version regardless of which URL/header the caller used. `VersionCompatibilityGuard`, registered globally in `main.ts`, reads this metadata and rejects the request with `410 Gone` if that version has since been sunset — a defense-in-depth check independent of `VersionResolverMiddleware`'s request-level resolution:
+
+```typescript
+import { ApiVersion } from '../versioning/decorators/api-version.decorator';
+
+@Get('legacy-only')
+@ApiVersion('1')
+async legacyOnlyEndpoint() { ... }
+```
+
 ## Architecture
 
 | Component                        | Location                                              | Role                                                    |
 |----------------------------------|-------------------------------------------------------|---------------------------------------------------------|
 | `VersioningType.URI`             | `src/main.ts`                                         | Enables NestJS URI versioning globally                  |
-| `VersionResolverMiddleware`      | `src/versioning/middleware/`                          | Resolves version, rejects unsupported, sets headers     |
+| `VersionResolverMiddleware`      | `src/versioning/middleware/`                          | Resolves version, rejects unsupported, sets negotiation/deprecation headers |
 | `DeprecationInterceptor`         | `src/versioning/interceptors/`                        | Reads `@Deprecated()` metadata, sets response headers   |
+| `VersionCompatibilityGuard`      | `src/versioning/guards/`                              | Registered globally in `main.ts`; enforces `@ApiVersion()`-pinned handlers against the live registry |
 | `VersionManagerService`          | `src/versioning/version-manager.service.ts`           | Version registry and status queries                     |
 | `@Deprecated()` decorator        | `src/versioning/decorators/deprecated.decorator.ts`   | Marks individual endpoints as deprecated                |
-| `@ApiVersion()` decorator        | `src/versioning/decorators/api-version.decorator.ts`  | Tags controllers/handlers with a version string         |
+| `@ApiVersion()` decorator        | `src/versioning/decorators/api-version.decorator.ts`  | Pins a controller/handler to a version string, enforced by `VersionCompatibilityGuard` |
 
 ## GraphQL Versioning & Deprecation
 
