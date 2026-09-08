@@ -9,6 +9,7 @@ import { TradesModule } from '../../trades/trades.module';
 import { PortfolioModule } from '../../portfolio/portfolio.module';
 import { WebhookVerifierService } from '../webhooks/webhook-verifier.service';
 import { defaultHttpModuleOptions } from '../../http/http-client-defaults';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { defaultHttpModuleOptions } from '../../http/http-client-defaults';
     PortfolioModule,
   ],
   controllers: [AutomationController],
-  providers: [ZapierService, MakeService, WebhookVerifierService],
+  providers: [ZapierService, MakeService, WebhookVerifierService, DistributedLockService],
   exports: [ZapierService, MakeService],
 })
 export class AutomationModule {}
