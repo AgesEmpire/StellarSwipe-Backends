@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebhookVerifierService } from '../webhooks/webhook-verifier.service';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 import { AutomationController } from './automation.controller';
 import { ActionType } from './dto/action-config.dto';
 import { TriggerEvent } from './dto/trigger-config.dto';
@@ -17,9 +18,13 @@ describe('AutomationController webhook signatures', () => {
   let controller: AutomationController;
 
   beforeEach(() => {
-    const verifier = new WebhookVerifierService({
-      get: jest.fn((key: string) => (key === 'WEBHOOK_SIGNING_KEY' ? secret : undefined)),
-    } as unknown as ConfigService);
+    const noopLock = { acquire: jest.fn().mockResolvedValue('token') } as unknown as DistributedLockService;
+    const verifier = new WebhookVerifierService(
+      {
+        get: jest.fn((key: string) => (key === 'WEBHOOK_SIGNING_KEY' ? secret : undefined)),
+      } as unknown as ConfigService,
+      noopLock,
+    );
 
     controller = new AutomationController(
       zapier as any,

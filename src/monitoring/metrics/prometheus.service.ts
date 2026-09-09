@@ -33,6 +33,10 @@ export class PrometheusService implements OnModuleInit {
   readonly cacheSingleFlightFailuresTotal: Counter;
   readonly bullShutdownForcedTotal: Counter;
 
+  // Incoming webhook verification metrics
+  readonly webhookVerificationTotal: Counter;
+  readonly webhookSecretIndexUsed: Counter;
+
   // DB metrics
   readonly dbQueryDuration: Histogram;
   readonly dbConnectionsActive: Gauge;
@@ -147,6 +151,20 @@ export class PrometheusService implements OnModuleInit {
     this.bullShutdownForcedTotal = new Counter({
       name: 'bullmq_shutdown_forced_total',
       help: 'BullMQ workers forcibly interrupted during shutdown',
+      registers: [this.registry],
+    });
+
+    this.webhookVerificationTotal = new Counter({
+      name: 'webhook_verification_total',
+      help: 'Incoming webhook verification attempts, by provider and outcome',
+      labelNames: ['provider', 'result'],
+      registers: [this.registry],
+    });
+
+    this.webhookSecretIndexUsed = new Counter({
+      name: 'webhook_secret_index_used_total',
+      help: 'Which configured secret (0=current, 1=previous, …) verified an incoming webhook — nonzero values signal a sender still on a rotated-out secret',
+      labelNames: ['provider', 'secret_index'],
       registers: [this.registry],
     });
 

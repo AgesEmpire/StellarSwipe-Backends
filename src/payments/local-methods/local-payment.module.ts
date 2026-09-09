@@ -13,6 +13,8 @@ import { RegionalRouter } from './utils/regional-router';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
 import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
+import { WebhookIdempotencyModule } from '../../common/webhook-idempotency.module';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -30,6 +32,7 @@ import { WebhookVerifierService } from '../../integrations/webhooks/webhook-veri
     MpesaWebhookHandler,
     PaystackWebhookHandler,
     WebhookVerifierService,
+    DistributedLockService,
   ],
   controllers: [LocalPaymentController],
   exports: [LocalPaymentService],

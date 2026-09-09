@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 import { LocalPaymentController } from './local-payment.controller';
 
 describe('LocalPaymentController webhook signatures', () => {
@@ -23,9 +24,13 @@ describe('LocalPaymentController webhook signatures', () => {
   let controller: LocalPaymentController;
 
   beforeEach(() => {
-    const verifier = new WebhookVerifierService({
-      get: jest.fn((key: string) => secrets[key]),
-    } as unknown as ConfigService);
+    const noopLock = { acquire: jest.fn().mockResolvedValue('token') } as unknown as DistributedLockService;
+    const verifier = new WebhookVerifierService(
+      {
+        get: jest.fn((key: string) => secrets[key]),
+      } as unknown as ConfigService,
+      noopLock,
+    );
 
     controller = new LocalPaymentController(
       localPaymentService as any,
