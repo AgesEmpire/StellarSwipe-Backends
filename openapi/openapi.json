@@ -1,0 +1,12 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Backend API",
+    "description": "Reviewed OpenAPI contract for the backend. This file is the committed artifact used by CI to detect drift. Regenerate with `npm run openapi:generate` and commit the result when API changes are intentional.",
+    "version": "1.0.0"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {}
+  }
+}

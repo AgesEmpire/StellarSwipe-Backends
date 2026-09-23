@@ -546,3 +546,6 @@ MIT
 
 <!-- handsoff-issue-1092 -->
 - #1092: Implement structured request ID correlation logging
+
+<!-- handsoff-issue-1069 -->
+- #1069: NestJS: Centralize authorization policies in guards
