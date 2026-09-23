@@ -131,4 +131,4 @@ No migration required - the feature is automatically available in development mo
 - If you see performance issues, verify the interceptor is registered correctly
 - Ensure TypeORM subscriber is properly configured
 
-closes #796
+closes #1095

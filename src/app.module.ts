@@ -3,6 +3,7 @@ import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
+import { QueryPerformanceInterceptor } from './common/interceptors/query-performance.interceptor';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 @Module({
@@ -23,6 +24,10 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard';
     {
       provide: APP_INTERCEPTOR,
       useClass: RequestIdInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: QueryPerformanceInterceptor,
     },
     {
       provide: APP_GUARD,

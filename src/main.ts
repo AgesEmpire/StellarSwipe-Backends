@@ -29,6 +29,7 @@ import { compressionConfig } from './common/config/compression.config';
 import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
 import { DeadlockRetryInterceptor } from './database/deadlock-retry.interceptor';
 import { NPlus1DetectionInterceptor } from './database/nplus1-detection.interceptor';
+import { QueryPerformanceService } from './database/query-performance.service';
 import { initTracing } from './monitoring/tracing/jaeger.config';
 import { DocGeneratorService } from './documentation/doc-generator.service';
 import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
@@ -160,6 +161,12 @@ async function bootstrap() {
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));
 
+  // Database query performance reporting: start the periodic reporter so slow
+  // queries, execution counts and latency trends are surfaced through logs and
+  // metrics. The service is also exposed via the query-performance controller.
+  const queryPerformanceService = app.get(QueryPerformanceService);
+  queryPerformanceService.startReporting();
+
   // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
   const { document, json, yaml } = generateOpenApiDocument(app);
   SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
@@ -181,17 +188,6 @@ async function bootstrap() {
   SwaggerModule.setup('api/v1/docs', app, documentV1);
 
   // Hybrid app: attach TCP microservice listener so notification @MessagePattern
-  // handlers are reachable from other services (e.g. trade service via ClientProxy).
-  const tcpPort = configService.get<number>('NOTIFICATION_TCP_PORT', 3001);
-  app.connectMicroservice<MicroserviceOptions>({
-    transport: Transport.TCP,
-    options: { host: '0.0.0.0', port: tcpPort },
-  });
-  await app.startAllMicroservices();
+  // handlers are reachable from other services (e.g. trade service via Clie
 
-  await app.listen(port, host, () => 
-    logger.info(`Application is running on: http://${host}:${port}/${globalPrefix}`),
-  );
-}
-
-bootstrap();
+/* … truncated 403 chars — edit only what you need near the top … */
