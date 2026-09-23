@@ -90,12 +90,12 @@ export class AuthController {
 
     @Post('refresh')
     @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Refresh access token using a refresh token' })
-    @ApiResponse({ status: 200, description: 'New token pair issued' })
-    @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+    @ApiOperation({ summary: 'Rotate a refresh token and issue a new access/refresh token pair' })
+    @ApiResponse({ status: 200, description: 'New token pair issued; the presented refresh token is now invalid' })
+    @ApiResponse({ status: 401, description: 'Invalid, expired, revoked, or already-rotated refresh token' })
     @RateLimit({ tier: RateLimitTier.AUTH, limit: 20, window: 60 })
-    async refresh(@Body('refreshToken') refreshToken: string) {
-        return this.sessionManager.refreshTokens(refreshToken);
+    async refresh(@Body('refreshToken') refreshToken: string, @Req() req: Request) {
+        return this.sessionManager.rotateRefreshToken(refreshToken, req);
     }
 
     @Post('logout')
