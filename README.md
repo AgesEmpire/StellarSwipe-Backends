@@ -542,3 +542,7 @@ docker-compose --profile cache-only up -d
 
 MIT
 
+## Handsoff notes
+
+<!-- handsoff-issue-1092 -->
+- #1092: Implement structured request ID correlation logging
