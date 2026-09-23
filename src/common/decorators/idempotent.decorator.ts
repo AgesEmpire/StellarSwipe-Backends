@@ -19,8 +19,9 @@ export const Idempotent = () =>
       name: 'Idempotency-Key',
       description:
         'Unique key for safe retries. The API returns the same response for identical payloads ' +
-        'within 24 hours. If you retry with the same key but different payload, the API returns 422. ' +
-        'Format: any string, max 255 characters.',
+        'within 24 hours. If you retry with the same key but a different payload, the API returns ' +
+        '409 Conflict. Keys are scoped per tenant, so the same value used by different tenants never ' +
+        'collides. Format: any string, max 255 characters.',
       required: false,
       example: '550e8400-e29b-41d4-a716-446655440000',
       schema: {

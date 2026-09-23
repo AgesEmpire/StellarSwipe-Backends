@@ -5,6 +5,7 @@ import { CircuitBreakerService } from './circuit-breaker.service';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 import { Registry } from 'prom-client';
+import { defaultHttpModuleOptions } from './http-client-defaults';
 
 /**
  * HttpRetryModule
@@ -19,10 +20,7 @@ import { Registry } from 'prom-client';
  */
 @Module({
   imports: [
-    HttpModule.register({
-      timeout: 10_000,
-      maxRedirects: 3,
-    }),
+    HttpModule.register(defaultHttpModuleOptions()),
     MonitoringModule,
   ],
   providers: [

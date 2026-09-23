@@ -67,6 +67,16 @@ export class CloseTradeDto {
   @IsPositive()
   @IsStellarPrecision()
   exitPrice?: number;
+
+  /**
+   * Optimistic concurrency token. Must match the trade's current version.
+   * Omitting it skips the check (backward-compatible); providing a stale
+   * value returns 409 Conflict.
+   */
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  version?: number;
 }
 
 export class GetUserTradesDto {

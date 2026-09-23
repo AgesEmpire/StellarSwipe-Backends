@@ -93,10 +93,11 @@ export class AutomationController {
     @Headers('x-stellarswipe-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,
   ) {
-    this.webhookVerifier.validateRequest({
+    await this.webhookVerifier.validateRequest({
       rawBody: req.rawBody,
       parsedBody: dto,
       signatureHeader: signature,
+      provider: 'automation-action',
     });
 
     try {
@@ -139,10 +140,11 @@ export class AutomationController {
     @Headers('x-stellarswipe-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,
   ) {
-    this.webhookVerifier.validateRequest({
+    await this.webhookVerifier.validateRequest({
       rawBody: req.rawBody,
       parsedBody: dto,
       signatureHeader: signature,
+      provider: 'automation-trigger',
     });
 
     await Promise.all([

@@ -82,6 +82,14 @@ class NotificationSettingsDto {
 }
 
 export class UpdateSettingsDto {
+  /**
+   * Version last read by the client. If supplied, the update is rejected
+   * with a 409 conflict when the settings were modified since that read.
+   */
+  @IsNumber()
+  @IsOptional()
+  expectedVersion?: number;
+
   @IsObject()
   @ValidateNested()
   @Type(() => TradingSettingsDto)

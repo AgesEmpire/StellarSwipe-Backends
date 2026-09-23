@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  HttpCode,
   OnApplicationBootstrap,
   Logger,
   UseGuards,
@@ -10,6 +11,7 @@ import {
   HealthCheckService,
   HealthCheckResult,
 } from '@nestjs/terminus';
+import { ReadinessService } from './readiness.service';
 import {
   StellarHealthIndicator,
   SorobanHealthIndicator,
@@ -42,6 +44,7 @@ export class HealthController implements OnApplicationBootstrap {
     private kafkaHealth: KafkaHealthIndicator,
     private databasePoolHealth: DatabasePoolHealthIndicator,
     private healthSummary: HealthSummaryService,
+    private readiness: ReadinessService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -57,8 +60,11 @@ export class HealthController implements OnApplicationBootstrap {
         this.logger.log(
           'Startup health check passed: database and cache are ready',
         );
+        // Issue #1038: mark ready only after startup work completes
+        this.readiness.markReady();
         return;
       } catch (err) {
+        this.readiness.markNotReady(`startup_check_failed:attempt_${attempt}`);
         this.logger.warn(
           `Startup health check attempt ${attempt}/${maxRetries} failed: ${(err as Error).message}`,
         );
@@ -152,20 +158,26 @@ export class HealthController implements OnApplicationBootstrap {
   }
 
   /**
-   * Readiness probe: returns 200 only when all critical dependencies are healthy.
-   * Kubernetes uses this to decide whether to SEND TRAFFIC to the pod.
-   * Includes database, cache, and queue — external blockchain services are excluded
-   * to prevent unnecessary traffic removal on transient network issues.
+   * Readiness probe: returns 200 only when the app has completed startup AND
+   * all critical dependencies are healthy. Returns 503 during startup, shutdown,
+   * or dependency failure — distinguishing these from process death (liveness).
+   * Issue #1038.
    */
   @Get('readiness')
   @HealthCheck()
-  async readiness(): Promise<HealthCheckResult> {
-    return this.health.check([
+  @HttpCode(200)
+  async readiness(): Promise<HealthCheckResult & { ready: boolean; reason?: string }> {
+    if (!this.readiness.isReady()) {
+      const reason = this.readiness.getNotReadyReason() ?? 'not_ready';
+      return { status: 'error', details: {}, error: {}, info: {}, ready: false, reason } as any;
+    }
+    const result = await this.health.check([
       () => this.databaseHealth.isHealthy('database'),
       () => this.databasePoolHealth.isHealthy('database_pool'),
       () => this.redisHealth.isHealthy('cache'),
       () => this.queueHealth.isHealthy('queue'),
     ]);
+    return { ...result, ready: result.status === 'ok' };
   }
 
   /**

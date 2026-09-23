@@ -31,6 +31,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (!session) throw new UnauthorizedException('Session has been revoked');
     }
 
+    // Reject access tokens that were minted from a refresh token which has
+    // since been rotated or revoked. This closes the window where a stolen
+    // access token could outlive the refresh token it was derived from.
+    if (payload.rtid) {
+      const refreshToken = await this.sessionManager.getRefreshToken(
+        payload.rtid,
+      );
+      if (!refreshToken || refreshToken.revoked || refreshToken.rotated) {
+        throw new UnauthorizedException('Refresh token has been revoked');
+      }
+    }
+
     const user = await this.usersService.findById(payload.sub);
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User is inactive or not found');
@@ -42,6 +54,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       username: user.username,
       walletAddress: user.walletAddress,
       sessionId: payload.sid,
+      refreshTokenId: payload.rtid,
     };
   }
 }

@@ -37,6 +37,7 @@ import { GqlDepthLimitPlugin } from './plugins/gql-depth-limit.plugin';
 import { FieldAuthorizationPlugin } from './plugins/field-auth.plugin';
 import { SlowFieldLoggingPlugin } from './plugins/slow-field-logging.plugin';
 import { GqlCompressionPlugin } from './plugins/gql-compression.plugin';
+import { PersistedQueryPlugin } from './plugins/persisted-query.plugin';
 
 // ─── Resolvers ────────────────────────────────────────────────────────────────
 import { SignalResolver } from './resolvers/signal.resolver';
@@ -63,6 +64,7 @@ import {
   simpleComplexityEstimator,
   getComplexityLimit,
   resolveUserRole,
+  resolveClientClass,
 } from './utils/complexity-calculator';
 import { ProvidersService } from '../providers/providers.service';
 import { SignalsService } from '../signals/signals.service';
@@ -175,23 +177,22 @@ import { AssetsService } from '../assets/assets.service';
               ],
             });
 
-            // Resolve the per-role limit from the request context.
-            // `context` is the per-request GQL context created in `context` factory above.
+            // Resolve the per-client-class limit from the request context.
+            // Issue #1035: anonymous / user / trusted budgets.
             const user = (context as any)?.req?.user ?? (context as any)?.user;
-            const role = resolveUserRole(user);
-            const limit = getComplexityLimit(role);
+            const clientClass = resolveClientClass(user);
+            const limit = getComplexityLimit(clientClass);
 
             if (complexity > limit) {
               throw new Error(
-                `Query complexity ${complexity} exceeds the limit of ${limit} for role "${role ?? 'default'}". ` +
+                `Query complexity ${complexity} exceeds the limit of ${limit} for client class "${clientClass}". ` +
                   `Reduce nesting depth, request fewer list items, or remove expensive fields.`,
               );
             }
 
             if (configService.get<string>('NODE_ENV') !== 'production') {
-              const roleLabel = role ?? 'default';
               // eslint-disable-next-line no-console
-              console.debug(`[GraphQL] complexity: ${complexity}/${limit} (role: ${roleLabel})`);
+              console.debug(`[GraphQL] complexity: ${complexity}/${limit} (client: ${clientClass})`);
             }
           },
         ],
@@ -248,6 +249,7 @@ import { AssetsService } from '../assets/assets.service';
     FieldAuthorizationPlugin,
     SlowFieldLoggingPlugin,
     GqlCompressionPlugin,
+    PersistedQueryPlugin,
 
     // PubSub for subscriptions
     { provide: PubSub, useValue: new PubSub() },

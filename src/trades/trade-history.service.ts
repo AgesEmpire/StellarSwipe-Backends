@@ -1,9 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Trade, TradeStatus } from './entities/trade.entity';
 import { TradeDetailsDto, UserTradesSummaryDto } from './dto/trade-result.dto';
 import { GetUserTradesDto } from './dto/execute-trade.dto';
+import { CursorPage } from '../common/pagination/cursor-pagination.service';
 
 /**
  * Extended DTO for trade history queries with date-range filtering.
@@ -24,6 +25,31 @@ export interface PaginatedTradeHistoryDto {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** Opaque cursor payload — never expose raw fields to callers. */
+interface TradeCursorPayload {
+  createdAt: string;
+  id: string;
+}
+
+function encodeTradeCursor(trade: Trade): string {
+  const payload: TradeCursorPayload = {
+    createdAt: trade.createdAt.toISOString(),
+    id: trade.id,
+  };
+  return Buffer.from(JSON.stringify(payload)).toString('base64url');
+}
+
+function decodeTradeCursor(cursor: string): TradeCursorPayload {
+  try {
+    const raw = Buffer.from(cursor, 'base64url').toString('utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.createdAt || !parsed.id) throw new Error('missing fields');
+    return parsed;
+  } catch {
+    throw new BadRequestException('Invalid pagination cursor');
+  }
 }
 
 /**
@@ -180,6 +206,46 @@ export class TradeHistoryService {
       .getMany();
 
     return trades.map((t) => this.mapToTradeDetails(t));
+  }
+
+  /**
+   * Cursor-based paginated trade history.
+   *
+   * Returns deterministic pages under concurrent inserts because it uses
+   * (created_at, id) keyset pagination instead of OFFSET.
+   * Cursors are opaque base64url tokens — internal fields are never exposed.
+   */
+  async getUserTradeHistoryCursor(
+    dto: TradeHistoryQueryDto & { after?: string; limit?: number },
+  ): Promise<CursorPage<TradeDetailsDto>> {
+    const limit = Math.min(dto.limit ?? 20, 100);
+
+    const qb = this.buildHistoryQuery(dto)
+      .take(limit + 1); // fetch one extra to detect hasNextPage
+
+    if (dto.after) {
+      const cursor = decodeTradeCursor(dto.after);
+      // Keyset: rows where (created_at, id) come strictly before the cursor
+      // (DESC ordering means "before" means older)
+      qb.andWhere(
+        '(trade.created_at < :cur_ts OR (trade.created_at = :cur_ts AND trade.id < :cur_id))',
+        { cur_ts: new Date(cursor.createdAt), cur_id: cursor.id },
+      );
+    }
+
+    const rows = await qb.getMany();
+    const hasNextPage = rows.length > limit;
+    const data = hasNextPage ? rows.slice(0, limit) : rows;
+
+    return {
+      data: data.map((t) => this.mapToTradeDetails(t)),
+      pageInfo: {
+        hasNextPage,
+        hasPreviousPage: !!dto.after,
+        startCursor: data.length > 0 ? encodeTradeCursor(data[0]) : null,
+        endCursor: data.length > 0 ? encodeTradeCursor(data[data.length - 1]) : null,
+      },
+    };
   }
 
   // ---------------------------------------------------------------------------

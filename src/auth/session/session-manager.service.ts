@@ -35,6 +35,7 @@ export class SessionManagerService {
   private readonly refreshTTL: number;
   private readonly maxSessionsPerUser: number;
   private readonly encryptionKey: Buffer;
+  private readonly cacheTimeoutMs: number;
 
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -48,6 +49,7 @@ export class SessionManagerService {
       'auth.maxSessionsPerUser',
       5,
     );
+    this.cacheTimeoutMs = this.configService.get<number>('redisCache.operationTimeoutMs', 500);
 
     // Derive a 32-byte AES-256 key from the JWT secret so no extra config is needed
     const secret = this.configService.get<string>(
@@ -132,7 +134,7 @@ export class SessionManagerService {
       refreshTokenHash,
     };
 
-    await this.cacheManager.set(
+    await this.cacheSet(
       `session:${sessionId}`,
       this.encrypt(JSON.stringify(sessionData)),
       this.sessionTTL * 1000,
@@ -143,7 +145,7 @@ export class SessionManagerService {
   }
 
   async getSession(sessionId: string): Promise<SessionData | null> {
-    const raw = await this.cacheManager.get<string>(`session:${sessionId}`);
+    const raw = await this.cacheGet<string>(`session:${sessionId}`);
     if (!raw) return null;
     try {
       return JSON.parse(this.decrypt(raw)) as SessionData;
@@ -157,7 +159,7 @@ export class SessionManagerService {
     const session = await this.getSession(sessionId);
     if (!session) return;
     session.lastActivity = Date.now();
-    await this.cacheManager.set(
+    await this.cacheSet(
       `session:${sessionId}`,
       this.encrypt(JSON.stringify(session)),
       this.sessionTTL * 1000,
@@ -172,10 +174,10 @@ export class SessionManagerService {
     if (session) {
       await this.removeUserSession(session.userId, sessionId);
       if (!preserveRefreshToken && session.refreshTokenHash) {
-        await this.cacheManager.del(`refresh:${session.refreshTokenHash}`);
+        await this.cacheDelete(`refresh:${session.refreshTokenHash}`);
       }
     }
-    await this.cacheManager.del(`session:${sessionId}`);
+    await this.cacheDelete(`session:${sessionId}`);
     this.logger.log(`Session revoked: ${sessionId}`);
   }
 
@@ -183,12 +185,12 @@ export class SessionManagerService {
   async deleteAllUserSessions(userId: string): Promise<void> {
     const sessions = await this.getUserSessions(userId);
     await Promise.all(sessions.map((id) => this.deleteSession(id)));
-    await this.cacheManager.del(`user_sessions:${userId}`);
+    await this.cacheDelete(`user_sessions:${userId}`);
     this.logger.log(`All sessions revoked for user ${userId}`);
   }
 
   async getUserSessions(userId: string): Promise<string[]> {
-    const raw = await this.cacheManager.get<string>(`user_sessions:${userId}`);
+    const raw = await this.cacheGet<string>(`user_sessions:${userId}`);
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -215,7 +217,7 @@ export class SessionManagerService {
       familyId,
       consumed: false,
     });
-    await this.cacheManager.set(
+    await this.cacheSet(
       `refresh:${this.hashToken(token)}`,
       this.encrypt(payload),
       this.refreshTTL * 1000,
@@ -226,7 +228,7 @@ export class SessionManagerService {
     token: string,
   ): Promise<{ sessionId: string; userId: string; familyId: string }> {
     const key = `refresh:${this.hashToken(token)}`;
-    const raw = await this.cacheManager.get<string>(key);
+    const raw = await this.cacheGet<string>(key);
     if (!raw)
       throw new UnauthorizedException('Invalid or expired refresh token');
 
@@ -237,7 +239,7 @@ export class SessionManagerService {
         this.events?.emit('security.refresh_token_reuse', payload);
         throw new UnauthorizedException('Refresh token reuse detected');
       }
-      await this.cacheManager.set(
+      await this.cacheSet(
         key,
         this.encrypt(JSON.stringify({ ...payload, consumed: true })),
         this.refreshTTL * 1000,
@@ -251,6 +253,54 @@ export class SessionManagerService {
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private async cacheGet<T>(key: string): Promise<T | undefined> {
+    try {
+      return await this.withTimeout(this.cacheManager.get<T>(key));
+    } catch (error) {
+      this.logger.warn(`Session cache unavailable for read: ${this.errorMessage(error)}`);
+      throw new UnauthorizedException('Session service temporarily unavailable');
+    }
+  }
+
+  private async cacheSet<T>(key: string, value: T, ttl: number): Promise<void> {
+    try {
+      await this.withTimeout(this.cacheManager.set(key, value, ttl));
+    } catch (error) {
+      this.logger.warn(`Session cache unavailable for write: ${this.errorMessage(error)}`);
+      throw new UnauthorizedException('Session service temporarily unavailable');
+    }
+  }
+
+  private async cacheDelete(key: string): Promise<void> {
+    try {
+      await this.withTimeout(this.cacheManager.del(key));
+    } catch (error) {
+      this.logger.warn(`Session cache unavailable for delete: ${this.errorMessage(error)}`);
+      throw new UnauthorizedException('Session service temporarily unavailable');
+    }
+  }
+
+  private async withTimeout<T>(operation: Promise<T>): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Redis operation timed out after ${this.cacheTimeoutMs}ms`)),
+            this.cacheTimeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   private async deleteTokenFamily(
@@ -300,11 +350,11 @@ export class SessionManagerService {
     const sessions = await this.getUserSessions(userId);
     if (sessions.length >= this.maxSessionsPerUser) {
       const oldest = sessions.shift()!;
-      await this.cacheManager.del(`session:${oldest}`);
+      await this.cacheDelete(`session:${oldest}`);
       this.logger.log(`Evicted oldest session for user ${userId}: ${oldest}`);
     }
     sessions.push(sessionId);
-    await this.cacheManager.set(
+    await this.cacheSet(
       `user_sessions:${userId}`,
       JSON.stringify(sessions),
       this.refreshTTL * 1000,
@@ -319,13 +369,13 @@ export class SessionManagerService {
       (id) => id !== sessionId,
     );
     if (sessions.length > 0) {
-      await this.cacheManager.set(
+      await this.cacheSet(
         `user_sessions:${userId}`,
         JSON.stringify(sessions),
         this.refreshTTL * 1000,
       );
     } else {
-      await this.cacheManager.del(`user_sessions:${userId}`);
+      await this.cacheDelete(`user_sessions:${userId}`);
     }
   }
 }

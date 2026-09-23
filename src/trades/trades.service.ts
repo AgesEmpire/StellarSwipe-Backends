@@ -36,6 +36,8 @@ import {
   TradeStage,
 } from './services/trade-latency.service';
 import { SlippageGuardService } from './services/slippage-guard.service';
+import { AtomicTransactionHelper } from '../common/database/atomic-transaction.helper';
+import { updateWithVersionCheck } from '../common/utils/optimistic-update.util';
 
 interface SignalData {
   id: string;
@@ -64,6 +66,7 @@ export class TradesService {
     private readonly complianceRuleEngine: ComplianceRuleEngineService,
     private readonly tradeLatency: TradeLatencyService,
     private readonly slippageGuard: SlippageGuardService,
+    private readonly atomicTx: AtomicTransactionHelper,
   ) {}
 
   async executeTrade(dto: ExecuteTradeDto): Promise<TradeResultDto> {
@@ -322,6 +325,26 @@ export class TradesService {
       );
     }
 
+    // #1067 — Optimistic concurrency: if the caller supplied a version token,
+    // verify it matches before proceeding. A mismatch means another request
+    // already mutated the trade; return 409 so the client can refetch.
+    if (dto.version !== undefined) {
+      await updateWithVersionCheck(
+        this.tradeRepository,
+        'Trade',
+        trade.id,
+        dto.version,
+        // No field changes yet — we just want the version guard to fire.
+        // The real update happens inside the atomic block below.
+        {} as any,
+      );
+      // Re-fetch so trade.version reflects the incremented value.
+      const refreshed = await this.tradeRepository.findOne({
+        where: { id: trade.id },
+      });
+      if (refreshed) Object.assign(trade, refreshed);
+    }
+
     // Get current market price or use provided exit price
     const exitPrice =
       dto.exitPrice?.toString() ||
@@ -330,59 +353,62 @@ export class TradesService {
     // Execute close on Soroban
     const closeResult = await this.tradeExecutor.closeTrade(trade, exitPrice);
 
-    if (closeResult.success) {
-      const { profitLoss, profitLossPercentage } =
-        this.riskManager.calculateProfitLoss(
-          trade.entryPrice,
-          exitPrice,
-          trade.amount,
-          trade.side === TradeSide.BUY ? 'buy' : 'sell',
-        );
-
-      trade.exitPrice = exitPrice;
-      trade.profitLoss = profitLoss;
-      trade.profitLossPercentage = profitLossPercentage;
-      trade.closedAt = new Date();
-
-      await this.dataSource.transaction(async (manager) => {
-        await manager.save(Trade, trade);
-        await this.outboxService.record(
-          manager,
-          'trade.position.closed',
-          { tradeId: trade.id, userId: trade.userId, profitLoss },
-          `trade.position.closed:${trade.id}`,
-        );
-      });
-
-      // Handle large loss for velocity tracking
-      if (parseFloat(profitLoss) < -1000) {
-        // Loss threshold
-        await this.velocityRiskManager.handleTradeLoss(
-          trade.userId,
-          Math.abs(parseFloat(profitLoss)),
-        );
-      }
-
-      this.logger.log(
-        `Trade ${trade.id} closed. P&L: ${profitLoss} (${profitLossPercentage}%)`,
-      );
-
-      return {
-        id: trade.id,
-        status: trade.status,
-        exitPrice,
-        profitLoss,
-        profitLossPercentage,
-        transactionHash: closeResult.transactionHash,
-        closedAt: trade.closedAt,
-        message: 'Trade closed successfully',
-      };
-    } else {
+    if (!closeResult.success) {
       throw new BadRequestException({
         message: 'Failed to close trade',
         error: closeResult.error,
       });
     }
+
+    const { profitLoss, profitLossPercentage } =
+      this.riskManager.calculateProfitLoss(
+        trade.entryPrice,
+        exitPrice,
+        trade.amount,
+        trade.side === TradeSide.BUY ? 'buy' : 'sell',
+      );
+
+    trade.exitPrice = exitPrice;
+    trade.profitLoss = profitLoss;
+    trade.profitLossPercentage = profitLossPercentage;
+    trade.closedAt = new Date();
+
+    // #1065 — Atomic transaction boundary: persist the closed trade and the
+    // outbox event together. If either write fails the whole block rolls back,
+    // so callers never see a "closed" trade without the corresponding event.
+    await this.atomicTx.run(async (qr) => {
+      await qr.manager.save(Trade, trade);
+      await this.outboxService.record(
+        qr.manager,
+        'trade.position.closed',
+        { tradeId: trade.id, userId: trade.userId, profitLoss },
+        `trade.position.closed:${trade.id}`,
+      );
+    });
+
+    // Handle large loss for velocity tracking (outside the DB transaction —
+    // this is a best-effort side effect, not a critical write).
+    if (parseFloat(profitLoss) < -1000) {
+      await this.velocityRiskManager.handleTradeLoss(
+        trade.userId,
+        Math.abs(parseFloat(profitLoss)),
+      );
+    }
+
+    this.logger.log(
+      `Trade ${trade.id} closed. P&L: ${profitLoss} (${profitLossPercentage}%)`,
+    );
+
+    return {
+      id: trade.id,
+      status: trade.status,
+      exitPrice,
+      profitLoss,
+      profitLossPercentage,
+      transactionHash: closeResult.transactionHash,
+      closedAt: trade.closedAt,
+      message: 'Trade closed successfully',
+    };
   }
 
   async getTradeById(

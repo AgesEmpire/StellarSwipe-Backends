@@ -78,11 +78,12 @@ export class LocalPaymentController {
     @Headers('x-mpesa-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,
   ) {
-    this.webhookVerifier.validateRequest({
+    await this.webhookVerifier.validateRequest({
       rawBody: req.rawBody,
       parsedBody: payload,
       signatureHeader: signature,
       providerKeyName: 'MPESA_WEBHOOK_SECRET',
+      provider: 'mpesa',
     });
     await this.mpesaWebhookHandler.handle(payload, signature);
     return { received: true };
@@ -95,12 +96,13 @@ export class LocalPaymentController {
     @Headers('x-paystack-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,
   ) {
-    this.webhookVerifier.validateRequest({
+    await this.webhookVerifier.validateRequest({
       rawBody: req.rawBody,
       parsedBody: payload,
       signatureHeader: signature,
       providerKeyName: 'PAYSTACK_SECRET_KEY',
       algorithm: 'sha512',
+      provider: 'paystack',
     });
     await this.paystackWebhookHandler.handle(payload, signature);
     return { received: true };

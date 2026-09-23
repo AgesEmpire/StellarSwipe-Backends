@@ -26,6 +26,10 @@ export interface FileUploadOptions {
   sanitizeFileName?: boolean;
   /** Whether to compute the content hash. */
   computeHash?: boolean;
+  /** Whether to validate content magic bytes against MIME types (default: true). */
+  validateContent?: boolean;
+  /** Whether to route through malware scanning integration (default: true). */
+  scanMalware?: boolean;
 }
 
 export interface FileValidationResult {

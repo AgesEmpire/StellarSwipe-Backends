@@ -1,8 +1,10 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
+import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
-import { ThrottlerModule } from '@nestjs/throttler';
 // import { CacheModule } from '@nestjs/cache-manager';
 import { stellarConfig } from './config/stellar.config';
 import { databaseConfig, redisConfig } from './config/database.config';
@@ -28,12 +30,22 @@ import { TenancyModule } from './tenancy/tenancy.module';
 
 import { LoggerModule } from './common/logger';
 import { CorrelationModule } from './common/correlation';
+import { ShutdownModule } from './common/shutdown';
 import { SentryModule } from './common/sentry';
 import { ErrorClassificationModule } from './common/error-classification/error-classification.module';
 import { CacheModule } from './cache/cache.module';
 import { MaxCallDepthModule } from './common/max-call-depth.module';
 import { IdempotentModule } from './common/idempotent.module';
 import { BullCorrelationModule } from './common/bull/bull-correlation.module';
+
+import { RequestContextModule } from './common/request-context/request-context.module';
+import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
+import { TenantContextGuard } from './common/request-context/tenant-context.guard';
+
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
+import { QueryPerformanceInterceptor } from './common/interceptors/query-performance.interceptor';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -74,11 +86,6 @@ import { DiscordBotModule } from './integrations/discord/discord-bot.module';
 import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
-// feature/295-discord-community-integration
-import { DiscordBotModule } from './integrations/discord/discord-bot.module';
-
-// feature/294-telegram-bot-integration
-import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 
 // feature/293-mobile-api-optimizations
 import { MobileModule } from './mobile/mobile.module';
@@ -109,34 +116,19 @@ import { FreighterModule } from './freighter/freighter.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TracingModule } from './tracing/tracing.module';
-import { PaymentsModule } from './payments/payments.module';
-import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      load: [
-        appConfig,
-        sentryConfig,
-        stellarConfig,
-        databaseConfig,
-        redisConfig,
-        redisCacheConfig,
-        jwtConfig,
-        xaiConfig,
-        connectionPoolConfig,
-        connectionPoolReplicaConfig,
-        configuration,
-        nplus1DetectionConfig,
-        queueRetryConfig,
-        retryPolicyConfig,
+    ThrottlerModule.forRoot({
+      throttlers: [
+        // Anonymous traffic: strict default bucket keyed by IP.
+        { name: 'anonymous', ttl: 60_000, limit: 60 },
+        // Authenticated users: higher ceiling keyed by user id.
+        { name: 'authenticated', ttl: 60_000, limit: 300 },
+        // Suspicious IP ranges: aggressive bucket keyed by IP.
+        { name: 'suspicious', ttl: 60_000, limit: 10 },
       ],
-      // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
-      envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
-      cache: true,
-      validate: validateEnvironment,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -181,6 +173,10 @@ import { SearchModule } from './search/search.module';
             configService.get<number>(
               'connectionPool.connectionTimeoutMillis',
             ) ?? 2000,
+          statement_timeout:
+            configService.get<number>('database.writeTimeoutMs') ?? 10000,
+          query_timeout:
+            configService.get<number>('database.readTimeoutMs') ?? 5000,
         },
       }),
     }),
@@ -203,6 +199,10 @@ import { SearchModule } from './search/search.module';
         extra: {
           min: configService.get<number>('connectionPoolReplica.min') ?? 5,
           max: configService.get<number>('connectionPoolReplica.max') ?? 20,
+          statement_timeout:
+            configService.get<number>('database.readTimeoutMs') ?? 5000,
+          query_timeout:
+            configService.get<number>('database.readTimeoutMs') ?? 5000,
           idleTimeoutMillis:
             configService.get<number>(
               'connectionPoolReplica.idleTimeoutMillis',
@@ -230,7 +230,9 @@ import { SearchModule } from './search/search.module';
       }),
     }),
 
+    RequestContextModule,
     CorrelationModule,
+    ShutdownModule,
     LoggerModule,
     SentryModule,
     RetryModule,
@@ -260,9 +262,6 @@ import { SearchModule } from './search/search.module';
     SecurityMonitoringModule,
     AccessControlModule,
     EncryptedStorageModule,
-    QuotaReportingModule,
-    MarketDataHistoryModule,
-    ContractsModule,
     KycModule,
     ProductAnalyticsModule,
     BackupModule,
@@ -271,8 +270,6 @@ import { SearchModule } from './search/search.module';
     MonitoringModule,
     WebhooksModule,
     DrModule,
-    MetadataExtractorService,
-    NPlus1DetectionInterceptor,
     MarketIntelligenceModule,
     DocumentationModule,
     CompetitionsModule,
@@ -281,13 +278,6 @@ import { SearchModule } from './search/search.module';
     RateLimitModule,
     DiscordBotModule,
     TelegramBotModule,
-    // feature/295-discord-community-integration
-    DiscordBotModule,
-
-    // feature/294-telegram-bot-integration
-    TelegramBotModule,
-
-    // feature/293-mobile-api-optimizations
     MobileModule,
     AutomationModule,
     CurrencyModule,
@@ -317,12 +307,104 @@ import { SearchModule } from './search/search.module';
     PrivacyModule,
     TracingModule,
     TenancyModule,
+    SearchModule,
   ],
+  controllers: [],
   providers: [
-    StellarConfigService,
-    RateLimitMiddleware,
-    ConfigValidationService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestIdInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: QueryPerformanceInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: TenantContextGuard,
+    },
   ],
-  exports: [StellarConfigService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer
+      .apply(RequestIdMiddleware, RequestContextMiddleware)
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
+  }
+
+  /**
+   * Builds the OpenAPI document configuration, documenting the supported
+   * authentication flows, API key usage, and permission scopes so that
+   * generated clients and developers can understand the service contract.
+   */
+  static buildOpenApiConfig() {
+    return new DocumentBuilder()
+      .setTitle('API')
+      .setDescription(
+        'Service contract describing authentication flows, API key usage, and permission scopes.',
+      )
+      .setVersion('1.0')
+      // Bearer token authentication (OAuth2 / JWT authorization code flow).
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description:
+            'JWT access token obtained through the authorization code flow. Send as `Authorization: Bearer <token>`.',
+        },
+        'bearer',
+      )
+      // OAuth2 authorization code flow with permission scopes.
+      .addOAuth2(
+        {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: '/oauth/authorize',
+              tokenUrl: '/oauth/token',
+              scopes: {
+                'read:resources': 'Read access to resources',
+                'write:resources': 'Create and update resources',
+                'admin:resources': 'Administrative access to resources',
+              },
+            },
+          },
+          description:
+            'OAuth2 authorization code flow. Request the permission scopes required by each endpoint.',
+        },
+        'oauth2',
+      )
+      // API key authentication for server-to-server integrations.
+      .addApiKey(
+        {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key',
+          description:
+            'API key issued to trusted integrations. Send as the `X-API-Key` header.',
+        },
+        'apiKey',
+      )
+      .addSecurityRequirements('bearer')
+      .build();
+  }
+
+  /**
+   * Registers the OpenAPI document with the given application instance so the
+   * security schemes are observable through the generated schema.
+   */
+  static setupOpenApi(app: Parameters<typeof SwaggerModule.createDocument>[0]) {
+    const document = SwaggerModule.createDocument(app, AppModule.buildOpenApiConfig());
+    SwaggerModule.setup('api', app, document);
+    return document;
+  }
+}

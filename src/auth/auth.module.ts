@@ -30,6 +30,11 @@ import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
 import { RefreshTokenModule } from './refresh-token/refresh-token.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
+import { WebauthnController } from './webauthn/webauthn.controller';
+import { WebauthnService } from './webauthn/webauthn.service';
+import { WebauthnCredential } from './webauthn/entities/webauthn-credential.entity';
+import { ChallengeStoreService } from './challenge/challenge-store.service';
 
 @Module({
   imports: [
@@ -52,6 +57,7 @@ import { RefreshTokenModule } from './refresh-token/refresh-token.module';
       TwoFactor,
       LoginFingerprint,
       RefreshToken,
+      WebauthnCredential,
     ]),
     UsersModule,
     EmailModule,
@@ -79,6 +85,8 @@ import { RefreshTokenModule } from './refresh-token/refresh-token.module';
     AnomalousLoginListener,
     RefreshTokenCleanupService,
     DistributedLockService,
+    WebauthnService,
+    ChallengeStoreService,
   ],
   exports: [
     AuthService,
@@ -91,6 +99,7 @@ import { RefreshTokenModule } from './refresh-token/refresh-token.module';
     SessionManagerService,
     SessionFingerprintService,
     RefreshTokenCleanupService,
+    ChallengeStoreService,
   ],
 })
 export class AuthModule {}

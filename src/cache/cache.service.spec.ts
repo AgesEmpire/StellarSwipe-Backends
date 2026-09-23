@@ -38,6 +38,17 @@ describe('CacheService', () => {
   });
 
   describe('get / set / del', () => {
+    it('returns from a bounded fallback when Redis hangs', async () => {
+      jest.useFakeTimers();
+      mockCacheManager.get.mockReturnValue(new Promise(() => undefined));
+
+      const resultPromise = service.get('hung-key');
+      await jest.advanceTimersByTimeAsync(500);
+
+      await expect(resultPromise).resolves.toBeUndefined();
+      jest.useRealTimers();
+    });
+
     it('returns cached value on hit', async () => {
       mockCacheManager.get.mockResolvedValue({ foo: 'bar' });
       const result = await service.get('key1');
