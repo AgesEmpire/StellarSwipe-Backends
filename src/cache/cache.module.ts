@@ -24,6 +24,7 @@ import { CacheWarmupService } from './cache-warmup.service';
 import { CacheReconciliationJob } from './cache-reconciliation.job';
 import { SignalFeedCacheService } from './signal-feed-cache.service';
 import { TradeHistoryCacheService } from './trade-history-cache.service';
+import { CacheOwnershipRegistry } from './cache-ownership.registry';
 import { Signal } from '../signals/entities/signal.entity';
 
 @Global()
@@ -70,6 +71,7 @@ import { Signal } from '../signals/entities/signal.entity';
     CacheReconciliationJob,
     SignalFeedCacheService,
     TradeHistoryCacheService,
+    CacheOwnershipRegistry,
     NestCacheModule,
   ],
   controllers: [CacheController],
@@ -90,6 +92,7 @@ import { Signal } from '../signals/entities/signal.entity';
     CacheWarmupService,
     SignalFeedCacheService,
     TradeHistoryCacheService,
+    CacheOwnershipRegistry,
   ],
 })
 export class CacheModule {}
