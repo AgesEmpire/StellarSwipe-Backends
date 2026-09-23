@@ -1,4 +1,6 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
@@ -35,6 +37,10 @@ import { CacheModule } from './cache/cache.module';
 import { MaxCallDepthModule } from './common/max-call-depth.module';
 import { IdempotentModule } from './common/idempotent.module';
 import { BullCorrelationModule } from './common/bull/bull-correlation.module';
+
+import { RequestContextModule } from './common/request-context/request-context.module';
+import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
+import { TenantContextGuard } from './common/request-context/tenant-context.guard';
 
 import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -75,11 +81,6 @@ import { DiscordBotModule } from './integrations/discord/discord-bot.module';
 import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
-// feature/295-discord-community-integration
-import { DiscordBotModule } from './integrations/discord/discord-bot.module';
-
-// feature/294-telegram-bot-integration
-import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
 
 // feature/293-mobile-api-optimizations
 import { MobileModule } from './mobile/mobile.module';
@@ -110,8 +111,6 @@ import { FreighterModule } from './freighter/freighter.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TracingModule } from './tracing/tracing.module';
-import { PaymentsModule } from './payments/payments.module';
-import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { SearchModule } from './search/search.module';
 
 @Module({
@@ -239,6 +238,7 @@ import { SearchModule } from './search/search.module';
       }),
     }),
 
+    RequestContextModule,
     CorrelationModule,
     ShutdownModule,
     LoggerModule,
@@ -270,9 +270,6 @@ import { SearchModule } from './search/search.module';
     SecurityMonitoringModule,
     AccessControlModule,
     EncryptedStorageModule,
-    QuotaReportingModule,
-    MarketDataHistoryModule,
-    ContractsModule,
     KycModule,
     ProductAnalyticsModule,
     BackupModule,
@@ -281,8 +278,6 @@ import { SearchModule } from './search/search.module';
     MonitoringModule,
     WebhooksModule,
     DrModule,
-    MetadataExtractorService,
-    NPlus1DetectionInterceptor,
     MarketIntelligenceModule,
     DocumentationModule,
     CompetitionsModule,
@@ -291,13 +286,6 @@ import { SearchModule } from './search/search.module';
     RateLimitModule,
     DiscordBotModule,
     TelegramBotModule,
-    // feature/295-discord-community-integration
-    DiscordBotModule,
-
-    // feature/294-telegram-bot-integration
-    TelegramBotModule,
-
-    // feature/293-mobile-api-optimizations
     MobileModule,
     AutomationModule,
     CurrencyModule,
@@ -327,12 +315,87 @@ import { SearchModule } from './search/search.module';
     PrivacyModule,
     TracingModule,
     TenancyModule,
+    SearchModule,
   ],
   providers: [
-    StellarConfigService,
-    RateLimitMiddleware,
-    ConfigValidationService,
+    {
+      provide: APP_GUARD,
+      useClass: TenantContextGuard,
+    },
   ],
-  exports: [StellarConfigService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer
+      .apply(RequestContextMiddleware)
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
+  }
+
+  /**
+   * Builds the OpenAPI document configuration, documenting the supported
+   * authentication flows, API key usage, and permission scopes so that
+   * generated clients and developers can understand the service contract.
+   */
+  static buildOpenApiConfig() {
+    return new DocumentBuilder()
+      .setTitle('API')
+      .setDescription(
+        'Service contract describing authentication flows, API key usage, and permission scopes.',
+      )
+      .setVersion('1.0')
+      // Bearer token authentication (OAuth2 / JWT authorization code flow).
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description:
+            'JWT access token obtained through the authorization code flow. Send as `Authorization: Bearer <token>`.',
+        },
+        'bearer',
+      )
+      // OAuth2 authorization code flow with permission scopes.
+      .addOAuth2(
+        {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: '/oauth/authorize',
+              tokenUrl: '/oauth/token',
+              scopes: {
+                'read:resources': 'Read access to resources',
+                'write:resources': 'Create and update resources',
+                'admin:resources': 'Administrative access to resources',
+              },
+            },
+          },
+          description:
+            'OAuth2 authorization code flow. Request the permission scopes required by each endpoint.',
+        },
+        'oauth2',
+      )
+      // API key authentication for server-to-server integrations.
+      .addApiKey(
+        {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key',
+          description:
+            'API key issued to trusted integrations. Send as the `X-API-Key` header.',
+        },
+        'apiKey',
+      )
+      .addSecurityRequirements('bearer')
+      .build();
+  }
+
+  /**
+   * Registers the OpenAPI document with the given application instance so the
+   * security schemes are observable through the generated schema.
+   */
+  static setupOpenApi(app: Parameters<typeof SwaggerModule.createDocument>[0]) {
+    const document = SwaggerModule.createDocument(app, AppModule.buildOpenApiConfig());
+    SwaggerModule.setup('api', app, document);
+    return document;
+  }
+}

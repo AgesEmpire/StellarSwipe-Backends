@@ -159,7 +159,7 @@ async function bootstrap() {
   const instanceCoordinator = app.get(InstanceCoordinatorService);
   logger.info(`Application started on instance: ${instanceCoordinator.getInstanceId()}`);
 
-// Global filter — single RFC 7807 Problem Details filter for every
+  // Global filter — single RFC 7807 Problem Details filter for every
   // validation, domain, authentication and unexpected error (#1056).
   const errorClassifier = app.get(ErrorClassificationService);
   app.useGlobalFilters(
@@ -215,9 +215,7 @@ async function bootstrap() {
   await app.startAllMicroservices();
 
   await app.listen(port, host, () => {
-    logger.info(`🚀 StellarSwipe Backend running on http://${host}:${port}`);
-    logger.info(`📚 API available at http://${host}:${port}${globalPrefix}`);
-    logger.info(`📚 Swagger documentation at http://${host}:${port}${globalPrefix}/docs`);
+    logger.info(`Application is running on: ${host}:${port}${globalPrefix}`);
   });
 
   process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
