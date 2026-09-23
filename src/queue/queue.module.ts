@@ -11,6 +11,8 @@ import {
 import { QueueBackpressureService } from './queue-backpressure.service';
 import { QueueMetricsService } from './queue-metrics.service';
 import { queuePressureConfig } from './queue-pressure.config';
+import { DeadLetterService } from './dead-letter.service';
+import { DEAD_LETTER_QUEUE } from './dead-letter.constants';
 import { CorrelationModule } from '../common/correlation/correlation.module';
 
 @Module({
@@ -19,6 +21,7 @@ import { CorrelationModule } from '../common/correlation/correlation.module';
       { name: PRIORITY_QUEUE },
       { name: CRITICAL_QUEUE },
       { name: LOW_PRIORITY_QUEUE },
+      { name: DEAD_LETTER_QUEUE },
     ),
     ConfigModule.forFeature(queuePressureConfig),
     ScheduleModule.forRoot(),
@@ -28,11 +31,13 @@ import { CorrelationModule } from '../common/correlation/correlation.module';
     PriorityQueueService,
     QueueBackpressureService,
     QueueMetricsService,
+    DeadLetterService,
   ],
   exports: [
     PriorityQueueService,
     QueueBackpressureService,
     QueueMetricsService,
+    DeadLetterService,
   ],
 })
 export class QueueModule {}
