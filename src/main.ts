@@ -31,6 +31,7 @@ import { compressionConfig } from './common/config/compression.config';
 import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
 import { DeadlockRetryInterceptor } from './database/deadlock-retry.interceptor';
 import { NPlus1DetectionInterceptor } from './database/nplus1-detection.interceptor';
+import { QueryPerformanceService } from './database/query-performance.service';
 import { initTracing } from './monitoring/tracing/jaeger.config';
 import { DocGeneratorService } from './documentation/doc-generator.service';
 import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
@@ -114,7 +115,11 @@ async function bootstrap() {
   const shutdownGuardMiddleware = app.get(ShutdownGuardMiddleware);
   app.use(shutdownGuardMiddleware.use.bind(shutdownGuardMiddleware));
 
-  // Apply global rate limiting middleware before any request reaches route handlers
+  // Apply global rate limiting middleware before any request reaches route handlers.
+  // The middleware distinguishes anonymous traffic, authenticated users and
+  // suspicious IP ranges, and enforces per-tier limits across all endpoints
+  // (including public APIs). It runs after correlation-id so denials are
+  // traceable, and before auth so abusive traffic is shed early.
   const rateLimitMiddleware = app.get(RateLimitMiddleware);
   app.use(rateLimitMiddleware.use.bind(rateLimitMiddleware));
 
@@ -185,6 +190,12 @@ async function bootstrap() {
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));
 
+  // Database query performance reporting: start the periodic reporter so slow
+  // queries, execution counts and latency trends are surfaced through logs and
+  // metrics. The service is also exposed via the query-performance controller.
+  const queryPerformanceService = app.get(QueryPerformanceService);
+  queryPerformanceService.startReporting();
+
   // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
   const { document, json, yaml } = generateOpenApiDocument(app);
   SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
@@ -207,10 +218,12 @@ async function bootstrap() {
 
   // Hybrid app: attach TCP microservice listener so notification @MessagePattern
   // handlers are reachable from other services (e.g. trade service via ClientProxy).
-  const tcpPort = configService.get<number>('NOTIFICATION_TCP_PORT', 3001);
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.TCP,
-    options: { host: '0.0.0.0', port: tcpPort },
+    options: {
+      host: configService.get<string>('microservice.host') ?? '0.0.0.0',
+      port: configService.get<number>('microservice.port') ?? 3001,
+    },
   });
   await app.startAllMicroservices();
 

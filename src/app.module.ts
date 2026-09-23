@@ -1,10 +1,10 @@
-import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
+import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
-import { ThrottlerModule } from '@nestjs/throttler';
 // import { CacheModule } from '@nestjs/cache-manager';
 import { stellarConfig } from './config/stellar.config';
 import { databaseConfig, redisConfig } from './config/database.config';
@@ -41,6 +41,11 @@ import { BullCorrelationModule } from './common/bull/bull-correlation.module';
 import { RequestContextModule } from './common/request-context/request-context.module';
 import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
 import { TenantContextGuard } from './common/request-context/tenant-context.guard';
+
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
+import { QueryPerformanceInterceptor } from './common/interceptors/query-performance.interceptor';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 import { AuthModule } from './auth/auth.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -115,28 +120,15 @@ import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      load: [
-        appConfig,
-        sentryConfig,
-        stellarConfig,
-        databaseConfig,
-        redisConfig,
-        redisCacheConfig,
-        jwtConfig,
-        xaiConfig,
-        connectionPoolConfig,
-        connectionPoolReplicaConfig,
-        configuration,
-        nplus1DetectionConfig,
-        queueRetryConfig,
-        retryPolicyConfig,
+    ThrottlerModule.forRoot({
+      throttlers: [
+        // Anonymous traffic: strict default bucket keyed by IP.
+        { name: 'anonymous', ttl: 60_000, limit: 60 },
+        // Authenticated users: higher ceiling keyed by user id.
+        { name: 'authenticated', ttl: 60_000, limit: 300 },
+        // Suspicious IP ranges: aggressive bucket keyed by IP.
+        { name: 'suspicious', ttl: 60_000, limit: 10 },
       ],
-      // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
-      envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
-      cache: true,
-      validate: validateEnvironment,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -317,7 +309,24 @@ import { SearchModule } from './search/search.module';
     TenancyModule,
     SearchModule,
   ],
+  controllers: [],
   providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestIdInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: QueryPerformanceInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: TenantContextGuard,
@@ -327,7 +336,7 @@ import { SearchModule } from './search/search.module';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(RequestContextMiddleware)
+      .apply(RequestIdMiddleware, RequestContextMiddleware)
       .forRoutes({ path: '*', method: RequestMethod.ALL });
   }
 
