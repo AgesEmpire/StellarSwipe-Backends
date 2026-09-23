@@ -222,10 +222,19 @@ export class AuthService {
 
     if (user) {
       // Generate secure token
-      const token = crypto.randomBytes(32).toString('hex');
+      const selector = crypto.randomBytes(16).toString('hex');
+      const secret = crypto.randomBytes(32).toString('hex');
+      const token = `${selector}.${secret}`;
 
-      // Store token in cache with 1 hour TTL
-      await this.cacheManager.set(`pwd_reset:${token}`, user.id, 3600000); // 1h in ms
+      // Store only a digest; the bearer secret is shown once in the email.
+      await this.cacheManager.set(
+        `pwd_reset:${selector}`,
+        {
+          userId: user.id,
+          digest: crypto.createHash('sha256').update(secret).digest('hex'),
+        },
+        3600000,
+      );
 
       // Send email
       await this.emailService.sendEmail({
@@ -265,22 +274,32 @@ export class AuthService {
 
   async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
     const { token, newPassword } = dto;
-
-    // 1. Retrieve user ID from cache
-    const userId = await this.cacheManager.get<string>(`pwd_reset:${token}`);
-
-    if (!userId) {
+    const [selector, secret, extra] = token.split('.');
+    if (!selector || !secret || extra) {
       throw new UnauthorizedException('Invalid or expired reset token');
     }
+
+    // 1. Retrieve user ID from cache
+    const record = await this.cacheManager.get<{ userId: string; digest: string }>(
+      `pwd_reset:${selector}`,
+    );
+    const supplied = crypto.createHash('sha256').update(secret).digest();
+
+    if (
+      !record ||
+      !crypto.timingSafeEqual(supplied, Buffer.from(record.digest, 'hex'))
+    ) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    // Invalidate before the password write to minimize concurrent reuse.
+    await this.cacheManager.del(`pwd_reset:${selector}`);
 
     // 2. Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // 3. Update password
-    await this.usersService.updatePassword(userId, hashedPassword);
-
-    // 4. Clear token from cache
-    await this.cacheManager.del(`pwd_reset:${token}`);
+    await this.usersService.updatePassword(record.userId, hashedPassword);
 
     return { message: 'Password has been successfully reset' };
   }
@@ -327,7 +346,7 @@ export class AuthService {
         endpoint: '/auth/verify',
         method: 'POST',
         status: AuditStatus.SUCCESS,
-        metadata: { publicKey },
+        metadata: { publicKey, threshold: AuthService.MAX_FAILED_ATTEMPTS },
       })
       .catch(() => undefined);
 
@@ -362,7 +381,7 @@ export class AuthService {
         endpoint: '/auth/unlock',
         method: 'POST',
         status: AuditStatus.SUCCESS,
-        metadata: { publicKey },
+        metadata: { publicKey, adminOverride: true },
       })
       .catch(() => undefined);
 

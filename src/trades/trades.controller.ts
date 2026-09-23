@@ -20,6 +20,7 @@ import {
 import { ApiResponse } from '@nestjs/swagger';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { buildPaginationLinks } from '../common/pagination/pagination-links.util';
+import { CursorPaginationQueryDto } from '../common/pagination/cursor-pagination-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OwnershipGuard } from '../common/guards/ownership.guard';
 import { MaxCallDepthGuard } from '../common/guards/max-call-depth.guard';
@@ -161,6 +162,31 @@ export class TradesController {
     @Request() req: any,
   ): Promise<TradeDetailsDto> {
     return this.queryBus.execute(new GetTradeStatusQuery(tradeId, req.user.id));
+  }
+
+  /**
+   * Cursor-based trade history — stable under concurrent inserts.
+   * GET /trades/user/:userId/history/cursor?after=<cursor>&limit=20
+   *
+   * Issue #1066 — cursor pagination for collection APIs
+   */
+  @Get('user/:userId/history/cursor')
+  @RequireScopes(ApiKeyScope.TRADES_READ)
+  async getUserTradeHistoryCursor(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Query() query: CursorPaginationQueryDto,
+    @Query('status') status?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.tradeHistoryService.getUserTradeHistoryCursor({
+      userId,
+      status,
+      startDate,
+      endDate,
+      after: query.after,
+      limit: query.limit,
+    });
   }
 
   /**

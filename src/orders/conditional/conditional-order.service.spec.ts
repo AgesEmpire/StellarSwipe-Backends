@@ -13,6 +13,7 @@ import {
   ConditionOperator,
 } from './dto/order-condition.dto';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ForbiddenResourceException } from '../../common/exceptions/forbidden-resource.exception';
 
 describe('ConditionalOrderService', () => {
   let service: ConditionalOrderService;
@@ -109,6 +110,20 @@ describe('ConditionalOrderService', () => {
       repo.findOne.mockResolvedValue(null);
       await expect(service.findById('nonexistent')).rejects.toThrow(NotFoundException);
     });
+
+    it('rejects another user from reading an order by direct id', async () => {
+      repo.findOne.mockResolvedValue(mockOrder);
+      await expect(service.findById('order-1', { id: 'user-2' })).rejects.toThrow(
+        ForbiddenResourceException,
+      );
+    });
+
+    it('allows an admin to read another user\'s order by direct id', async () => {
+      repo.findOne.mockResolvedValue(mockOrder);
+      await expect(service.findById('order-1', { id: 'admin-1', roles: ['admin'] })).resolves.toEqual(
+        mockOrder,
+      );
+    });
   });
 
   describe('findByUser', () => {
@@ -126,6 +141,13 @@ describe('ConditionalOrderService', () => {
           where: { userId: 'user-1', status: ConditionalOrderStatus.PENDING },
         }),
       );
+    });
+
+    it('rejects cross-tenant list access and does not query the repository', async () => {
+      await expect(service.findByUser('user-2', undefined, { id: 'user-1' })).rejects.toThrow(
+        ForbiddenResourceException,
+      );
+      expect(repo.find).not.toHaveBeenCalled();
     });
   });
 

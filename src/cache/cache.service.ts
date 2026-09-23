@@ -25,6 +25,8 @@ export type CacheTTLType = 'session' | 'signal' | 'portfolio' | 'default';
 export class CacheService {
     private readonly logger = new Logger(CacheService.name);
     private readonly ttlConfig: Record<CacheTTLType, number>;
+    private readonly operationTimeoutMs: number;
+    private readonly singleFlightTimeoutMs: number;
 
     constructor(
         @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
@@ -37,6 +39,8 @@ export class CacheService {
             portfolio: this.configService.get<number>('redisCache.ttl.portfolio') ?? 5 * 60,
             default: this.configService.get<number>('redisCache.ttl.default') ?? 60,
         };
+        this.operationTimeoutMs = this.configService.get<number>('redisCache.operationTimeoutMs') ?? 500;
+        this.singleFlightTimeoutMs = this.configService.get<number>('redisCache.singleFlightTimeoutMs') ?? 5000;
     }
 
     /**
@@ -44,7 +48,7 @@ export class CacheService {
      */
     async get<T>(key: string): Promise<T | undefined> {
         try {
-            const value = await this.cacheManager.get<T>(key);
+            const value = await this.withTimeout(this.cacheManager.get<T>(key), 'get');
             if (value !== undefined && value !== null) {
                 this.prometheusService?.cacheHitsTotal.inc({ layer: 'redis' });
             } else {
@@ -52,7 +56,8 @@ export class CacheService {
             }
             return value;
         } catch (error) {
-            this.logger.error(`Cache GET error for key ${key}:`, error);
+            this.recordFallback('get');
+            this.logger.warn(`Cache GET degraded for key ${key}: ${this.errorMessage(error)}`);
             return undefined;
         }
     }
@@ -63,9 +68,10 @@ export class CacheService {
     async set<T>(key: string, value: T, ttlType: CacheTTLType = 'default'): Promise<void> {
         try {
             const ttl = this.ttlConfig[ttlType];
-            await this.cacheManager.set(key, value, ttl * 1000); // cache-manager expects ms
+            await this.withTimeout(this.cacheManager.set(key, value, ttl * 1000), 'set'); // cache-manager expects ms
         } catch (error) {
-            this.logger.error(`Cache SET error for key ${key}:`, error);
+            this.recordFallback('set');
+            this.logger.warn(`Cache SET degraded for key ${key}: ${this.errorMessage(error)}`);
         }
     }
 
@@ -74,9 +80,10 @@ export class CacheService {
      */
     async setWithTTL<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
         try {
-            await this.cacheManager.set(key, value, ttlSeconds * 1000);
+            await this.withTimeout(this.cacheManager.set(key, value, ttlSeconds * 1000), 'set');
         } catch (error) {
-            this.logger.error(`Cache SET error for key ${key}:`, error);
+            this.recordFallback('set');
+            this.logger.warn(`Cache SET degraded for key ${key}: ${this.errorMessage(error)}`);
         }
     }
 
@@ -85,9 +92,10 @@ export class CacheService {
      */
     async del(key: string): Promise<void> {
         try {
-            await this.cacheManager.del(key);
+            await this.withTimeout(this.cacheManager.del(key), 'del');
         } catch (error) {
-            this.logger.error(`Cache DEL error for key ${key}:`, error);
+            this.recordFallback('del');
+            this.logger.warn(`Cache DEL degraded for key ${key}: ${this.errorMessage(error)}`);
         }
     }
 
@@ -184,14 +192,19 @@ export class CacheService {
         }
 
         if (this.inflightRequests.has(key)) {
+            this.prometheusService?.cacheSingleFlightTotal.inc({ key_type: this.keyType(key) });
             return this.inflightRequests.get(key) as Promise<T>;
         }
 
-        const promise = fetchFn().then(async (value) => {
+        const promise = this.withTimeout(fetchFn(), 'single-flight').then(async (value) => {
             await this.set(key, value, ttlType);
             return value;
         }).finally(() => {
             this.inflightRequests.delete(key);
+        });
+
+        promise.catch(() => {
+            this.prometheusService?.cacheSingleFlightFailuresTotal.inc({ key_type: this.keyType(key) });
         });
 
         this.inflightRequests.set(key, promise);
@@ -200,5 +213,32 @@ export class CacheService {
 
     getTTL(ttlType: CacheTTLType): number {
         return this.ttlConfig[ttlType];
+    }
+
+    private async withTimeout<T>(operation: Promise<T>, operationName: string): Promise<T> {
+        let timer: NodeJS.Timeout | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+                this.prometheusService?.cacheOperationTimeoutsTotal.inc({ operation: operationName });
+                reject(new Error(`Redis ${operationName} timed out after ${this.operationTimeoutMs}ms`));
+            }, operationName === 'single-flight' ? this.singleFlightTimeoutMs : this.operationTimeoutMs);
+        });
+        try {
+            return await Promise.race([operation, timeout]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    private recordFallback(operation: string): void {
+        this.prometheusService?.cacheFallbacksTotal.inc({ operation, policy: 'fail-open' });
+    }
+
+    private keyType(key: string): string {
+        return key.split(':', 2)[1] || 'unknown';
+    }
+
+    private errorMessage(error: unknown): string {
+        return error instanceof Error ? error.message : String(error);
     }
 }

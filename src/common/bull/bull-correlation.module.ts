@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { BullCorrelationService } from './bull-correlation.service';
 import { CorrelationModule } from '../correlation/correlation.module';
+import { BullShutdownCoordinator } from './bull-shutdown.coordinator';
 
 /**
  * Global module providing BullCorrelationService for propagating request
@@ -9,7 +10,7 @@ import { CorrelationModule } from '../correlation/correlation.module';
 @Global()
 @Module({
   imports: [CorrelationModule],
-  providers: [BullCorrelationService],
-  exports: [BullCorrelationService],
+  providers: [BullCorrelationService, BullShutdownCoordinator],
+  exports: [BullCorrelationService, BullShutdownCoordinator],
 })
 export class BullCorrelationModule {}

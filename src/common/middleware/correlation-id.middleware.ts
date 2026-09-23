@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   CorrelationIdStore,
   CORRELATION_ID_HEADER,
+  isValidCorrelationId,
 } from '../correlation/correlation-id.store';
 
 /**
@@ -22,8 +23,10 @@ export class CorrelationIdMiddleware implements NestMiddleware {
 
   use(req: Request, res: Response, next: NextFunction): void {
     const incoming = req.headers[CORRELATION_ID_HEADER];
-    const correlationId =
-      (Array.isArray(incoming) ? incoming[0] : incoming) || uuidv4();
+    const candidate = Array.isArray(incoming) ? incoming[0] : incoming;
+    // An invalid or oversized incoming ID is never trusted — it is
+    // replaced with a freshly generated one rather than echoed back.
+    const correlationId = isValidCorrelationId(candidate) ? candidate : uuidv4();
 
     req.headers[CORRELATION_ID_HEADER] = correlationId;
     (req as any).correlationId = correlationId;

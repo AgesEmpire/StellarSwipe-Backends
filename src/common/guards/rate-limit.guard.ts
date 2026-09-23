@@ -138,8 +138,9 @@ export class RateLimitGuard implements CanActivate {
   private resolveEffectiveLimits(
     scope: string,
     base: { limit: number; window: number },
+    tenantId?: string | null,
   ): { limit: number; window: number } {
-    const resolved = this.tenantConfig?.resolveRateLimit(scope, base) ?? base;
+    const resolved = this.tenantConfig?.resolveRateLimit(scope, base, tenantId ?? null) ?? base;
     return {
       limit: resolved.limit ?? base.limit,
       window: resolved.window ?? base.window,
@@ -172,16 +173,37 @@ export class RateLimitGuard implements CanActivate {
     return context.switchToHttp().getResponse();
   }
 
+  private extractTenantId(request: any): string | null {
+    if (!request) return null;
+    const headerTenant = request.headers?.['x-tenant-id'];
+    if (typeof headerTenant === 'string' && headerTenant.trim()) {
+      return headerTenant.trim();
+    }
+    if (request.user?.tenantId) {
+      return String(request.user.tenantId);
+    }
+    return null;
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const config = this.reflector.get<RateLimitConfig>(
       RATE_LIMIT_KEY,
       context.getHandler(),
     );
 
+    const request = this.getRequest(context);
+    const bypassSecret = this.configService?.get<string>('RATE_LIMIT_BYPASS_SECRET');
+    if (
+      (bypassSecret && request?.headers?.['x-rate-limit-bypass'] === bypassSecret) ||
+      (config as any)?.bypass
+    ) {
+      return true;
+    }
+
     const resolvedTier = await this.resolveUserTier(context);
     const effectiveTier = config?.tier || resolvedTier;
 
-    // Per-IP check
+    // Per-IP / Per-Tenant check
     await this.checkRateLimit(context, effectiveTier, config?.limit, config?.window);
 
     // Per-wallet check when the request has an authenticated wallet address
@@ -198,7 +220,6 @@ export class RateLimitGuard implements CanActivate {
 
     // Per-account check when keyBy is specified
     if (config?.keyBy?.length) {
-      const request = this.getRequest(context);
       const accountId = this.extractAccountIdentifier(request, config.keyBy);
       if (accountId) {
         await this.checkAccountLimit(
@@ -247,13 +268,23 @@ export class RateLimitGuard implements CanActivate {
   ): Promise<boolean> {
     const request = this.getRequest(context);
     const response = this.getResponse(context);
+    const tenantId = this.extractTenantId(request);
 
     const identifier = this.getIdentifier(request, tier);
-    const { limit, window } = this.limits[tier];
-    const finalLimit = customLimit ?? limit;
-    const finalWindow = customWindow ?? window;
+    const baseLimits = this.limits[tier];
+    const effective = this.resolveEffectiveLimits(
+      tier,
+      {
+        limit: customLimit ?? baseLimits.limit,
+        window: customWindow ?? baseLimits.window,
+      },
+      tenantId,
+    );
+    const finalLimit = effective.limit;
+    const finalWindow = effective.window;
 
-    const key = `rate_limit:${tier}:${identifier}`;
+    const tenantPrefix = tenantId ? `tenant:${tenantId}:` : '';
+    const key = `rate_limit:${tenantPrefix}${tier}:${identifier}`;
     const info = await this.getRateLimitInfo(key);
 
     const now = Date.now();
@@ -266,15 +297,21 @@ export class RateLimitGuard implements CanActivate {
 
     info.count++;
 
+    if (tenantId && response?.setHeader) {
+      response.setHeader('X-RateLimit-Tenant', tenantId);
+    }
+
     if (info.count > finalLimit) {
       const retryAfter = Math.ceil((info.resetTime - now) / 1000);
 
-      response.setHeader('X-RateLimit-Limit', finalLimit);
-      response.setHeader('X-RateLimit-Remaining', 0);
-      response.setHeader('X-RateLimit-Reset', info.resetTime);
-      response.setHeader('Retry-After', retryAfter);
+      if (response?.setHeader) {
+        response.setHeader('X-RateLimit-Limit', finalLimit);
+        response.setHeader('X-RateLimit-Remaining', 0);
+        response.setHeader('X-RateLimit-Reset', info.resetTime);
+        response.setHeader('Retry-After', retryAfter);
+      }
 
-      this.logViolation(identifier, tier, finalLimit);
+      this.logViolation(`${tenantPrefix}${identifier}`, tier, finalLimit);
 
       throw new HttpException(
         {
@@ -290,9 +327,11 @@ export class RateLimitGuard implements CanActivate {
 
     await this.setRateLimitInfo(key, info, finalWindow);
 
-    response.setHeader('X-RateLimit-Limit', finalLimit);
-    response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
-    response.setHeader('X-RateLimit-Reset', info.resetTime);
+    if (response?.setHeader) {
+      response.setHeader('X-RateLimit-Limit', finalLimit);
+      response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
+      response.setHeader('X-RateLimit-Reset', info.resetTime);
+    }
 
     return true;
   }
@@ -304,12 +343,24 @@ export class RateLimitGuard implements CanActivate {
     customLimit?: number,
     customWindow?: number,
   ): Promise<void> {
+    const request = this.getRequest(context);
     const response = this.getResponse(context);
-    const { limit: defaultLimit, window: defaultWindow } = this.accountLimits[tier];
-    const finalLimit = customLimit ?? defaultLimit;
-    const finalWindow = customWindow ?? defaultWindow;
+    const tenantId = this.extractTenantId(request);
 
-    const key = `rate_limit:account:${tier}:${accountId}`;
+    const baseLimits = this.accountLimits[tier];
+    const effective = this.resolveEffectiveLimits(
+      `${tier}:account`,
+      {
+        limit: customLimit ?? baseLimits.limit,
+        window: customWindow ?? baseLimits.window,
+      },
+      tenantId,
+    );
+    const finalLimit = effective.limit;
+    const finalWindow = effective.window;
+
+    const tenantPrefix = tenantId ? `tenant:${tenantId}:` : '';
+    const key = `rate_limit:${tenantPrefix}account:${tier}:${accountId}`;
     const info = await this.getRateLimitInfo(key);
 
     const now = Date.now();
@@ -325,12 +376,14 @@ export class RateLimitGuard implements CanActivate {
     if (info.count > finalLimit) {
       const retryAfter = Math.ceil((info.resetTime - now) / 1000);
 
-      response.setHeader('X-RateLimit-Limit', finalLimit);
-      response.setHeader('X-RateLimit-Remaining', 0);
-      response.setHeader('X-RateLimit-Reset', info.resetTime);
-      response.setHeader('Retry-After', retryAfter);
+      if (response?.setHeader) {
+        response.setHeader('X-RateLimit-Limit', finalLimit);
+        response.setHeader('X-RateLimit-Remaining', 0);
+        response.setHeader('X-RateLimit-Reset', info.resetTime);
+        response.setHeader('Retry-After', retryAfter);
+      }
 
-      this.logViolation(accountId, tier, finalLimit);
+      this.logViolation(`${tenantPrefix}${accountId}`, tier, finalLimit);
 
       throw new HttpException(
         {
@@ -346,9 +399,11 @@ export class RateLimitGuard implements CanActivate {
 
     await this.setRateLimitInfo(key, info, finalWindow);
 
-    response.setHeader('X-RateLimit-Limit', finalLimit);
-    response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
-    response.setHeader('X-RateLimit-Reset', info.resetTime);
+    if (response?.setHeader) {
+      response.setHeader('X-RateLimit-Limit', finalLimit);
+      response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
+      response.setHeader('X-RateLimit-Reset', info.resetTime);
+    }
   }
 
   private extractWalletAddress(context: ExecutionContext): string | null {
@@ -364,12 +419,24 @@ export class RateLimitGuard implements CanActivate {
     customLimit?: number,
     customWindow?: number,
   ): Promise<void> {
+    const request = this.getRequest(context);
     const response = this.getResponse(context);
-    const { limit: defaultLimit, window: defaultWindow } = this.walletLimits[tier];
-    const finalLimit = customLimit ?? defaultLimit;
-    const finalWindow = customWindow ?? defaultWindow;
+    const tenantId = this.extractTenantId(request);
 
-    const key = `rate_limit:wallet:${tier}:${walletAddress}`;
+    const baseLimits = this.walletLimits[tier];
+    const effective = this.resolveEffectiveLimits(
+      `${tier}:wallet`,
+      {
+        limit: customLimit ?? baseLimits.limit,
+        window: customWindow ?? baseLimits.window,
+      },
+      tenantId,
+    );
+    const finalLimit = effective.limit;
+    const finalWindow = effective.window;
+
+    const tenantPrefix = tenantId ? `tenant:${tenantId}:` : '';
+    const key = `rate_limit:${tenantPrefix}wallet:${tier}:${walletAddress}`;
     const info = await this.getRateLimitInfo(key);
 
     const now = Date.now();
@@ -385,12 +452,14 @@ export class RateLimitGuard implements CanActivate {
     if (info.count > finalLimit) {
       const retryAfter = Math.ceil((info.resetTime - now) / 1000);
 
-      response.setHeader('X-RateLimit-Limit', finalLimit);
-      response.setHeader('X-RateLimit-Remaining', 0);
-      response.setHeader('X-RateLimit-Reset', info.resetTime);
-      response.setHeader('Retry-After', retryAfter);
+      if (response?.setHeader) {
+        response.setHeader('X-RateLimit-Limit', finalLimit);
+        response.setHeader('X-RateLimit-Remaining', 0);
+        response.setHeader('X-RateLimit-Reset', info.resetTime);
+        response.setHeader('Retry-After', retryAfter);
+      }
 
-      this.logViolation(`wallet:${walletAddress}`, tier, finalLimit);
+      this.logViolation(`${tenantPrefix}wallet:${walletAddress}`, tier, finalLimit);
 
       throw new HttpException(
         {
@@ -405,6 +474,12 @@ export class RateLimitGuard implements CanActivate {
     }
 
     await this.setRateLimitInfo(key, info, finalWindow);
+
+    if (response?.setHeader) {
+      response.setHeader('X-RateLimit-Limit', finalLimit);
+      response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
+      response.setHeader('X-RateLimit-Reset', info.resetTime);
+    }
   }
 
   private extractAccountIdentifier(request: any, keyBy: string[]): string | null {

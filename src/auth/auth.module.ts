@@ -17,6 +17,7 @@ import { UsersModule } from '../users/users.module';
 import { TwoFactor } from './two-factor/entities/two-factor.entity';
 import { TwoFactorService } from './two-factor/two-factor.service';
 import { TwoFactorController } from './two-factor/two-factor.controller';
+import { RecoveryCodeService } from './two-factor/recovery-code.service';
 import { AuthAuditService } from './auth-audit.service';
 import { AuditModule } from '../audit-log/audit.module';
 import { SessionManagerService } from './session/session-manager.service';
@@ -28,6 +29,12 @@ import { AnomalousLoginListener } from './session/anomalous-login.listener';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
+import { RefreshTokenModule } from './refresh-token/refresh-token.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
+import { WebauthnController } from './webauthn/webauthn.controller';
+import { WebauthnService } from './webauthn/webauthn.service';
+import { WebauthnCredential } from './webauthn/entities/webauthn-credential.entity';
+import { ChallengeStoreService } from './challenge/challenge-store.service';
 
 @Module({
   imports: [
@@ -44,12 +51,25 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     }),
     CacheModule,
     AuditModule,
-    TypeOrmModule.forFeature([User, SocialConnection, TwoFactor, LoginFingerprint, RefreshToken]),
+    TypeOrmModule.forFeature([
+      User,
+      SocialConnection,
+      TwoFactor,
+      LoginFingerprint,
+      RefreshToken,
+      WebauthnCredential,
+    ]),
     UsersModule,
     EmailModule,
     AuthorizationModule,
+    RefreshTokenModule,
   ],
-  controllers: [AuthController, SocialAuthController, TwoFactorController, WebauthnController],
+  controllers: [
+    AuthController,
+    SocialAuthController,
+    TwoFactorController,
+    WebauthnController,
+  ],
   providers: [
     AuthService,
     JwtStrategy,
@@ -57,6 +77,7 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     WsJwtAuthGuard,
     TwitterOauthService,
     TwoFactorService,
+    RecoveryCodeService,
     AuthAuditService,
     SessionManagerService,
     SessionCleanupService,
@@ -64,6 +85,8 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     AnomalousLoginListener,
     RefreshTokenCleanupService,
     DistributedLockService,
+    WebauthnService,
+    ChallengeStoreService,
   ],
   exports: [
     AuthService,
@@ -71,10 +94,12 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     WsJwtAuthGuard,
     TwitterOauthService,
     TwoFactorService,
+    RecoveryCodeService,
     AuthAuditService,
     SessionManagerService,
     SessionFingerprintService,
     RefreshTokenCleanupService,
+    ChallengeStoreService,
   ],
 })
 export class AuthModule {}

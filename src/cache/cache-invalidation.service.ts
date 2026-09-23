@@ -12,7 +12,8 @@ export const UserCacheKeys = {
   preferences: (userId: string, tenantId = 'default') =>
     tenantKey(CachePrefix.USER_PROFILE, tenantId, `${userId}:preferences`),
   sessions: (userId: string) => `${USER_PREFIX}${userId}:sessions`,
-  portfolio: (userId: string) => `${CachePrefix.PORTFOLIO}${userId}`,
+  portfolio: (userId: string, tenantId = 'default') =>
+    tenantKey(CachePrefix.PORTFOLIO, tenantId, userId),
 };
 
 /** Signal and feed-related cache keys */
@@ -201,34 +202,44 @@ export class CacheInvalidationService {
     assetPair?: string,
     tradeAmount?: string,
   ): Promise<void> {
-    const keysToInvalidate: string[] = [
-      UserCacheKeys.portfolio(userId),
+    return this.invalidatePortfolioState(userId, assetPair, tradeAmount);
+  }
+
+  /** Invalidates the complete affected key set; Set makes replayed events idempotent. */
+  async invalidatePortfolioState(
+    userId: string,
+    assetPair?: string,
+    changeId?: string,
+    tenantId = 'default',
+  ): Promise<void> {
+    const keysToInvalidate = new Set<string>([
+      UserCacheKeys.portfolio(userId, tenantId),
       LeaderboardCacheKeys.userRank(userId),
       LeaderboardCacheKeys.topPerformers(),
-    ];
+    ]);
 
     // Invalidate overall leaderboard pages
     for (let page = 1; page <= 10; page++) {
-      keysToInvalidate.push(LeaderboardCacheKeys.overall(page));
+      keysToInvalidate.add(LeaderboardCacheKeys.overall(page));
     }
 
     // Invalidate asset-specific leaderboards if asset pair is provided
     if (assetPair) {
       for (let page = 1; page <= 10; page++) {
-        keysToInvalidate.push(
+        keysToInvalidate.add(
           LeaderboardCacheKeys.assetSpecific(assetPair, page),
         );
       }
     }
 
-    await Promise.all(keysToInvalidate.map((k) => this.cacheService.del(k)));
+    await Promise.all([...keysToInvalidate].map((k) => this.cacheService.del(k)));
     this.logger.log(
       `Portfolio and leaderboard cache invalidated: userId=${userId}, asset=${assetPair}`,
     );
     this.eventEmitter.emit('cache.invalidated.trade', {
       userId,
       assetPair,
-      tradeAmount,
+      changeId,
       timestamp: new Date(),
     });
   }

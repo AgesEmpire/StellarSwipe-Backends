@@ -11,6 +11,7 @@ export interface AppConfig {
   corsOrigin: string[];
   corsCredentials: boolean;
   slippageToleranceBps: number;
+  shutdownDrainTimeoutMs: number;
 }
 
 export interface DatabaseConfig {
@@ -21,6 +22,8 @@ export interface DatabaseConfig {
   database: string;
   synchronize: boolean;
   logging: boolean;
+  readTimeoutMs?: number;
+  writeTimeoutMs?: number;
   ssl?: {
     rejectUnauthorized: boolean;
   };
@@ -53,6 +56,8 @@ export interface RedisConfig {
   port: number;
   db: number;
   password?: string;
+  operationTimeoutMs?: number;
+  policies?: { cache: string; session: string; rateLimit: string };
 }
 
 export interface JwtConfig {

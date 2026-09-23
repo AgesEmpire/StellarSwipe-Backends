@@ -51,7 +51,25 @@ export class ApiKeysService {
     const keys = await this.apiKeyRepo.find();
 
     for (const key of keys) {
-      const match = await bcrypt.compare(rawKey, key.keyHash);
+      if (key.revokedAt) continue;
+      if (
+        key.previousKeyHash &&
+        key.overlapUntil &&
+        key.overlapUntil <= new Date()
+      ) {
+        await this.apiKeyRepo.update(key.id, {
+          previousKeyHash: null,
+          overlapUntil: null,
+        });
+        key.previousKeyHash = null;
+      }
+      const current = await bcrypt.compare(rawKey, key.keyHash);
+      const overlap =
+        !!key.previousKeyHash &&
+        !!key.overlapUntil &&
+        key.overlapUntil > new Date() &&
+        (await bcrypt.compare(rawKey, key.previousKeyHash));
+      const match = current || overlap;
       if (match) {
         if (key.expiresAt && key.expiresAt < new Date()) {
           throw new UnauthorizedException('API key expired');
@@ -122,7 +140,11 @@ export class ApiKeysService {
     );
   }
 
-  async rotate(userId: string, keyId: string): Promise<ApiKeyResponseDto> {
+  async rotate(
+    userId: string,
+    keyId: string,
+    overlapMs = 300_000,
+  ): Promise<ApiKeyResponseDto> {
     const existing = await this.apiKeyRepo.findOne({
       where: { id: keyId, userId },
     });
@@ -134,7 +156,13 @@ export class ApiKeysService {
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
 
-    await this.apiKeyRepo.update(keyId, { keyHash });
+    await this.apiKeyRepo.update(keyId, {
+      previousKeyHash: existing.keyHash,
+      keyHash,
+      overlapUntil: new Date(
+        Date.now() + Math.max(0, Math.min(overlapMs, 3_600_000)),
+      ),
+    });
 
     return {
       id: existing.id,
@@ -148,7 +176,10 @@ export class ApiKeysService {
   }
 
   async revoke(userId: string, keyId: string): Promise<void> {
-    await this.apiKeyRepo.delete({ id: keyId, userId });
+    await this.apiKeyRepo.update(
+      { id: keyId, userId },
+      { revokedAt: new Date(), previousKeyHash: null, overlapUntil: null },
+    );
   }
 
   async list(userId: string): Promise<ApiKey[]> {

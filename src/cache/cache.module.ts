@@ -15,7 +15,10 @@ import { CacheService } from './cache.service';
 import { CacheInvalidationService } from './cache-invalidation.service';
 import { SignalCacheInvalidationListener } from './signal-cache-invalidation.listener';
 import { TradeCacheInvalidationListener } from './trade-cache-invalidation.listener';
-import { ResponseCacheService, ResponseCacheInterceptor } from './response-cache.service';
+import {
+  ResponseCacheService,
+  ResponseCacheInterceptor,
+} from './response-cache.service';
 import { TradingCacheService } from './trading-cache.service';
 import { CacheWarmupService } from './cache-warmup.service';
 import { CacheReconciliationJob } from './cache-reconciliation.job';
@@ -36,6 +39,7 @@ import { Signal } from '../signals/entities/signal.entity';
           socket: {
             host: configService.get<string>('redisCache.host'),
             port: configService.get<number>('redisCache.port'),
+            connectTimeout: configService.get<number>('redisCache.operationTimeoutMs') || 500,
           },
           password: configService.get<string>('redisCache.password'),
           database: configService.get<number>('redisCache.db'),
@@ -66,6 +70,7 @@ import { Signal } from '../signals/entities/signal.entity';
     CacheReconciliationJob,
     SignalFeedCacheService,
     TradeHistoryCacheService,
+    NestCacheModule,
   ],
   controllers: [CacheController],
   exports: [
@@ -87,4 +92,4 @@ import { Signal } from '../signals/entities/signal.entity';
     TradeHistoryCacheService,
   ],
 })
-export class CacheModule { }
+export class CacheModule {}

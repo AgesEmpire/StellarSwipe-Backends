@@ -6,6 +6,8 @@ export interface RefreshTokenRecord {
   expiresAt: Date;
   revokedAt: Date | null;
   replacedByTokenId: string | null;
+  familyId: string;
+  consumedAt: Date | null;
 }
 
 export interface IssuedTokenPair {

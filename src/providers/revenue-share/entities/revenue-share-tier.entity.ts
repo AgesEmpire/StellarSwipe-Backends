@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  VersionColumn,
   Index,
 } from 'typeorm';
 
@@ -110,6 +111,10 @@ export class RevenueShareTier {
 
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamp with time zone' })
   updatedAt!: Date;
+
+  /** Optimistic concurrency token — bumped on every update. */
+  @VersionColumn()
+  version!: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

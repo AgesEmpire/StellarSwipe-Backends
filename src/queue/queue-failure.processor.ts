@@ -33,6 +33,10 @@ export class PriorityQueueFailureProcessor {
   @OnQueueFailed()
   async onFailed(job: Job<PriorityJobData>, error: Error): Promise<void> {
     const maxAttempts = job.opts?.attempts ?? 1;
+    const correlationId = job.data?.correlationId ?? 'unknown';
+    this.logger.error(
+      `Priority queue job failed type=${job.data?.type} correlationId=${correlationId} attempt=${job.attemptsMade}: ${error.message}`,
+    );
     await this.jobErrorHandler.handle(job, error, maxAttempts);
   }
 }
@@ -46,6 +50,10 @@ export class CriticalQueueFailureProcessor {
   @OnQueueFailed()
   async onFailed(job: Job<PriorityJobData>, error: Error): Promise<void> {
     const maxAttempts = job.opts?.attempts ?? 1;
+    const correlationId = job.data?.correlationId ?? 'unknown';
+    this.logger.error(
+      `Critical queue job failed type=${job.data?.type} correlationId=${correlationId} attempt=${job.attemptsMade}: ${error.message}`,
+    );
     await this.jobErrorHandler.handle(job, error, maxAttempts);
   }
 }
@@ -59,6 +67,10 @@ export class LowPriorityQueueFailureProcessor {
   @OnQueueFailed()
   async onFailed(job: Job<PriorityJobData>, error: Error): Promise<void> {
     const maxAttempts = job.opts?.attempts ?? 1;
+    const correlationId = job.data?.correlationId ?? 'unknown';
+    this.logger.error(
+      `Low-priority queue job failed type=${job.data?.type} correlationId=${correlationId} attempt=${job.attemptsMade}: ${error.message}`,
+    );
     await this.jobErrorHandler.handle(job, error, maxAttempts);
   }
 }
