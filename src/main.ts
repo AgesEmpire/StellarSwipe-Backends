@@ -172,132 +172,81 @@ async function bootstrap() {
   );
 
   // Global interceptors
-  app.useGlobalInterceptors(new DeadlockRetryInterceptor());
-  app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
-  // CorrelationIdInterceptor runs early so every subsequent interceptor and
-  // the exception filter can rely on the x-correlation-id header being set
-  // on the response and the ID being readable from CorrelationIdStore.
   app.useGlobalInterceptors(
     new CorrelationIdInterceptor(app.get(CorrelationIdStore)),
+    new LoggingInterceptor(logger),
+    new TimeoutInterceptor(configService),
+    new SensitiveDataInterceptor(),
+    new ResponseEnvelopeInterceptor(),
+    new StellarMemoInterceptor(),
+    new StripInternalFieldsInterceptor(),
+    new MetricsInterceptor(app.get(QueryPerformanceService)),
+    new DeadlockRetryInterceptor(),
+    new NPlus1DetectionInterceptor(),
   );
-  app.useGlobalInterceptors(
-    new LoggingInterceptor(logger, app.get(CorrelationIdStore), configService),
-  );
-  app.useGlobalInterceptors(new ResponseEnvelopeInterceptor(app.get(Reflector)));
-  app.useGlobalInterceptors(new StripInternalFieldsInterceptor());
-  app.useGlobalInterceptors(new SensitiveDataInterceptor(app.get(Reflector)));
-  app.useGlobalInterceptors(new StellarMemoInterceptor(app.get(Reflector)));
-  app.useGlobalInterceptors(app.get(MetricsInterceptor));
-  app.useGlobalInterceptors(app.get(NPlus1DetectionInterceptor));
 
-  // Database query performance reporting: start the periodic reporter so slow
-  // queries, execution counts and latency trends are surfaced through logs and
-  // metrics. The service is also exposed via the query-performance controller.
-  const queryPerformanceService = app.get(QueryPerformanceService);
-  queryPerformanceService.startReporting();
-
-  // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
-  const { document, json, yaml } = generateOpenApiDocument(app);
-  SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
-
-  // Feed the live document into the doc generator and trigger initial generation
-  const docGenerator = app.get(DocGeneratorService);
-  docGenerator.setDocument(document);
-  docGenerator.generateAll().catch((err) => logger.error('Initial doc generation failed', err));
-
-  // V1 Swagger (Deprecated)
-  const configV1 = new DocumentBuilder()
-    .setTitle('StellarSwipe API v1 (Deprecated)')
-    .setDescription('Legacy API - Sunset: 2025-12-31')
-    .setVersion('1.0')
+  // Swagger / OpenAPI documentation. The version registry drives the
+  // deprecation metadata so the published spec advertises sunset dates and
+  // migration expectations for deprecated API versions (#1070).
+  const versionManager = app.get(VersionManagerService);
+  const deprecatedVersions = versionManager.getDeprecatedVersions();
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Stellar API')
+    .setDescription(
+      [
+        'HTTP API for the Stellar platform.',
+        '',
+        '## API versioning & deprecation',
+        'Versions are selected via the URI (e.g. `/api/v1/...`). Deprecated',
+        'versions continue to work until their sunset date, after which they',
+        'are removed and requests receive `410 Gone`. Deprecated responses',
+        'advertise `Deprecation` and `Sunset` headers so clients can detect',
+        'and schedule migrations.',
+        deprecatedVersions.length
+          ? `\nDeprecated versions: ${deprecatedVersions
+              .map((v) => `\`${v.version}\` (sunset ${v.sunsetDate})`)
+              .join(', ')}.`
+          : '',
+      ].join('\n'),
+    )
+    .setVersion(apiVersion)
     .addBearerAuth()
     .build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
 
-  const documentV1 = SwaggerModule.createDocument(app, configV1);
-  SwaggerModule.setup('api/v1/docs', app, documentV1);
+  // Start HTTP server
+  await app.listen(port, host);
+  logger.info(`HTTP server listening on ${host}:${port}${globalPrefix}`);
 
-  // Hybrid app: attach TCP microservice listener so notification @MessagePattern
-  // handlers are reachable from other services (e.g. trade service via ClientProxy).
+  // Connect TCP microservice listener
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.TCP,
     options: {
-      host: configService.get<string>('microservice.host') ?? '0.0.0.0',
-      port: configService.get<number>('microservice.port') ?? 3001,
+      host: configService.get('microservice.host'),
+      port: configService.get('microservice.port'),
     },
   });
   await app.startAllMicroservices();
 
-  await app.listen(port, host, () => {
-    logger.info(`Application is running on: ${host}:${port}${globalPrefix}`);
-  });
-
-  process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
-    logger.error('Unhandled Rejection', reason, { promise: String(promise) });
-    sentryService.captureException(
-      reason instanceof Error ? reason : new Error(String(reason)),
-      { type: 'unhandledRejection' },
-    );
-  });
-
-  process.on('uncaughtException', (error: Error) => {
-    logger.error('Uncaught Exception', error);
-    sentryService.captureException(error, { type: 'uncaughtException' });
-    setTimeout(() => process.exit(1), 1000);
-  });
-
-  // Orderly shutdown (#1058): reject new traffic → mark not-ready → drain
-  // in-flight requests up to a bounded, configurable timeout → close the app
-  // (HTTP server, TCP microservice, and every provider's onModuleDestroy /
-  // onApplicationShutdown hook — DB via TypeORM, Redis clients, BullMQ
-  // workers via BullShutdownCoordinator) → flush Sentry → exit.
-  const readinessService = app.get(ReadinessService);
-  const drainTimeoutMs = configService.get<number>('app.shutdownDrainTimeoutMs') ?? 30_000;
-  let shuttingDown = false;
-
+  // Graceful shutdown: reject new traffic, drain in-flight requests, then close.
   const gracefulShutdown = async (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
+    logger.info(`Received ${signal}, starting graceful shutdown`);
+    shutdownService.beginShutdown();
 
-    logger.info(`${signal} received: starting graceful shutdown`);
-
-    // Reject new HTTP requests immediately and fail the readiness probe so
-    // the orchestrator stops routing traffic here.
-    shutdownService.beginShutdown(signal);
-    readinessService.markNotReady(`shutdown_signal:${signal}`);
-
-    const drainStart = Date.now();
-    let forced = false;
-    while (inFlightRequests > 0) {
-      if (Date.now() - drainStart >= drainTimeoutMs) {
-        forced = true;
-        break;
-      }
-      logger.info(`Draining ${inFlightRequests} in-flight request(s)…`);
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    const drainTimeoutMs = configService.get<number>('app.shutdownDrainTimeoutMs') ?? 30000;
+    const deadline = Date.now() + drainTimeoutMs;
+    while (inFlightRequests > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
-    if (forced) {
-      logger.warn(
-        `Shutdown drain timeout (${drainTimeoutMs}ms) exceeded with ${inFlightRequests} request(s) still in-flight — proceeding to close resources`,
-      );
-    } else {
-      logger.info('All in-flight requests drained.');
-    }
-
-    // Closes the HTTP server and TCP microservice, and runs onModuleDestroy /
-    // onApplicationShutdown on every provider (DB, cache, queue connections).
     await app.close();
-    logger.info(`Resource cleanup complete. Shutdown ${forced ? 'forced' : 'graceful'}.`);
-
-    await sentryService.flush();
-    process.exit(forced ? 1 : 0);
+    logger.info('Graceful shutdown complete');
+    process.exit(0);
   };
 
   process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 }
 
-bootstrap().catch((err) => {
-  console.error("Failed to start application:", err);
-  process.exit(1);
-});
+bootstrap();
