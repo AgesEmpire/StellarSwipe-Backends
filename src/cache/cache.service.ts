@@ -21,6 +21,72 @@ export function tenantKey(prefix: CachePrefix, tenantId: string, entityId: strin
 
 export type CacheTTLType = 'session' | 'signal' | 'portfolio' | 'default';
 
+/**
+ * Ownership metadata for a supported cache key family.
+ *
+ * `owner` is the authoritative write path (module/service) responsible for
+ * invalidating or versioning entries under this prefix. `ttlType` is the
+ * bounded TTL policy applied to entries in this family. `tenantScoped`
+ * indicates whether keys must be namespaced per tenant/authorization
+ * boundary so stale data cannot cross those boundaries.
+ */
+export interface CacheKeyPolicy {
+    prefix: CachePrefix;
+    owner: string;
+    ttlType: CacheTTLType;
+    tenantScoped: boolean;
+}
+
+/**
+ * Authoritative ownership + TTL policy for every supported cache key family.
+ * Mutations in the owning module MUST call the matching invalidation helper
+ * (or bump the version) so cached reads never outlive their source of truth.
+ */
+export const CACHE_KEY_POLICIES: Record<CachePrefix, CacheKeyPolicy> = {
+    [CachePrefix.SESSION]: {
+        prefix: CachePrefix.SESSION,
+        owner: 'AuthModule (session lifecycle)',
+        ttlType: 'session',
+        tenantScoped: true,
+    },
+    [CachePrefix.SIGNAL]: {
+        prefix: CachePrefix.SIGNAL,
+        owner: 'SignalsModule (signal create/update/delete)',
+        ttlType: 'signal',
+        tenantScoped: true,
+    },
+    [CachePrefix.PORTFOLIO]: {
+        prefix: CachePrefix.PORTFOLIO,
+        owner: 'PortfolioModule (portfolio mutations)',
+        ttlType: 'portfolio',
+        tenantScoped: true,
+    },
+    [CachePrefix.SDEX]: {
+        prefix: CachePrefix.SDEX,
+        owner: 'SdexModule (order book sync)',
+        ttlType: 'default',
+        tenantScoped: false,
+    },
+    [CachePrefix.ANALYTICS]: {
+        prefix: CachePrefix.ANALYTICS,
+        owner: 'AnalyticsModule (analytics recompute)',
+        ttlType: 'default',
+        tenantScoped: true,
+    },
+    [CachePrefix.USER_PROFILE]: {
+        prefix: CachePrefix.USER_PROFILE,
+        owner: 'UsersModule (profile mutations)',
+        ttlType: 'default',
+        tenantScoped: true,
+    },
+    [CachePrefix.MARKET]: {
+        prefix: CachePrefix.MARKET,
+        owner: 'MarketModule (market data refresh)',
+        ttlType: 'default',
+        tenantScoped: false,
+    },
+};
+
 @Injectable()
 export class CacheService {
     private readonly logger = new Logger(CacheService.name);
@@ -92,16 +158,40 @@ export class CacheService {
     }
 
     /**
-     * Invalidate all keys matching a prefix pattern
+     * Invalidate all keys matching a prefix pattern.
+     *
+     * Uses the store's `reset`/`keys` capability when available; otherwise
+     * logs the request so the owning module can fall back to versioning.
+     * Failures are swallowed so cache problems never break correctness.
      */
     async invalidateByPrefix(prefix: CachePrefix): Promise<void> {
         try {
+            const store: any = this.cacheManager.store ?? this.cacheManager;
+            if (typeof store?.keys === 'function') {
+                const keys: string[] = await store.keys(`${prefix}*`);
+                await Promise.all(keys.map((k) => this.del(k)));
+                this.logger.log(`Invalidated ${keys.length} keys for prefix: ${prefix}`);
+                return;
+            }
             // Note: Pattern-based deletion requires Redis store implementation
             // This is a placeholder for cache invalidation strategy
             this.logger.log(`Cache invalidation requested for prefix: ${prefix}`);
         } catch (error) {
             this.logger.error(`Cache invalidation error for prefix ${prefix}:`, error);
         }
+    }
+
+    /**
+     * Invalidate a tenant-scoped entity key. Callers MUST pass the same
+     * tenantId used when the entry was written so invalidation cannot cross
+     * tenant or authorization boundaries.
+     */
+    async invalidateTenantEntity(
+        prefix: CachePrefix,
+        tenantId: string,
+        entityId: string,
+    ): Promise<void> {
+        await this.del(tenantKey(prefix, tenantId, entityId));
     }
 
     /**
@@ -200,5 +290,12 @@ export class CacheService {
 
     getTTL(ttlType: CacheTTLType): number {
         return this.ttlConfig[ttlType];
+    }
+
+    /**
+     * Return the documented ownership + TTL policy for a cache key family.
+     */
+    getPolicy(prefix: CachePrefix): CacheKeyPolicy {
+        return CACHE_KEY_POLICIES[prefix];
     }
 }
