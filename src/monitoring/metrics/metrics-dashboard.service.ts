@@ -81,7 +81,7 @@ export class MetricsDashboardService {
         },
         database: {
           description:
-            'PostgreSQL connection pool utilisation (total/active/idle/waiting) and query latency',
+            'PostgreSQL connection pool utilisation (total/active/idle/pending/timeouts) and query latency',
           metrics: names.filter((n) =>
             n.startsWith('db_') || n === 'postgresql_connections_active',
           ),

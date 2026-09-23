@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { resolveRetryPolicy, RetryPolicyOptions } from './retry-policy.config';
-import { computeBackoffDelayMs, extractRetryAfterMs, isRetryableError } from './retry.util';
+import {
+  computeBackoffDelayMs,
+  extractRetryAfterMs,
+  isIdempotentMethod,
+  isRetryableError,
+} from './retry.util';
 
 export class RetryExhaustedError extends Error {
   constructor(
@@ -31,6 +36,16 @@ export class RetryExhaustedError extends Error {
  *   await this.retryPolicyService.execute('coinmarketcap', () =>
  *     firstValueFrom(this.httpService.get(url)),
  *   );
+ *
+ * An optional `method` param tells the policy whether the call is
+ * idempotent — non-idempotent methods (POST/PATCH) are not retried unless
+ * `method` is omitted (preserving prior behavior for existing callers):
+ *   await this.retryPolicyService.execute(
+ *     'coinmarketcap',
+ *     () => firstValueFrom(this.httpService.get(url)),
+ *     {},
+ *     'GET',
+ *   );
  */
 @Injectable()
 export class RetryPolicyService {
@@ -47,6 +62,7 @@ export class RetryPolicyService {
     integrationName: string,
     fn: () => Promise<T>,
     overrides: Partial<RetryPolicyOptions> = {},
+    method?: string,
   ): Promise<T> {
     const policy = { ...resolveRetryPolicy(integrationName), ...overrides };
     let lastError: unknown;
@@ -57,7 +73,7 @@ export class RetryPolicyService {
       } catch (error) {
         lastError = error;
 
-        if (!isRetryableError(error)) {
+        if (!isRetryableError(error) || !isIdempotentMethod(method)) {
           throw error;
         }
 

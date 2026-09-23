@@ -160,6 +160,14 @@ export class Trade {
   @Column({ name: 'parent_trade_id', type: 'uuid', nullable: true })
   parentTradeId?: string;
 
+  /**
+   * Optimistic concurrency token. Incremented on every successful update.
+   * Clients must echo the current version back when submitting updates;
+   * a mismatch returns 409 Conflict instead of silently overwriting.
+   */
+  @Column({ type: 'int', default: 1 })
+  version!: number;
+
   @Column({
     name: 'original_amount',
     type: 'decimal',

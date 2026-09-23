@@ -10,6 +10,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { createHash } from 'crypto';
+import { getCurrentTenantIdOrNull } from '../../tenancy/tenant-context';
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const IN_FLIGHT_PLACEHOLDER = '__IN_FLIGHT__';
@@ -26,6 +27,9 @@ const IN_FLIGHT_PLACEHOLDER = '__IN_FLIGHT__';
  *  - Duplicate key while first request is in-flight → 409 Conflict with
  *    `Retry-After: 2` header
  *  - Key TTL is 24 hours
+ *  - Cache key is scoped by tenant (async-local tenant context or
+ *    `request.user.tenantId`) plus user, method, route and key, so the same
+ *    key value from two different tenants never collides.
  *
  * Issue #861 — Add idempotency key support to trade execution and signal creation
  */
@@ -64,8 +68,9 @@ export class RequireIdempotencyKeyGuard implements CanActivate {
 
     const userId: string =
       request?.user?.id ?? request?.user?.walletAddress ?? 'anonymous';
+    const tenantId = request?.user?.tenantId ?? getCurrentTenantIdOrNull() ?? 'no-tenant';
     const route = request?.route?.path ?? request?.url ?? '';
-    const cacheKey = `idempotency:${request.method}:${route}:${userId}:${key}`;
+    const cacheKey = `idempotency:${tenantId}:${request.method}:${route}:${userId}:${key}`;
 
     // Detect concurrent in-flight duplicate
     if (this.inFlight.has(cacheKey)) {

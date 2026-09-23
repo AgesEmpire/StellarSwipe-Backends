@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   CorrelationIdStore,
   CORRELATION_ID_HEADER,
+  isValidCorrelationId,
 } from '../correlation/correlation-id.store';
 
 /**
@@ -52,9 +53,10 @@ export class CorrelationIdInterceptor implements NestInterceptor {
     // request header covers the case where only the interceptor is active
     // (e.g., in tests or controller-scoped usage).  Generating a new UUID
     // is the last resort so the interceptor is always safe to use standalone.
+    const headerCandidate = req.headers[CORRELATION_ID_HEADER] as string | undefined;
     const correlationId =
       this.correlationIdStore.getCorrelationId() ??
-      (req.headers[CORRELATION_ID_HEADER] as string | undefined) ??
+      (isValidCorrelationId(headerCandidate) ? headerCandidate : undefined) ??
       uuidv4();
 
     // Ensure the response header is set.  The middleware already does this in

@@ -57,6 +57,8 @@ import { TradeDlqController } from './trade-dlq.controller';
 import { TradeDlqMetricsService } from './services/trade-dlq-metrics.service';
 import { TradeDlqCleanupService } from './services/trade-dlq-cleanup.service';
 import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.service';
+import { AtomicTransactionHelper } from '../common/database/atomic-transaction.helper';
+import { DataLoaderModule } from '../common/dataloader/dataloader.module';
 
 @Module({
   imports: [
@@ -73,6 +75,7 @@ import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.servic
     AuditModule,
     NotificationsModule,
     CanaryRoutingModule,
+    DataLoaderModule,
     ClientsModule.registerAsync([
       {
         name: NOTIFICATION_TCP_CLIENT,
@@ -116,6 +119,7 @@ import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.servic
     TradeDlqMetricsService,
     TradeDlqCleanupService,
     DeadLetterService,
+    AtomicTransactionHelper,
     ...TRADE_CQRS_HANDLERS,
   ],
   exports: [

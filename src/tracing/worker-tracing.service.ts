@@ -53,12 +53,11 @@ export class WorkerTracingService {
       return '';
     }
 
-    const traceId =
-      (job.data as Record<string, unknown>)?.[WORKER_TRACE_ID_KEY] as string |
-      undefined ??
-      (job.data as Record<string, unknown>)?.[TRACE_ID_HEADER] as string |
-      undefined ??
-      randomUUID();
+    const rawTraceId =
+      (job.data as Record<string, unknown>)?.[WORKER_TRACE_ID_KEY] ??
+      (job.data as Record<string, unknown>)?.[TRACE_ID_HEADER];
+
+    const traceId = this.tracingService.sanitizeTraceId(rawTraceId);
 
     this.tracingService.log(
       traceId,
@@ -96,12 +95,13 @@ export class WorkerTracingService {
    * workers can continue the same trace.
    *
    * @param payload   The original job payload.
-   * @param traceId   The trace ID to embed (e.g. from an HTTP request).
+   * @param traceId   The trace ID to embed (defaults to current trace context).
    */
   injectTraceId(
     payload: Record<string, unknown>,
-    traceId: string,
+    traceId?: string,
   ): Record<string, unknown> {
-    return { ...payload, [WORKER_TRACE_ID_KEY]: traceId };
+    const effectiveTraceId = traceId || this.tracingService.getTraceId() || randomUUID();
+    return { ...payload, [WORKER_TRACE_ID_KEY]: effectiveTraceId };
   }
 }

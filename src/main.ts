@@ -3,10 +3,10 @@ import { MicroserviceOptions, Transport } from "@nestjs/microservices";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import { VersioningType } from '@nestjs/common';
-import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
+import { I18nValidationPipe } from 'nestjs-i18n';
 import * as compression from 'compression';
 import { AppModule } from "./app.module";
-import { ExceptionFilter, HttpExceptionFilter } from "./common/filters";
+import { ProblemDetailsFilter } from "./common/filters";
 import { ErrorClassificationService } from "./common/error-classification";
 import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
 import {
@@ -22,6 +22,8 @@ import { LoggerService } from './common/logger';
 import { CorrelationIdStore } from './common/correlation/correlation-id.store';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { SentryService } from './common/sentry';
+import { ShutdownService, ShutdownGuardMiddleware } from './common/shutdown';
+import { ReadinessService } from './health/readiness.service';
 import { SanitizationPipe } from './common/pipes';
 import { RedisIoAdapter } from './websocket/adapters/redis-io.adapter';
 import { InstanceCoordinatorService } from './scaling/instance-coordinator.service';
@@ -33,6 +35,8 @@ import { initTracing } from './monitoring/tracing/jaeger.config';
 import { DocGeneratorService } from './documentation/doc-generator.service';
 import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
 import { DeprecationInterceptor } from './versioning/interceptors/deprecation.interceptor';
+import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
+import { VersionManagerService } from './versioning/version-manager.service';
 
 initTracing();
 
@@ -77,6 +81,16 @@ async function bootstrap() {
   // emitted on any handler decorated with it, without touching auth logic.
   app.useGlobalInterceptors(new DeprecationInterceptor(app.get(Reflector)));
 
+  // Enforce @ApiVersion()-pinned handlers against the live version registry
+  // (rejects sunset versions with 410 Gone, mirrors deprecation headers for
+  // deprecated ones). Registered on the HTTP app instance — like the
+  // interceptor above — rather than via the APP_GUARD DI token, so it only
+  // applies to HTTP routes and never intercepts the TCP microservice
+  // listener's @MessagePattern handlers connected further below.
+  app.useGlobalGuards(
+    new VersionCompatibilityGuard(app.get(Reflector), app.get(VersionManagerService)),
+  );
+
   // Enable CORS
   // Build CORS options using helper which validates production config
   const { createCorsOptions } = await import('./common/cors/cors.helper');
@@ -92,6 +106,14 @@ async function bootstrap() {
   const correlationIdMiddleware = app.get(CorrelationIdMiddleware);
   app.use(correlationIdMiddleware.use.bind(correlationIdMiddleware));
 
+  // Reject new traffic as soon as graceful shutdown begins (#1058), ahead of
+  // rate limiting and routing so a request that arrives mid-drain gets an
+  // immediate 503 instead of being handled with resources that are
+  // mid-teardown.
+  const shutdownService = app.get(ShutdownService);
+  const shutdownGuardMiddleware = app.get(ShutdownGuardMiddleware);
+  app.use(shutdownGuardMiddleware.use.bind(shutdownGuardMiddleware));
+
   // Apply global rate limiting middleware before any request reaches route handlers
   const rateLimitMiddleware = app.get(RateLimitMiddleware);
   app.use(rateLimitMiddleware.use.bind(rateLimitMiddleware));
@@ -105,7 +127,15 @@ async function bootstrap() {
     next();
   });
 
-  app.enableShutdownHooks();
+  // NOTE: we deliberately do NOT call app.enableShutdownHooks() here. It
+  // would register its own SIGTERM/SIGINT listeners that call
+  // callShutdownHook() (running onModuleDestroy/onApplicationShutdown on
+  // every provider — closing the DB, Redis clients and BullMQ workers)
+  // immediately on signal receipt, racing with the bounded in-flight drain
+  // below. Lifecycle hooks still fire correctly because app.close() (called
+  // explicitly in gracefulShutdown) always runs them — enableShutdownHooks()
+  // only wires up automatic signal handling, which we do ourselves so we
+  // control the order: reject new traffic → drain → close.
 
   // Global pipes
   app.useGlobalPipes(
@@ -129,13 +159,12 @@ async function bootstrap() {
   const instanceCoordinator = app.get(InstanceCoordinatorService);
   logger.info(`Application started on instance: ${instanceCoordinator.getInstanceId()}`);
 
-// Global filters
-   const errorClassifier = app.get(ErrorClassificationService);
-   app.useGlobalFilters(
-     new ExceptionFilter(logger, sentryService, errorClassifier, configService),
-     new HttpExceptionFilter(),
-     new I18nValidationExceptionFilter({ detailedErrors: false }),
-   );
+  // Global filter — single RFC 7807 Problem Details filter for every
+  // validation, domain, authentication and unexpected error (#1056).
+  const errorClassifier = app.get(ErrorClassificationService);
+  app.useGlobalFilters(
+    new ProblemDetailsFilter(logger, sentryService, errorClassifier, configService),
+  );
 
   // Global interceptors
   app.useGlobalInterceptors(new DeadlockRetryInterceptor());
@@ -185,6 +214,77 @@ async function bootstrap() {
   });
   await app.startAllMicroservices();
 
-  await app.listen(port, host, () => 
+  await app.listen(port, host, () => {
+    logger.info(`Application is running on: ${host}:${port}${globalPrefix}`);
+  });
 
-/* … truncated 1677 chars — edit only what you need near the top … */
+  process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+    logger.error('Unhandled Rejection', reason, { promise: String(promise) });
+    sentryService.captureException(
+      reason instanceof Error ? reason : new Error(String(reason)),
+      { type: 'unhandledRejection' },
+    );
+  });
+
+  process.on('uncaughtException', (error: Error) => {
+    logger.error('Uncaught Exception', error);
+    sentryService.captureException(error, { type: 'uncaughtException' });
+    setTimeout(() => process.exit(1), 1000);
+  });
+
+  // Orderly shutdown (#1058): reject new traffic → mark not-ready → drain
+  // in-flight requests up to a bounded, configurable timeout → close the app
+  // (HTTP server, TCP microservice, and every provider's onModuleDestroy /
+  // onApplicationShutdown hook — DB via TypeORM, Redis clients, BullMQ
+  // workers via BullShutdownCoordinator) → flush Sentry → exit.
+  const readinessService = app.get(ReadinessService);
+  const drainTimeoutMs = configService.get<number>('app.shutdownDrainTimeoutMs') ?? 30_000;
+  let shuttingDown = false;
+
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    logger.info(`${signal} received: starting graceful shutdown`);
+
+    // Reject new HTTP requests immediately and fail the readiness probe so
+    // the orchestrator stops routing traffic here.
+    shutdownService.beginShutdown(signal);
+    readinessService.markNotReady(`shutdown_signal:${signal}`);
+
+    const drainStart = Date.now();
+    let forced = false;
+    while (inFlightRequests > 0) {
+      if (Date.now() - drainStart >= drainTimeoutMs) {
+        forced = true;
+        break;
+      }
+      logger.info(`Draining ${inFlightRequests} in-flight request(s)…`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    if (forced) {
+      logger.warn(
+        `Shutdown drain timeout (${drainTimeoutMs}ms) exceeded with ${inFlightRequests} request(s) still in-flight — proceeding to close resources`,
+      );
+    } else {
+      logger.info('All in-flight requests drained.');
+    }
+
+    // Closes the HTTP server and TCP microservice, and runs onModuleDestroy /
+    // onApplicationShutdown on every provider (DB, cache, queue connections).
+    await app.close();
+    logger.info(`Resource cleanup complete. Shutdown ${forced ? 'forced' : 'graceful'}.`);
+
+    await sentryService.flush();
+    process.exit(forced ? 1 : 0);
+  };
+
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+}
+
+bootstrap().catch((err) => {
+  console.error("Failed to start application:", err);
+  process.exit(1);
+});

@@ -4,10 +4,11 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AiValidationService } from "./ai-validation.service";
 import { SignalValidationProcessor } from "./processors/signal-validation.processor";
 import { Signal } from "../signals/entities/signal.entity";
+import { defaultHttpModuleOptions } from "../http/http-client-defaults";
 
 @Module({
   imports: [
-    HttpModule,
+    HttpModule.register(defaultHttpModuleOptions()),
     TypeOrmModule.forFeature([Signal]),
   ],
   providers: [AiValidationService, SignalValidationProcessor],

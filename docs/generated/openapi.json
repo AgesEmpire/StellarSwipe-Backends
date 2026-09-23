@@ -1,17 +1,16 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "Test API",
+    "title": "StellarSwipe API",
     "version": "1.0",
-    "description": "Test"
+    "description": "StellarSwipe backend REST API"
   },
   "paths": {
     "/signals": {
       "get": {
-        "tags": [
-          "Signals"
-        ],
+        "tags": ["Signals"],
         "summary": "List signals",
+        "operationId": "SignalsController_getSignals",
         "parameters": [],
         "responses": {
           "200": {
@@ -19,10 +18,74 @@
           }
         }
       }
+    },
+    "/soroban/simulate": {
+      "post": {
+        "tags": ["Soroban"],
+        "summary": "Simulate a Soroban contract call",
+        "operationId": "SorobanController_simulate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulateContractDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Simulation result (check `success` field)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimulateContractResponseDto"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
-    "schemas": {}
+    "schemas": {
+      "SimulateContractDto": {
+        "type": "object",
+        "required": ["contractId", "method"],
+        "properties": {
+          "contractId": { "type": "string" },
+          "method": { "type": "string" },
+          "params": { "type": "array", "items": {} },
+          "sourceAccount": { "type": "string" },
+          "sourceSecret": { "type": "string" },
+          "timeoutMs": { "type": "number" }
+        }
+      },
+      "SimulateContractResponseDto": {
+        "type": "object",
+        "required": ["success"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "resourceFee": { "type": "string" },
+          "minResourceFee": { "type": "string" },
+          "inclusionFee": { "type": "string" },
+          "totalFee": { "type": "string" },
+          "result": {},
+          "footprint": {
+            "type": "object",
+            "properties": {
+              "readOnly": { "type": "array", "items": { "type": "string" } },
+              "readWrite": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "auth": { "type": "array", "items": { "type": "string" } },
+          "simulationError": { "type": "string" },
+          "rpcError": { "type": "string" }
+        }
+      }
+    }
   },
   "servers": [
     {
@@ -30,8 +93,7 @@
     }
   ],
   "tags": [
-    {
-      "name": "Signals"
-    }
+    { "name": "Signals" },
+    { "name": "Soroban" }
   ]
 }

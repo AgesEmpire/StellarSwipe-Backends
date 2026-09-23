@@ -25,6 +25,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AddTransactionDto } from './dto/add-transaction.dto';
 import { Transactional } from '../common/decorators/transactional.decorator';
 import { PortfolioSnapshotService } from './services/portfolio-snapshot.service';
+import { assertOwnership } from '../authorization/utils/assert-ownership.util';
 
 @ApiTags('portfolio')
 @ApiBearerAuth()
@@ -39,12 +40,14 @@ export class PortfolioController {
 
   @Get('positions')
   async getPositions(
+    @Request() req: any,
     @Query('userId') userId: string,
     @Query('fields') fields?: string,
   ): Promise<PositionDetailDto[]> {
     if (!userId) {
       throw new BadRequestException('userId is required');
     }
+    assertOwnership({ requesterId: req.user.id, ownerId: userId, requesterRoles: req.user.roles, resource: 'positions' });
 
     const positions = await this.portfolioService.getPositions(userId);
     return applySparseFieldset(positions, fields);
@@ -52,6 +55,7 @@ export class PortfolioController {
 
   @Get('history')
   async getHistory(
+    @Request() req: any,
     @Query('userId') userId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
@@ -60,6 +64,7 @@ export class PortfolioController {
     if (!userId) {
       throw new BadRequestException('userId is required');
     }
+    assertOwnership({ requesterId: req.user.id, ownerId: userId, requesterRoles: req.user.roles, resource: 'history' });
     if (limit > 100) {
       throw new BadRequestException('limit cannot exceed 100');
     }

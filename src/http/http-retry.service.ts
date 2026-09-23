@@ -38,9 +38,23 @@ export interface RetryOptions {
    * Defaults to [429, 500, 502, 503, 504].
    */
   retryableStatuses?: number[];
+
+  /**
+   * Whether this operation is safe to retry automatically. Defaults to true
+   * for idempotent HTTP methods (GET) and false for non-idempotent ones
+   * (POST/PATCH) — pass `true` explicitly to opt a non-idempotent call into
+   * retries when you've verified it's safe (e.g. the endpoint is designed
+   * to be idempotent via an idempotency key).
+   */
+  idempotent?: boolean;
 }
 
-const DEFAULT_OPTIONS: Required<RetryOptions> = {
+// `idempotent` is intentionally absent here: it has no universal default
+// (retry-safety depends on the HTTP method), so it stays `undefined` unless
+// a caller (or a method-specific convenience method like get()/post()) sets
+// it explicitly. `undefined` is treated the same as "retryable" downstream,
+// preserving behaviour for any caller that doesn't specify it.
+const DEFAULT_OPTIONS: Required<Omit<RetryOptions, 'idempotent'>> = {
   maxAttempts: 3,
   baseDelayMs: 500,
   maxDelayMs: 10_000,
@@ -79,7 +93,7 @@ export class HttpRetryService {
     return this.executeWithRetry(
       () => firstValueFrom(this.httpService.get<T>(url, config)),
       url,
-      retryOptions,
+      { idempotent: true, ...retryOptions },
     );
   }
 
@@ -92,7 +106,7 @@ export class HttpRetryService {
     return this.executeWithRetry(
       () => firstValueFrom(this.httpService.post<T>(url, data, config)),
       url,
-      retryOptions,
+      { idempotent: false, ...retryOptions },
     );
   }
 
@@ -105,7 +119,7 @@ export class HttpRetryService {
     return this.executeWithRetry(
       () => firstValueFrom(this.httpService.put<T>(url, data, config)),
       url,
-      retryOptions,
+      { idempotent: true, ...retryOptions },
     );
   }
 
@@ -118,7 +132,7 @@ export class HttpRetryService {
     return this.executeWithRetry(
       () => firstValueFrom(this.httpService.patch<T>(url, data, config)),
       url,
-      retryOptions,
+      { idempotent: false, ...retryOptions },
     );
   }
 
@@ -135,7 +149,10 @@ export class HttpRetryService {
     label = 'request',
     options?: RetryOptions,
   ): Promise<T> {
-    const opts: Required<RetryOptions> = { ...DEFAULT_OPTIONS, ...options };
+    const opts: Required<Omit<RetryOptions, 'idempotent'>> & Pick<RetryOptions, 'idempotent'> = {
+      ...DEFAULT_OPTIONS,
+      ...options,
+    };
     let lastError: Error;
 
     for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
@@ -145,7 +162,8 @@ export class HttpRetryService {
         lastError = error;
 
         const isLastAttempt = attempt === opts.maxAttempts;
-        const isRetryable = this.isRetryableError(error, opts.retryableStatuses);
+        const isRetryable =
+          opts.idempotent !== false && this.isRetryableError(error, opts.retryableStatuses);
 
         if (isLastAttempt || !isRetryable) {
           this.logger.error(
@@ -192,7 +210,7 @@ export class HttpRetryService {
    *   delay = min(baseDelayMs * 2^(attempt-1), maxDelayMs)
    *   if jitter: delay *= uniform(0.8, 1.2)
    */
-  computeDelay(attempt: number, opts: Required<RetryOptions>): number {
+  computeDelay(attempt: number, opts: Required<Omit<RetryOptions, 'idempotent'>>): number {
     const exponential = opts.baseDelayMs * Math.pow(2, attempt - 1);
     const capped = Math.min(exponential, opts.maxDelayMs);
     if (!opts.jitter) return capped;

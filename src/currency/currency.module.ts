@@ -10,11 +10,12 @@ import { FixerIoProvider } from './providers/fixer-io.provider';
 import { BaseForexProvider } from './providers/base-forex.provider';
 import { UpdateExchangeRatesJob } from './jobs/update-exchange-rates.job';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
+import { defaultHttpModuleOptions } from '../http/http-client-defaults';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ExchangeRate, CurrencyPreference]),
-    HttpModule,
+    HttpModule.register(defaultHttpModuleOptions()),
     ScheduleModule.forRoot(),
   ],
   controllers: [CurrencyController],
