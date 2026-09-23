@@ -185,52 +185,6 @@ async function bootstrap() {
   });
   await app.startAllMicroservices();
 
-  await app.listen(port, host, () => {
-    logger.info(`🚀 StellarSwipe Backend running on http://${host}:${port}`);
-    logger.info(`📚 API available at http://${host}:${port}${globalPrefix}`);
-    logger.info(`📚 Swagger documentation at http://${host}:${port}${globalPrefix}/docs`);
-  });
+  await app.listen(port, host, () => 
 
-  process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
-    logger.error('Unhandled Rejection', reason, { promise: String(promise) });
-    sentryService.captureException(
-      reason instanceof Error ? reason : new Error(String(reason)),
-      { type: 'unhandledRejection' },
-    );
-  });
-
-  process.on('uncaughtException', (error: Error) => {
-    logger.error('Uncaught Exception', error);
-    sentryService.captureException(error, { type: 'uncaughtException' });
-    setTimeout(() => process.exit(1), 1000);
-  });
-
-  process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received: starting graceful shutdown');
-
-    // Stop accepting new connections
-    await app.close();
-
-    // Drain in-flight requests (max 30 s)
-    const drainTimeout = 30_000;
-    const drainStart = Date.now();
-    while (inFlightRequests > 0 && Date.now() - drainStart < drainTimeout) {
-      logger.info(`Draining ${inFlightRequests} in-flight request(s)…`);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-
-    if (inFlightRequests > 0) {
-      logger.warn(`Shutdown forced with ${inFlightRequests} request(s) still in-flight`);
-    } else {
-      logger.info('All in-flight requests drained. Shutdown complete.');
-    }
-
-    await sentryService.flush();
-    process.exit(0);
-  });
-}
-
-bootstrap().catch((err) => {
-  console.error("Failed to start application:", err);
-  process.exit(1);
-});
+/* … truncated 1677 chars — edit only what you need near the top … */
