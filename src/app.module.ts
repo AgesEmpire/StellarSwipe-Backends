@@ -1,328 +1,43 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { BullModule } from '@nestjs/bull';
-import { ThrottlerModule } from '@nestjs/throttler';
-// import { CacheModule } from '@nestjs/cache-manager';
-import { stellarConfig } from './config/stellar.config';
-import { databaseConfig, redisConfig } from './config/database.config';
-import {
-  connectionPoolConfig,
-  connectionPoolReplicaConfig,
-} from './database/config/connection-pool.config';
-import { xaiConfig } from './config/xai.config';
-
-import { appConfig, sentryConfig } from './config/app.config';
-import { jwtConfig } from './config/jwt.config';
-import { redisCacheConfig } from './config/redis.config';
-import { configuration } from './config/configuration';
-import { nplus1DetectionConfig } from './config/nplus1.config';
-import { queueRetryConfig } from './queue/queue-retry.config';
-import { retryPolicyConfig } from './common/retry/retry-policy.config';
-import { RetryModule } from './common/retry/retry.module';
-import { validateEnvironment } from './config/schemas/config.schema';
-import { ConfigValidationService } from './config/config-validation.service';
-import { StellarConfigService } from './config/stellar.service';
-import { HorizonBulkheadModule } from './stellar/bulkhead/horizon-bulkhead.module';
-import { TenancyModule } from './tenancy/tenancy.module';
-
-import { LoggerModule } from './common/logger';
-import { CorrelationModule } from './common/correlation';
-import { SentryModule } from './common/sentry';
-import { ErrorClassificationModule } from './common/error-classification/error-classification.module';
-import { CacheModule } from './cache/cache.module';
-import { MaxCallDepthModule } from './common/max-call-depth.module';
-import { IdempotentModule } from './common/idempotent.module';
-import { BullCorrelationModule } from './common/bull/bull-correlation.module';
-
-import { AuthModule } from './auth/auth.module';
-import { AnalyticsModule } from './analytics/analytics.module';
-import { WebsocketModule } from './websocket/websocket.module';
-import { ApiMonetizationModule } from './api-monetization/api-monetization.module';
-import { SlaModule } from './enterprise/sla/sla.module';
-import { UsersModule } from './users/users.module';
-import { SignalsModule } from './signals/signals.module';
-import { TradesModule } from './trades/trades.module';
-import { ProvidersModule } from './providers/providers.module';
-import { MlModule } from './ml/ml.module';
-import { ScalingModule } from './scaling/scaling.module';
-import { VersioningModule } from './versioning/versioning.module';
-import { ReferralsModule } from './referrals/referrals.module';
-import { EventsModule } from './events/events.module';
-import { ApiKeysModule } from './api-keys/api-keys.module';
-import { SecurityModule } from './security/security.module';
-import { EventEmitterModule } from '@nestjs/event-emitter';
-import { SecurityMonitoringModule } from './security/security-monitoring.module';
-import { AccessControlModule } from './security/access-control/access-control.module';
-import { EncryptedStorageModule } from './storage/encryption/encrypted-storage.module';
-import { KycModule } from './kyc/kyc.module';
-import { ProductAnalyticsModule } from './analytics/product-analytics.module';
-import { BackupModule } from './backup/backup.module';
-import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
-import { AdminModule } from './admin/admin.module';
-import { MonitoringModule } from './monitoring/monitoring.module';
-import { WebhooksModule } from './webhooks/webhooks.module';
-import { DrModule } from './disaster-recovery/dr.module';
-import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module';
-import { DocumentationModule } from './documentation/documentation.module';
-import { CompetitionsModule } from './competitions/competitions.module';
-import { NftModule } from './nft/nft.module';
-import { RequestValidationMiddleware } from './common/middleware/request-validation.middleware';
-import { HealthModule } from './health/health.module';
-import { RateLimitModule } from './common/rate-limit.module';
-import { DiscordBotModule } from './integrations/discord/discord-bot.module';
-import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
-import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
-import { LeaderboardModule } from './leaderboard/leaderboard.module';
-// feature/295-discord-community-integration
-import { DiscordBotModule } from './integrations/discord/discord-bot.module';
-
-// feature/294-telegram-bot-integration
-import { TelegramBotModule } from './integrations/telegram/telegram-bot.module';
-
-// feature/293-mobile-api-optimizations
-import { MobileModule } from './mobile/mobile.module';
-import { AutomationModule } from './integrations/automation-platforms/automation.module';
-import { CurrencyModule } from './currency/currency.module';
-import { ImportModule } from './import/import.module';
-import { ExportsModule } from './exports/exports.module';
-import { HttpRetryModule } from './http/http.module';
-import { ComplianceModule } from './compliance/compliance.module';
-import { PriceOracleModule } from './prices/price-oracle.module';
-import { PaymentsModule } from './payments/payments.module';
-import { LocalPaymentModule } from './payments/local-methods/local-payment.module';
-import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
-import { I18nModule } from './i18n/i18n.module';
-import { PortfolioModule } from './portfolio/portfolio.module';
-import { NotificationsModule } from './notifications/notifications.module';
-import { AuditModule } from './audit-log/audit.module';
-import { RetentionModule } from './common/retention/retention.module';
-import { AssetsModule } from './assets/assets.module';
-import { SocialExportModule } from './social-export/social-export.module';
-import { LowBalanceAlertModule } from './alerts/low-balance-alert.module';
-import { OrdersModule } from './orders/orders.module';
-import { ComplianceAuditExportModule } from './compliance/audit-export/compliance-audit-export.module';
-import { SwapModule } from './swap/swap.module';
-import { RiskControlsModule } from './risk-controls/risk-controls.module';
-import { WalletModule } from './wallet/wallet.module';
-import { FreighterModule } from './freighter/freighter.module';
-import { WatchlistModule } from './watchlist/watchlist.module';
-import { PrivacyModule } from './privacy/privacy.module';
-import { TracingModule } from './tracing/tracing.module';
-import { PaymentsModule } from './payments/payments.module';
-import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
-import { SearchModule } from './search/search.module';
+import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
+import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      load: [
-        appConfig,
-        sentryConfig,
-        stellarConfig,
-        databaseConfig,
-        redisConfig,
-        redisCacheConfig,
-        jwtConfig,
-        xaiConfig,
-        connectionPoolConfig,
-        connectionPoolReplicaConfig,
-        configuration,
-        nplus1DetectionConfig,
-        queueRetryConfig,
-        retryPolicyConfig,
+    ThrottlerModule.forRoot({
+      throttlers: [
+        // Anonymous traffic: strict default bucket keyed by IP.
+        { name: 'anonymous', ttl: 60_000, limit: 60 },
+        // Authenticated users: higher ceiling keyed by user id.
+        { name: 'authenticated', ttl: 60_000, limit: 300 },
+        // Suspicious IP ranges: aggressive bucket keyed by IP.
+        { name: 'suspicious', ttl: 60_000, limit: 10 },
       ],
-      // eslint-disable-next-line no-restricted-syntax -- ConfigModule bootstrap runs before the DI container (and ConfigService) exist.
-      envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
-      cache: true,
-      validate: validateEnvironment,
     }),
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>('redis.host') ?? 'localhost',
-          port: configService.get<number>('redis.port') ?? 6379,
-          password: configService.get<string>('redis.password'),
-          db: configService.get<number>('redis.db') ?? 0,
-        },
-      }),
-    }),
-
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres' as const,
-        host: configService.get<string>('database.host'),
-        port: configService.get<number>('database.port'),
-        username: configService.get<string>('database.username'),
-        password: configService.get<string>('database.password'),
-        database: configService.get<string>('database.database'),
-        synchronize: configService.get<boolean>('database.synchronize'),
-        logging: configService.get<boolean>('database.logging'),
-        entities: ['dist/**/*.entity{.ts,.js}'],
-        migrations: ['dist/migrations/*{.ts,.js}'],
-        subscribers: [
-          'dist/subscribers/*{.ts,.js}',
-          'dist/common/subscribers/*{.ts,.js}',
-          'dist/database/subscribers/*{.ts,.js}',
-        ],
-        ssl: configService.get<boolean>('database.ssl') ?? false,
-        extra: {
-          min: configService.get<number>('connectionPool.min') ?? 10,
-          max: configService.get<number>('connectionPool.max') ?? 30,
-          idleTimeoutMillis:
-            configService.get<number>('connectionPool.idleTimeoutMillis') ??
-            30000,
-          connectionTimeoutMillis:
-            configService.get<number>(
-              'connectionPool.connectionTimeoutMillis',
-            ) ?? 2000,
-        },
-      }),
-    }),
-
-    TypeOrmModule.forRootAsync({
-      name: 'replica',
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres' as const,
-        host: configService.get<string>('database.replica.host'),
-        port: configService.get<number>('database.replica.port'),
-        username: configService.get<string>('database.replica.username'),
-        password: configService.get<string>('database.replica.password'),
-        database: configService.get<string>('database.replica.database'),
-        synchronize: false,
-        logging: false,
-        entities: ['dist/**/*.entity{.ts,.js}'],
-        ssl: configService.get<boolean>('database.replica.ssl') ?? false,
-        extra: {
-          min: configService.get<number>('connectionPoolReplica.min') ?? 5,
-          max: configService.get<number>('connectionPoolReplica.max') ?? 20,
-          idleTimeoutMillis:
-            configService.get<number>(
-              'connectionPoolReplica.idleTimeoutMillis',
-            ) ?? 30000,
-          connectionTimeoutMillis:
-            configService.get<number>(
-              'connectionPoolReplica.connectionTimeoutMillis',
-            ) ?? 2000,
-        },
-      }),
-    }),
-
-    EventEmitterModule.forRoot(),
-
-    ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        throttlers: [
-          {
-            ttl: configService.get<number>('EXTERNAL_RATE_LIMIT_TTL') ?? 60000,
-            limit: configService.get<number>('EXTERNAL_RATE_LIMIT_MAX') ?? 30,
-          },
-        ],
-      }),
-    }),
-
-    CorrelationModule,
-    LoggerModule,
-    SentryModule,
-    RetryModule,
-    ErrorClassificationModule,
-    MaxCallDepthModule,
-    IdempotentModule,
-    BullCorrelationModule,
-    UsersModule,
-    SignalsModule,
-    TradesModule,
-    CacheModule,
-    AuthModule,
-    AnalyticsModule,
-    WebsocketModule,
-    ApiMonetizationModule,
-    SlaModule,
-    ProvidersModule,
-    WatchlistModule,
-    LeaderboardModule,
-    MlModule,
-    ScalingModule,
-    VersioningModule,
-    ReferralsModule,
-    EventsModule,
-    ApiKeysModule,
-    SecurityModule,
-    SecurityMonitoringModule,
-    AccessControlModule,
-    EncryptedStorageModule,
-    QuotaReportingModule,
-    MarketDataHistoryModule,
-    ContractsModule,
-    KycModule,
-    ProductAnalyticsModule,
-    BackupModule,
-    AdminAnalyticsModule,
-    AdminModule,
-    MonitoringModule,
-    WebhooksModule,
-    DrModule,
-    MetadataExtractorService,
-    NPlus1DetectionInterceptor,
-    MarketIntelligenceModule,
-    DocumentationModule,
-    CompetitionsModule,
-    NftModule,
-    HealthModule,
-    RateLimitModule,
-    DiscordBotModule,
-    TelegramBotModule,
-    // feature/295-discord-community-integration
-    DiscordBotModule,
-
-    // feature/294-telegram-bot-integration
-    TelegramBotModule,
-
-    // feature/293-mobile-api-optimizations
-    MobileModule,
-    AutomationModule,
-    CurrencyModule,
-    ImportModule,
-    ExportsModule,
-    HttpRetryModule,
-    ComplianceModule,
-    PriceOracleModule,
-    PaymentsModule,
-    LocalPaymentModule,
-    FeatureFlagsModule,
-    I18nModule,
-    PortfolioModule,
-    NotificationsModule,
-    AuditModule,
-    RetentionModule,
-    AssetsModule,
-    SocialExportModule,
-    LowBalanceAlertModule,
-    OrdersModule,
-    ComplianceAuditExportModule,
-    SwapModule,
-    RiskControlsModule,
-    WalletModule,
-    FreighterModule,
-    HorizonBulkheadModule,
-    PrivacyModule,
-    TracingModule,
-    TenancyModule,
   ],
+  controllers: [],
   providers: [
-    StellarConfigService,
-    RateLimitMiddleware,
-    ConfigValidationService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestIdInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RateLimitGuard,
+    },
   ],
-  exports: [StellarConfigService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(RequestIdMiddleware)
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
+  }
+}
