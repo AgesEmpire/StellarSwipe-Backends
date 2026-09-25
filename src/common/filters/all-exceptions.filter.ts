@@ -26,21 +26,34 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
+    const error = exception instanceof Error ? exception : undefined;
+    const correlationId =
+      (request.headers['x-correlation-id'] as string) ||
+      (request as Request & { correlationId?: string }).correlationId;
+    const actorId =
+      (request as Request & { user?: { id?: string } }).user?.id ??
+      (request.headers['x-actor-id'] as string);
+
     this.logger.error(
       'Unhandled exception caught by fallback filter',
-      undefined,
+      error?.stack,
       {
-        exception: String(exception),
+        module: AllExceptionsFilter.name,
+        action: 'unhandled_exception',
+        correlationId,
+        actorId,
+        errorType: error?.name ?? typeof exception,
+        errorMessage: error?.message ?? String(exception),
         path: request.url,
         method: request.method,
       },
     );
 
     this.sentry.captureException(
-      exception instanceof Error
-        ? exception
-        : new Error(`Unhandled exception: ${String(exception)}`),
+      error ?? new Error(`Unhandled exception: ${String(exception)}`),
       {
+        correlationId,
+        actorId,
         path: request.url,
         method: request.method,
         userAgent: request.get('user-agent'),
