@@ -38,6 +38,7 @@ import { generateOpenApiDocument } from './documentation/generators/openapi-gene
 import { DeprecationInterceptor } from './versioning/interceptors/deprecation.interceptor';
 import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
 import { VersionManagerService } from './versioning/version-manager.service';
+import { RequestSizeLimitMiddleware } from './common/middleware/request-size-limit.middleware';
 
 initTracing();
 
@@ -46,10 +47,6 @@ async function bootstrap() {
     bufferLogs: true,
     rawBody: true,
   });
-
-  // Align the body-parser limit with RequestValidationMiddleware's max payload size
-  app.useBodyParser('json', { limit: '5mb' });
-  app.useBodyParser('urlencoded', { limit: '5mb', extended: true });
 
   // Get services
   const configService = app.get(ConfigService);
@@ -71,6 +68,21 @@ async function bootstrap() {
   const corsOrigin = configService.get("app.corsOrigin");
   const corsCredentials = configService.get("app.corsCredentials");
   const globalPrefix = `${apiPrefix}/${apiVersion}`;
+
+  // Enforce explicit request payload and parameter size limits (#1166).
+  // All limits are configurable via env/config (see request-size-limit.config).
+  // The middleware rejects oversized JSON bodies, multipart uploads, query
+  // strings, headers and route parameters with a stable 413/414/431 Problem
+  // Details response before any expensive processing occurs.
+  const requestSizeLimitMiddleware = app.get(RequestSizeLimitMiddleware);
+  app.use(requestSizeLimitMiddleware.use.bind(requestSizeLimitMiddleware));
+
+  // Align the body-parser limit with the configured max JSON payload size so
+  // the parser and the middleware agree on the boundary.
+  const jsonLimit = configService.get<string>('requestLimits.json') ?? '5mb';
+  const urlencodedLimit = configService.get<string>('requestLimits.urlencoded') ?? '5mb';
+  app.useBodyParser('json', { limit: jsonLimit });
+  app.useBodyParser('urlencoded', { limit: urlencodedLimit, extended: true });
 
   // Set global prefix
   app.setGlobalPrefix(globalPrefix);
@@ -172,120 +184,6 @@ async function bootstrap() {
   );
 
   // Global interceptors
-  app.useGlobalInterceptors(
-    new CorrelationIdInterceptor(CorrelationIdStore),
-    new LoggingInterceptor(logger),
-    new TimeoutInterceptor(configService),
-    new SensitiveDataInterceptor(),
-    new ResponseEnvelopeInterceptor(),
-    new StellarMemoInterceptor(),
-    new StripInternalFieldsInterceptor(),
-    new MetricsInterceptor(app.get(QueryPerformanceService)),
-    new DeadlockRetryInterceptor(),
-    new NPlus1DetectionInterceptor(),
-  );
+  app.useGlobalInter
 
-  // Swagger / OpenAPI documentation
-  const docGenerator = app.get(DocGeneratorService);
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Stellar API')
-    .setDescription('Stellar-based application API')
-    .setVersion(apiVersion)
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
-  await generateOpenApiDocument(app, docGenerator);
-
-  // Connect the TCP microservice listener (queue consumers / @MessagePattern
-  // handlers). Registered on the same app instance so app.close() tears it
-  // down together with the HTTP server during shutdown.
-  app.connectMicroservice<MicroserviceOptions>({
-    transport: Transport.TCP,
-    options: {
-      host,
-      port: configService.get('app.microservicePort'),
-    },
-  });
-  await app.startAllMicroservices();
-
-  // Start accepting HTTP traffic
-  await app.listen(port, host);
-  logger.info(`HTTP server listening on ${host}:${port}`);
-
-  // ---------------------------------------------------------------------------
-  // Graceful shutdown (#1153)
-  //
-  // Bounded, observable, idempotent teardown on SIGTERM/SIGINT:
-  //   1. Stop accepting new work — flip the shutdown flag (503 for new HTTP
-  //      requests via ShutdownGuardMiddleware) and stop the microservice
-  //      listeners so no new queue messages are consumed.
-  //   2. Drain in-flight HTTP requests up to the configured deadline.
-  //   3. Close resources exactly once via app.close() (HTTP server, queues,
-  //      DB connections, scheduled jobs — all run their lifecycle hooks).
-  //   4. Emit completion or timeout diagnostics and force-exit on timeout.
-  // ---------------------------------------------------------------------------
-  const shutdownTimeoutMs = configService.get<number>('app.shutdownTimeoutMs') ?? 30_000;
-  let shuttingDown = false;
-
-  const gracefulShutdown = async (signal: string): Promise<void> => {
-    // Idempotent: a second signal (or overlapping signal) is a no-op so
-    // resources are never closed twice.
-    if (shuttingDown) {
-      logger.warn(`Received ${signal} while already shutting down — ignoring`);
-      return;
-    }
-    shuttingDown = true;
-
-    const startedAt = Date.now();
-    logger.info(`Received ${signal} — starting graceful shutdown (deadline ${shutdownTimeoutMs}ms)`);
-
-    // Force-exit if the bounded drain/close does not finish in time.
-    const forceExitTimer = setTimeout(() => {
-      logger.error(
-        `Graceful shutdown timed out after ${shutdownTimeoutMs}ms — forcing exit ` +
-          `(in-flight requests: ${inFlightRequests})`,
-      );
-      process.exit(1);
-    }, shutdownTimeoutMs);
-    // Do not keep the event loop alive solely for this timer.
-    forceExitTimer.unref?.();
-
-    try {
-      // 1. Stop accepting new work before draining.
-      shutdownService.beginShutdown();
-      await app.stopAllMicroservices();
-
-      // 2. Drain in-flight HTTP requests until quiescent or deadline reached.
-      const drainDeadline = startedAt + shutdownTimeoutMs;
-      while (inFlightRequests > 0 && Date.now() < drainDeadline) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (inFlightRequests > 0) {
-        logger.warn(
-          `Drain deadline reached with ${inFlightRequests} in-flight request(s) still active`,
-        );
-      }
-
-      // 3. Close resources exactly once (HTTP server, queues, DB, jobs).
-      await app.close();
-
-      clearTimeout(forceExitTimer);
-      logger.info(`Graceful shutdown completed in ${Date.now() - startedAt}ms`);
-      process.exit(0);
-    } catch (error) {
-      clearTimeout(forceExitTimer);
-      logger.error(
-        `Graceful shutdown failed after ${Date.now() - startedAt}ms: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      process.exit(1);
-    }
-  };
-
-  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
-}
-
-bootstrap();
+/* … truncated 4486 chars — edit only what you need near the top … */
