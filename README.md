@@ -549,3 +549,6 @@ MIT
 
 <!-- handsoff-issue-1069 -->
 - #1069: NestJS: Centralize authorization policies in guards
+
+<!-- handsoff-issue-1147 -->
+- #1147: Define transaction boundaries for multi-step service commands
