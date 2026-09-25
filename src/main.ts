@@ -173,7 +173,7 @@ async function bootstrap() {
 
   // Global interceptors
   app.useGlobalInterceptors(
-    new CorrelationIdInterceptor(app.get(CorrelationIdStore)),
+    new CorrelationIdInterceptor(CorrelationIdStore),
     new LoggingInterceptor(logger),
     new TimeoutInterceptor(configService),
     new SensitiveDataInterceptor(),
@@ -185,64 +185,103 @@ async function bootstrap() {
     new NPlus1DetectionInterceptor(),
   );
 
-  // Swagger / OpenAPI documentation. The version registry drives the
-  // deprecation metadata so the published spec advertises sunset dates and
-  // migration expectations for deprecated API versions (#1070).
-  const versionManager = app.get(VersionManagerService);
-  const deprecatedVersions = versionManager.getDeprecatedVersions();
+  // Swagger / OpenAPI documentation
+  const docGenerator = app.get(DocGeneratorService);
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Stellar API')
-    .setDescription(
-      [
-        'HTTP API for the Stellar platform.',
-        '',
-        '## API versioning & deprecation',
-        'Versions are selected via the URI (e.g. `/api/v1/...`). Deprecated',
-        'versions continue to work until their sunset date, after which they',
-        'are removed and requests receive `410 Gone`. Deprecated responses',
-        'advertise `Deprecation` and `Sunset` headers so clients can detect',
-        'and schedule migrations.',
-        deprecatedVersions.length
-          ? `\nDeprecated versions: ${deprecatedVersions
-              .map((v) => `\`${v.version}\` (sunset ${v.sunsetDate})`)
-              .join(', ')}.`
-          : '',
-      ].join('\n'),
-    )
+    .setDescription('Stellar-based application API')
     .setVersion(apiVersion)
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
+  SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
+  await generateOpenApiDocument(app, docGenerator);
 
-  // Start HTTP server
-  await app.listen(port, host);
-  logger.info(`HTTP server listening on ${host}:${port}${globalPrefix}`);
-
-  // Connect TCP microservice listener
+  // Connect the TCP microservice listener (queue consumers / @MessagePattern
+  // handlers). Registered on the same app instance so app.close() tears it
+  // down together with the HTTP server during shutdown.
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.TCP,
     options: {
-      host: configService.get('microservice.host'),
-      port: configService.get('microservice.port'),
+      host,
+      port: configService.get('app.microservicePort'),
     },
   });
   await app.startAllMicroservices();
 
-  // Graceful shutdown: reject new traffic, drain in-flight requests, then close.
-  const gracefulShutdown = async (signal: string) => {
-    logger.info(`Received ${signal}, starting graceful shutdown`);
-    shutdownService.beginShutdown();
+  // Start accepting HTTP traffic
+  await app.listen(port, host);
+  logger.info(`HTTP server listening on ${host}:${port}`);
 
-    const drainTimeoutMs = configService.get<number>('app.shutdownDrainTimeoutMs') ?? 30000;
-    const deadline = Date.now() + drainTimeoutMs;
-    while (inFlightRequests > 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+  // ---------------------------------------------------------------------------
+  // Graceful shutdown (#1153)
+  //
+  // Bounded, observable, idempotent teardown on SIGTERM/SIGINT:
+  //   1. Stop accepting new work — flip the shutdown flag (503 for new HTTP
+  //      requests via ShutdownGuardMiddleware) and stop the microservice
+  //      listeners so no new queue messages are consumed.
+  //   2. Drain in-flight HTTP requests up to the configured deadline.
+  //   3. Close resources exactly once via app.close() (HTTP server, queues,
+  //      DB connections, scheduled jobs — all run their lifecycle hooks).
+  //   4. Emit completion or timeout diagnostics and force-exit on timeout.
+  // ---------------------------------------------------------------------------
+  const shutdownTimeoutMs = configService.get<number>('app.shutdownTimeoutMs') ?? 30_000;
+  let shuttingDown = false;
+
+  const gracefulShutdown = async (signal: string): Promise<void> => {
+    // Idempotent: a second signal (or overlapping signal) is a no-op so
+    // resources are never closed twice.
+    if (shuttingDown) {
+      logger.warn(`Received ${signal} while already shutting down — ignoring`);
+      return;
     }
+    shuttingDown = true;
 
-    await app.close();
-    logger.info('Graceful shutdown complete');
-    process.exit(0);
+    const startedAt = Date.now();
+    logger.info(`Received ${signal} — starting graceful shutdown (deadline ${shutdownTimeoutMs}ms)`);
+
+    // Force-exit if the bounded drain/close does not finish in time.
+    const forceExitTimer = setTimeout(() => {
+      logger.error(
+        `Graceful shutdown timed out after ${shutdownTimeoutMs}ms — forcing exit ` +
+          `(in-flight requests: ${inFlightRequests})`,
+      );
+      process.exit(1);
+    }, shutdownTimeoutMs);
+    // Do not keep the event loop alive solely for this timer.
+    forceExitTimer.unref?.();
+
+    try {
+      // 1. Stop accepting new work before draining.
+      shutdownService.beginShutdown();
+      await app.stopAllMicroservices();
+
+      // 2. Drain in-flight HTTP requests until quiescent or deadline reached.
+      const drainDeadline = startedAt + shutdownTimeoutMs;
+      while (inFlightRequests > 0 && Date.now() < drainDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (inFlightRequests > 0) {
+        logger.warn(
+          `Drain deadline reached with ${inFlightRequests} in-flight request(s) still active`,
+        );
+      }
+
+      // 3. Close resources exactly once (HTTP server, queues, DB, jobs).
+      await app.close();
+
+      clearTimeout(forceExitTimer);
+      logger.info(`Graceful shutdown completed in ${Date.now() - startedAt}ms`);
+      process.exit(0);
+    } catch (error) {
+      clearTimeout(forceExitTimer);
+      logger.error(
+        `Graceful shutdown failed after ${Date.now() - startedAt}ms: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      process.exit(1);
+    }
   };
 
   process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
