@@ -552,3 +552,6 @@ MIT
 
 <!-- handsoff-issue-1147 -->
 - #1147: Define transaction boundaries for multi-step service commands
+
+<!-- handsoff-issue-1149 -->
+- #1149: Introduce DataLoader batching for GraphQL resolvers
