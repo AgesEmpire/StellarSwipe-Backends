@@ -38,6 +38,7 @@ import { generateOpenApiDocument } from './documentation/generators/openapi-gene
 import { DeprecationInterceptor } from './versioning/interceptors/deprecation.interceptor';
 import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
 import { VersionManagerService } from './versioning/version-manager.service';
+import { RequestSizeLimitMiddleware } from './common/middleware/request-size-limit.middleware';
 
 initTracing();
 
@@ -46,10 +47,6 @@ async function bootstrap() {
     bufferLogs: true,
     rawBody: true,
   });
-
-  // Align the body-parser limit with RequestValidationMiddleware's max payload size
-  app.useBodyParser('json', { limit: '5mb' });
-  app.useBodyParser('urlencoded', { limit: '5mb', extended: true });
 
   // Get services
   const configService = app.get(ConfigService);
@@ -71,6 +68,21 @@ async function bootstrap() {
   const corsOrigin = configService.get("app.corsOrigin");
   const corsCredentials = configService.get("app.corsCredentials");
   const globalPrefix = `${apiPrefix}/${apiVersion}`;
+
+  // Enforce explicit request payload and parameter size limits (#1166).
+  // All limits are configurable via env/config (see request-size-limit.config).
+  // The middleware rejects oversized JSON bodies, multipart uploads, query
+  // strings, headers and route parameters with a stable 413/414/431 Problem
+  // Details response before any expensive processing occurs.
+  const requestSizeLimitMiddleware = app.get(RequestSizeLimitMiddleware);
+  app.use(requestSizeLimitMiddleware.use.bind(requestSizeLimitMiddleware));
+
+  // Align the body-parser limit with the configured max JSON payload size so
+  // the parser and the middleware agree on the boundary.
+  const jsonLimit = configService.get<string>('requestLimits.json') ?? '5mb';
+  const urlencodedLimit = configService.get<string>('requestLimits.urlencoded') ?? '5mb';
+  app.useBodyParser('json', { limit: jsonLimit });
+  app.useBodyParser('urlencoded', { limit: urlencodedLimit, extended: true });
 
   // Set global prefix
   app.setGlobalPrefix(globalPrefix);
@@ -172,81 +184,6 @@ async function bootstrap() {
   );
 
   // Global interceptors
-  app.useGlobalInterceptors(
-    new CorrelationIdInterceptor(app.get(CorrelationIdStore)),
-    new LoggingInterceptor(logger),
-    new TimeoutInterceptor(configService),
-    new SensitiveDataInterceptor(),
-    new ResponseEnvelopeInterceptor(),
-    new StellarMemoInterceptor(),
-    new StripInternalFieldsInterceptor(),
-    new MetricsInterceptor(app.get(QueryPerformanceService)),
-    new DeadlockRetryInterceptor(),
-    new NPlus1DetectionInterceptor(),
-  );
+  app.useGlobalInter
 
-  // Swagger / OpenAPI documentation. The version registry drives the
-  // deprecation metadata so the published spec advertises sunset dates and
-  // migration expectations for deprecated API versions (#1070).
-  const versionManager = app.get(VersionManagerService);
-  const deprecatedVersions = versionManager.getDeprecatedVersions();
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Stellar API')
-    .setDescription(
-      [
-        'HTTP API for the Stellar platform.',
-        '',
-        '## API versioning & deprecation',
-        'Versions are selected via the URI (e.g. `/api/v1/...`). Deprecated',
-        'versions continue to work until their sunset date, after which they',
-        'are removed and requests receive `410 Gone`. Deprecated responses',
-        'advertise `Deprecation` and `Sunset` headers so clients can detect',
-        'and schedule migrations.',
-        deprecatedVersions.length
-          ? `\nDeprecated versions: ${deprecatedVersions
-              .map((v) => `\`${v.version}\` (sunset ${v.sunsetDate})`)
-              .join(', ')}.`
-          : '',
-      ].join('\n'),
-    )
-    .setVersion(apiVersion)
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
-
-  // Start HTTP server
-  await app.listen(port, host);
-  logger.info(`HTTP server listening on ${host}:${port}${globalPrefix}`);
-
-  // Connect TCP microservice listener
-  app.connectMicroservice<MicroserviceOptions>({
-    transport: Transport.TCP,
-    options: {
-      host: configService.get('microservice.host'),
-      port: configService.get('microservice.port'),
-    },
-  });
-  await app.startAllMicroservices();
-
-  // Graceful shutdown: reject new traffic, drain in-flight requests, then close.
-  const gracefulShutdown = async (signal: string) => {
-    logger.info(`Received ${signal}, starting graceful shutdown`);
-    shutdownService.beginShutdown();
-
-    const drainTimeoutMs = configService.get<number>('app.shutdownDrainTimeoutMs') ?? 30000;
-    const deadline = Date.now() + drainTimeoutMs;
-    while (inFlightRequests > 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    await app.close();
-    logger.info('Graceful shutdown complete');
-    process.exit(0);
-  };
-
-  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
-}
-
-bootstrap();
+/* … truncated 4486 chars — edit only what you need near the top … */
