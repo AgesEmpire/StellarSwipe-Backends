@@ -558,3 +558,6 @@ MIT
 
 <!-- handsoff-issue-1160 -->
 - #1160: Enforce resource authorization with reusable NestJS guards
+
+<!-- handsoff-issue-1162 -->
+- #1162: Add dead-letter handling for failed background jobs
