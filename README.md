@@ -549,3 +549,6 @@ MIT
 
 <!-- handsoff-issue-1069 -->
 - #1069: NestJS: Centralize authorization policies in guards
+
+<!-- handsoff-issue-1162 -->
+- #1162: Add dead-letter handling for failed background jobs
