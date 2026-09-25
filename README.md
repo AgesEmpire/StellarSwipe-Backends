@@ -555,3 +555,6 @@ MIT
 
 <!-- handsoff-issue-1149 -->
 - #1149: Introduce DataLoader batching for GraphQL resolvers
+
+<!-- handsoff-issue-1160 -->
+- #1160: Enforce resource authorization with reusable NestJS guards
