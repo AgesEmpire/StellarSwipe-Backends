@@ -11,6 +11,8 @@ import {
 import { QueueBackpressureService } from './queue-backpressure.service';
 import { QueueMetricsService } from './queue-metrics.service';
 import { queuePressureConfig } from './queue-pressure.config';
+import { queueConcurrencyConfig } from './queue-concurrency.config';
+import { PriorityQueueWorker } from './priority-queue.worker';
 import { DeadLetterService } from './dead-letter.service';
 import { DEAD_LETTER_QUEUE } from './dead-letter.constants';
 import { CorrelationModule } from '../common/correlation/correlation.module';
@@ -24,6 +26,7 @@ import { CorrelationModule } from '../common/correlation/correlation.module';
       { name: DEAD_LETTER_QUEUE },
     ),
     ConfigModule.forFeature(queuePressureConfig),
+    ConfigModule.forFeature(queueConcurrencyConfig),
     ScheduleModule.forRoot(),
     CorrelationModule,
   ],
@@ -32,12 +35,14 @@ import { CorrelationModule } from '../common/correlation/correlation.module';
     QueueBackpressureService,
     QueueMetricsService,
     DeadLetterService,
+    PriorityQueueWorker,
   ],
   exports: [
     PriorityQueueService,
     QueueBackpressureService,
     QueueMetricsService,
     DeadLetterService,
+    PriorityQueueWorker,
   ],
 })
 export class QueueModule implements OnApplicationShutdown {

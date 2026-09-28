@@ -332,6 +332,17 @@ Async tasks are processed via **BullMQ/Bull** backed by Redis. Three priority ti
 | `dead-letter` | — | Failed jobs after all retries exhausted |
 | `notifications` | 100 (NORMAL) | Async notification delivery |
 
+### Worker Concurrency by Category
+
+`PriorityQueueWorker` consumes the priority tiers with a separate concurrency ceiling per workload category, so saturating one category never takes worker slots from the other:
+
+| Category | Queues | Env var | Default |
+|---|---|---|---|
+| Latency-sensitive | `critical-queue`, `priority-queue` | `QUEUE_CONCURRENCY_LATENCY_SENSITIVE` | 10 |
+| Background | `low-priority-queue` | `QUEUE_CONCURRENCY_BACKGROUND` | 2 |
+
+Each ceiling is the maximum number of jobs of that category running at once per instance (shared across the category's queues). Both values must be integers between 1 and 1000 and are validated at startup. Feature modules register a handler per job type with `PriorityQueueWorker.registerHandler(type, handler)`; jobs without a handler fail permanently and go to the DLQ.
+
 ### Retry Policy
 
 All queued jobs use exponential backoff with 3 attempts by default:
