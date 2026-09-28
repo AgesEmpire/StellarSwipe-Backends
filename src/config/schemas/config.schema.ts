@@ -241,7 +241,17 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
   WEBHOOK_SIGNING_KEY: Joi.string().min(32).optional().allow(''),
   MPESA_WEBHOOK_SECRET: Joi.string().min(16).optional().allow(''),
   PAYSTACK_WEBHOOK_SECRET: Joi.string().min(16).optional().allow(''),
-});
+})
+  // Per-provider outbound concurrency limits, including the OUTBOUND_DEFAULT_*
+  // fallbacks (see src/http/provider-concurrency.config.ts).
+  .pattern(
+    /^OUTBOUND_[A-Z0-9_]+_MAX_CONCURRENT$/,
+    Joi.number().integer().min(1).max(1000),
+  )
+  .pattern(
+    /^OUTBOUND_[A-Z0-9_]+_MAX_QUEUE$/,
+    Joi.number().integer().min(0).max(10000),
+  );
 
 export function validateEnvironment(
   config: Record<string, unknown>,

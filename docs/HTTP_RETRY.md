@@ -77,6 +77,44 @@ const result = await this.httpRetry.executeWithRetry(
 | `maxDelayMs` | `number` | `10000` | Upper cap on computed delay (ms) |
 | `jitter` | `boolean` | `true` | Add ±20 % random jitter |
 | `retryableStatuses` | `number[]` | `[429,500,502,503,504]` | HTTP codes to retry |
+| `provider` | `string` | — | External provider name; runs each attempt inside that provider's concurrency limit |
+
+## Per-Provider Concurrency Limits
+
+Passing `provider` routes every attempt through `ProviderConcurrencyService`
+(`src/http/provider-concurrency.service.ts`), which gives each external provider
+its own bounded pool. A slow or failing provider can only use up its own slots,
+so calls to unrelated providers stay available.
+
+```typescript
+await this.httpRetry.get(url, { params }, { provider: 'coingecko' });
+
+// Non-HTTP SDK calls can be limited directly:
+await this.providerConcurrency.execute('stellar-expert', () => sdk.call());
+```
+
+Limits are read per provider name (upper-cased, non-alphanumerics replaced with
+`_`), falling back to the shared defaults. Values are validated at startup.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OUTBOUND_<PROVIDER>_MAX_CONCURRENT` | `OUTBOUND_DEFAULT_MAX_CONCURRENT` | Max in-flight requests to the provider (integer ≥ 1) |
+| `OUTBOUND_<PROVIDER>_MAX_QUEUE` | `OUTBOUND_DEFAULT_MAX_QUEUE` | Max requests waiting for a free slot (integer ≥ 0) |
+| `OUTBOUND_DEFAULT_MAX_CONCURRENT` | `10` | Default in-flight limit for any provider |
+| `OUTBOUND_DEFAULT_MAX_QUEUE` | `50` | Default waiting-queue size for any provider |
+
+### Saturation policy
+
+1. While a slot is free, the request runs immediately.
+2. Otherwise it waits in the provider's FIFO queue until a slot frees up.
+3. When both the slots and the queue are full, the request fails fast with
+   `BulkheadRejectedError` (the error names the provider). It is **not retried**,
+   since a retry would only add load to a provider that is already saturated.
+   Callers should treat it like the provider being unavailable (for example,
+   fall back to another source or return 503).
+
+A warning is logged on every rejection, and `ProviderConcurrencyService.getAllMetrics()`
+reports active, queued and rejected counts per provider.
 
 ## Security Notes
 
