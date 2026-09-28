@@ -11,6 +11,7 @@ import { ApiKeysModule } from '../api-keys/api-keys.module';
 import { CircuitBreakerService } from '../http/circuit-breaker.service';
 import { CanaryTradeService } from './canary-trade.service';
 import { SorobanCircuitListener } from './soroban-circuit.listener';
+import { DatabasePoolMetricsService } from './metrics/database-pool-metrics.service';
 
 @Global()
 @Module({
@@ -21,6 +22,7 @@ import { SorobanCircuitListener } from './soroban-circuit.listener';
     PayloadSizeInterceptor,
     CanaryTradeService,
     SorobanCircuitListener,
+    DatabasePoolMetricsService,
     {
       provide: CircuitBreakerService,
       useFactory: (prometheus: PrometheusService) =>
@@ -29,6 +31,12 @@ import { SorobanCircuitListener } from './soroban-circuit.listener';
     },
   ],
   controllers: [MonitoringController],
-  exports: [PrometheusService, MetricsInterceptor, PayloadSizeInterceptor, CircuitBreakerService],
+  exports: [
+    PrometheusService,
+    MetricsInterceptor,
+    PayloadSizeInterceptor,
+    CircuitBreakerService,
+    DatabasePoolMetricsService,
+  ],
 })
 export class MonitoringModule {}
