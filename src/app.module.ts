@@ -76,6 +76,8 @@ import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
 import { AdminModule } from './admin/admin.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { OutboxModule } from './outbox/outbox.module';
+import { SecurityAuditModule } from './audit-log/security/security-audit.module';
 import { DrModule } from './disaster-recovery/dr.module';
 import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module';
 import { DocumentationModule } from './documentation/documentation.module';
@@ -274,6 +276,8 @@ import { SearchModule } from './search/search.module';
     AdminModule,
     MonitoringModule,
     WebhooksModule,
+    OutboxModule,
+    SecurityAuditModule,
     DrModule,
     MarketIntelligenceModule,
     DocumentationModule,
