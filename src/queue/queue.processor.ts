@@ -1,6 +1,6 @@
 import { Processor, Process, OnQueueFailed, InjectQueue } from '@nestjs/bull';
 import { Job, Queue } from 'bull';
-import { Logger } from '@nestjs/common';
+import { Logger, OnApplicationShutdown } from '@nestjs/common';
 
 /**
  * Maximum number of attempts before a job is considered a poison message
@@ -12,6 +12,13 @@ export const MAX_QUEUE_ATTEMPTS = 5;
  * Name of the durable dead-letter queue used to store poison messages.
  */
 export const DEAD_LETTER_QUEUE = 'dead-letter';
+
+/**
+ * Bounded grace period (ms) granted to in-flight jobs during shutdown before
+ * the worker is forced to stop. Jobs still running past this window are left
+ * unacknowledged so Bull returns them to the queue for recovery.
+ */
+export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 
 /**
  * Safe, serialisable context attached to every dead-letter record so that
@@ -33,8 +40,22 @@ export interface DeadLetterRecord {
 }
 
 @Processor('default')
-export class QueueProcessor {
+export class QueueProcessor implements OnApplicationShutdown {
   private readonly logger = new Logger(QueueProcessor.name);
+
+  /**
+   * When true, intake is paused and no new jobs are picked up. Set during
+   * shutdown so the worker drains rather than accepting fresh work.
+   */
+  private draining = false;
+
+  /**
+   * Resolves once all currently running jobs have settled (or the drain
+   * timeout elapses). Used to bound the shutdown grace period.
+   */
+  private drainPromise: Promise<void> | null = null;
+  private resolveDrain: (() => void) | null = null;
+  private activeJobs = 0;
 
   constructor(
     @InjectQueue(DEAD_LETTER_QUEUE) private readonly deadLetterQueue: Queue,
@@ -45,7 +66,15 @@ export class QueueProcessor {
     // Bounded attempts: Bull will stop retrying once attemptsMade reaches the
     // configured limit, at which point OnQueueFailed routes the job to the
     // dead-letter queue below.
-    return this.process(job);
+    this.activeJobs += 1;
+    try {
+      return await this.process(job);
+    } finally {
+      this.activeJobs -= 1;
+      if (this.activeJobs === 0 && this.resolveDrain) {
+        this.resolveDrain();
+      }
+    }
   }
 
   /**
@@ -55,6 +84,58 @@ export class QueueProcessor {
    */
   protected async process(job: Job): Promise<unknown> {
     return job.data;
+  }
+
+  /**
+   * Pause queue intake so no new jobs are picked up, then wait a bounded time
+   * for in-flight jobs to finish. Jobs that exceed the grace period are left
+   * unacknowledged so Bull returns them to the queue (recoverable) rather than
+   * marking them complete.
+   */
+  async drain(timeoutMs: number = DEFAULT_DRAIN_TIMEOUT_MS): Promise<void> {
+    if (this.draining) {
+      return this.drainPromise ?? Promise.resolve();
+    }
+    this.draining = true;
+
+    // Stop intake: pause the queue so no new jobs are picked up.
+    try {
+      await this.deadLetterQueue.pause(true);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to pause queue intake during drain: ${(error as Error).message}`,
+      );
+    }
+
+    if (this.activeJobs === 0) {
+      this.logger.log('Drain complete: no active jobs to wait for.');
+      return;
+    }
+
+    this.drainPromise = new Promise<void>((resolve) => {
+      this.resolveDrain = resolve;
+    });
+
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs).unref?.();
+    });
+
+    await Promise.race([this.drainPromise, timeout]);
+
+    if (this.activeJobs > 0) {
+      this.logger.warn(
+        `Drain timeout (${timeoutMs}ms) reached with ${this.activeJobs} job(s) still running; leaving them unacknowledged for recovery.`,
+      );
+    } else {
+      this.logger.log('Drain complete: all active jobs finished.');
+    }
+  }
+
+  /**
+   * Nest lifecycle hook: pause intake and drain active jobs on shutdown.
+   */
+  async onApplicationShutdown(): Promise<void> {
+    await this.drain();
   }
 
   @OnQueueFailed()
