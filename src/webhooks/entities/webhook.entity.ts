@@ -21,7 +21,18 @@ export const SUPPORTED_WEBHOOK_EVENTS = [
   'payment.stellar.received',
   'payment.stellar.sent',
   'payment.stellar.failed',
+  'webhook.secret.rotation_started',
+  'webhook.secret.rotated',
 ] as const;
+
+/**
+ * Security notifications that are always delivered to the affected webhook,
+ * regardless of the subscriber's event filter.
+ */
+export const MANDATORY_WEBHOOK_EVENTS = [
+  'webhook.secret.rotation_started',
+  'webhook.secret.rotated',
+] as const satisfies ReadonlyArray<(typeof SUPPORTED_WEBHOOK_EVENTS)[number]>;
 
 export const STELLAR_PAYMENT_EVENTS = [
   'payment.stellar.received',
@@ -30,6 +41,10 @@ export const STELLAR_PAYMENT_EVENTS = [
 ] as const satisfies ReadonlyArray<(typeof SUPPORTED_WEBHOOK_EVENTS)[number]>;
 
 export type WebhookEventType = (typeof SUPPORTED_WEBHOOK_EVENTS)[number];
+
+export function isMandatoryWebhookEvent(event: string): boolean {
+  return (MANDATORY_WEBHOOK_EVENTS as readonly string[]).includes(event);
+}
 
 @Entity('webhooks')
 export class Webhook {
