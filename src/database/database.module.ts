@@ -6,6 +6,7 @@ import { IndexManagerService } from './optimization/index-manager.service';
 import { MaterializedViewService } from './optimization/materialized-view.service';
 import { SignalPerformance } from '../signals/entities/signal-performance.entity';
 import { ConnectionPoolMetricsService } from './connection-pool.metrics.service';
+import { PoolSaturationAlertService } from './pool-saturation-alert.service';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { SchemaVersioningService } from './schema-versioning.service';
 import { SchemaVersion } from './schema-version.entity';
@@ -27,6 +28,7 @@ import { DatabaseRetryService } from './database-retry.service';
     IndexManagerService,
     MaterializedViewService,
     ConnectionPoolMetricsService,
+    PoolSaturationAlertService,
     SchemaVersioningService,
     QueryMonitorService,
     MigrationRunnerService,
@@ -37,6 +39,7 @@ import { DatabaseRetryService } from './database-retry.service';
     IndexManagerService,
     MaterializedViewService,
     ConnectionPoolMetricsService,
+    PoolSaturationAlertService,
     SchemaVersioningService,
     QueryMonitorService,
     MigrationRunnerService,
