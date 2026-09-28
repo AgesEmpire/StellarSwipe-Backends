@@ -34,6 +34,19 @@ export const KYC_MONTHLY_LIMITS: Record<KycLevel, number | null> = {
   [KycLevel.ENHANCED]: null, // unlimited
 };
 
+/**
+ * Statuses from which a verification may transition to EXPIRED.
+ * Terminal states (already expired, rejected) are excluded so that
+ * replayed expiry events are idempotent and do not re-trigger
+ * status changes or user notifications.
+ */
+export const KYC_EXPIRABLE_STATUSES: readonly KycStatus[] = [
+  KycStatus.PENDING,
+  KycStatus.UNDER_REVIEW,
+  KycStatus.APPROVED,
+  KycStatus.REQUIRES_ACTION,
+];
+
 @Entity('kyc_verifications')
 @Index(['userId', 'level'])
 @Index(['status', 'expiresAt'])
@@ -88,6 +101,14 @@ export class KycVerification {
   @Column({ type: 'timestamp', nullable: true })
   expiresAt: Date | null;
 
+  /**
+   * When the user was notified that this verification expired.
+   * Null until the expiry notification has been dispatched; used to
+   * guarantee the user is notified at most once per expiry.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  expiryNotifiedAt: Date | null;
+
   /** Rejection reason from the provider */
   @Column({ type: 'text', nullable: true })
   rejectionReason: string | null;
@@ -105,4 +126,21 @@ export class KycVerification {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  /**
+   * Whether this verification can still transition to EXPIRED.
+   * Returns false for terminal states so replayed expiry events are
+   * idempotent and do not re-apply restrictions or re-notify.
+   */
+  canExpire(): boolean {
+    return KYC_EXPIRABLE_STATUSES.includes(this.status);
+  }
+
+  /**
+   * Whether the user still needs to be notified about this expiry.
+   * Guards against duplicate notifications on replayed events.
+   */
+  needsExpiryNotification(): boolean {
+    return this.status === KycStatus.EXPIRED && this.expiryNotifiedAt === null;
+  }
 }

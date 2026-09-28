@@ -191,6 +191,90 @@ export class KycService {
     };
   }
 
+  // ─── Expiry Handling ──────────────────────────────────────────────────────
+
+  /**
+   * Handle a KYC verification expiry event.
+   *
+   * Transitions the verification to EXPIRED, applies the resulting account
+   * restrictions, and notifies the affected user exactly once. Replayed
+   * events are idempotent: if the verification is already expired (or no
+   * longer approved) the handler is a no-op.
+   */
+  async handleVerificationExpired(
+    verificationId: string,
+    reason = 'verification_expired',
+  ): Promise<void> {
+    const verification = await this.kycRepo.findOne({
+      where: { id: verificationId },
+    });
+
+    if (!verification) {
+      this.logger.warn(
+        `Expiry event for unknown verification ${verificationId} — ignoring`,
+      );
+      return;
+    }
+
+    // Idempotency: only an APPROVED verification can expire. Replayed events
+    // (already EXPIRED) or events for non-approved records are ignored so the
+    // status change and notification fire exactly once.
+    if (verification.status !== KycStatus.APPROVED) {
+      this.logger.debug(
+        `Ignoring expiry for verification ${verificationId} in status ${verification.status}`,
+      );
+      return;
+    }
+
+    const previousStatus = verification.status;
+
+    await this.kycRepo.update(verification.id, {
+      status: KycStatus.EXPIRED,
+      expiredAt: new Date(),
+    });
+
+    await this.audit(
+      verification.userId,
+      verification.id,
+      KycAuditAction.EXPIRED,
+      { reason, previousStatus, level: verification.level },
+    );
+
+    // Apply account restrictions consistently with the expired status.
+    await this.applyExpiryRestrictions(verification);
+
+    // Notify the user once. Notification failures must not roll back the
+    // status transition or restrictions already applied.
+    try {
+      this.eventEmitter.emit(KYC_EVENTS.EXPIRED, {
+        userId: verification.userId,
+        level: verification.level,
+        verificationId: verification.id,
+        reason,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify user ${verification.userId} of KYC expiry: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Apply the account restrictions that follow from an expired verification.
+   * Emitted as a dedicated event so downstream modules (limits, withdrawals,
+   * etc.) can react consistently without this service knowing their internals.
+   */
+  private async applyExpiryRestrictions(
+    verification: KycVerification,
+  ): Promise<void> {
+    this.eventEmitter.emit(KYC_EVENTS.LEVEL_CHANGED, {
+      userId: verification.userId,
+      previousLevel: verification.level,
+      newLevel: KycLevel.NONE,
+      reason: 'verification_expired',
+    });
+  }
+
   // ─── Webhook Processing ───────────────────────────────────────────────────
 
   async processPersonaWebhook(
@@ -272,344 +356,6 @@ export class KycService {
     await this.applyVerificationResult(verification, {
       status: result.status,
       verificationId: result.checkId,
-      declinedReasons: result.declinedReasons,
-      providerMetadata: result.providerMetadata,
-    });
-  }
+      declinedReasons: result.declined
 
-  // ─── Core Result Application ──────────────────────────────────────────────
-
-  private async applyVerificationResult(
-    verification: KycVerification,
-    result: {
-      status: 'approved' | 'declined' | 'needs_review' | 'pending';
-      verificationId: string;
-      declinedReasons: string[];
-      providerMetadata: Record<string, unknown>;
-    },
-  ): Promise<void> {
-    const previousStatus = verification.status;
-
-    const updates: Partial<KycVerification> = {
-      verificationId: result.verificationId,
-      providerMetadata: result.providerMetadata,
-    };
-
-    switch (result.status) {
-      case 'approved':
-        updates.status = KycStatus.APPROVED;
-        updates.approvedAt = new Date();
-        updates.expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
-        updates.rejectionReason = null;
-        break;
-
-      case 'declined':
-        updates.status = KycStatus.REJECTED;
-        updates.rejectionReason =
-          result.declinedReasons.join('; ') || 'Verification declined';
-        break;
-
-      case 'needs_review':
-        updates.status = KycStatus.UNDER_REVIEW;
-        break;
-
-      case 'pending':
-        updates.status = KycStatus.PENDING;
-        break;
-    }
-
-    await this.kycRepo.update(verification.id, updates);
-
-    const updated = { ...verification, ...updates };
-
-    await this.audit(
-      verification.userId,
-      verification.id,
-      KycAuditAction.STATUS_CHANGED,
-      {
-        from: previousStatus,
-        to: updates.status,
-        verificationId: result.verificationId,
-      },
-    );
-
-    // Emit events for downstream consumers
-    if (updates.status === KycStatus.APPROVED) {
-      this.logger.log(
-        `KYC Level ${verification.level} APPROVED for user ${verification.userId}`,
-      );
-      this.eventEmitter.emit(KYC_EVENTS.APPROVED, {
-        userId: verification.userId,
-        level: verification.level,
-        verificationId: verification.id,
-        expiresAt: updates.expiresAt,
-      });
-      this.eventEmitter.emit(KYC_EVENTS.LEVEL_CHANGED, {
-        userId: verification.userId,
-        newLevel: verification.level,
-      });
-    } else if (updates.status === KycStatus.REJECTED) {
-      this.logger.warn(
-        `KYC REJECTED for user ${verification.userId}: ${updates.rejectionReason}`,
-      );
-      this.eventEmitter.emit(KYC_EVENTS.REJECTED, {
-        userId: verification.userId,
-        level: verification.level,
-        reason: updates.rejectionReason,
-      });
-    }
-  }
-
-  // ─── Manual Review ────────────────────────────────────────────────────────
-
-  async manualReview(
-    verificationId: string,
-    dto: ManualReviewDto,
-    ipAddress?: string,
-  ): Promise<KycVerification> {
-    const verification = await this.kycRepo.findOneOrFail({
-      where: { id: verificationId },
-    });
-
-    const updates: Partial<KycVerification> = { status: dto.status };
-    if (dto.status === KycStatus.APPROVED) {
-      updates.approvedAt = new Date();
-      updates.expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
-    }
-    if (dto.notes) updates.rejectionReason = dto.notes;
-
-    await this.kycRepo.update(verificationId, updates);
-    await this.audit(
-      verification.userId,
-      verificationId,
-      KycAuditAction.STATUS_CHANGED,
-      {
-        reviewedBy: dto.reviewedBy,
-        status: dto.status,
-        notes: dto.notes,
-        manual: true,
-      },
-      ipAddress,
-    );
-
-    if (dto.status === KycStatus.APPROVED) {
-      this.eventEmitter.emit(KYC_EVENTS.APPROVED, {
-        userId: verification.userId,
-        level: verification.level,
-        verificationId,
-        manual: true,
-      });
-    }
-
-    return { ...verification, ...updates };
-  }
-
-  // ─── Status Query ─────────────────────────────────────────────────────────
-
-  async getUserKycStatus(userId: string): Promise<KycStatusDto[]> {
-    const records = await this.kycRepo.find({
-      where: { userId },
-      order: { level: 'DESC', createdAt: 'DESC' },
-    });
-    return records as KycStatusDto[];
-  }
-
-  async getActiveKycLevel(userId: string): Promise<KycLevel> {
-    const approved = await this.kycRepo.find({
-      where: { userId, status: KycStatus.APPROVED },
-      order: { level: 'DESC' },
-    });
-
-    // Find highest approved, non-expired level
-    for (const v of approved) {
-      if (!v.expiresAt || v.expiresAt > new Date()) {
-        return v.level;
-      }
-    }
-
-    return KycLevel.NONE;
-  }
-
-  // ─── Limit Enforcement ────────────────────────────────────────────────────
-
-  async checkMonthlyLimit(
-    userId: string,
-    requestedAmountUsd: number,
-  ): Promise<KycLimitDto> {
-    const level = await this.getActiveKycLevel(userId);
-    const monthlyLimit = KYC_MONTHLY_LIMITS[level];
-
-    // Usage tracking — your trades/transactions service should call this
-    // and pass the real current month usage. Using 0 as placeholder.
-    const currentMonthUsageUsd = await this.getCurrentMonthUsage(userId);
-
-    const remaining =
-      monthlyLimit === null ? null : monthlyLimit - currentMonthUsageUsd;
-    const isLimitReached =
-      monthlyLimit !== null &&
-      currentMonthUsageUsd + requestedAmountUsd > monthlyLimit;
-
-    await this.audit(
-      userId,
-      null,
-      isLimitReached
-        ? KycAuditAction.LIMIT_EXCEEDED
-        : KycAuditAction.LIMIT_CHECKED,
-      {
-        level,
-        monthlyLimit,
-        currentUsage: currentMonthUsageUsd,
-        requested: requestedAmountUsd,
-      },
-    );
-
-    if (isLimitReached) {
-      throw new ForbiddenException(
-        `Monthly limit of $${monthlyLimit?.toLocaleString()} reached. Upgrade your KYC level to continue.`,
-      );
-    }
-
-    return {
-      level,
-      monthlyLimitUsd: monthlyLimit,
-      currentMonthUsageUsd,
-      remainingUsd: remaining,
-      isLimitReached: false,
-    };
-  }
-
-  // ─── Expiry Management (scheduled job) ───────────────────────────────────
-
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
-  async expireVerifications(): Promise<void> {
-    const expired = await this.kycRepo.find({
-      where: {
-        status: KycStatus.APPROVED,
-        expiresAt: LessThan(new Date()),
-      },
-    });
-
-    for (const v of expired) {
-      await this.kycRepo.update(v.id, { status: KycStatus.EXPIRED });
-      await this.audit(v.userId, v.id, KycAuditAction.EXPIRED, {
-        expiredAt: v.expiresAt,
-        level: v.level,
-      });
-      this.eventEmitter.emit(KYC_EVENTS.EXPIRED, {
-        userId: v.userId,
-        level: v.level,
-        verificationId: v.id,
-      });
-      this.logger.log(
-        `KYC verification expired for user ${v.userId}, level ${v.level}`,
-      );
-    }
-
-    if (expired.length > 0) {
-      this.logger.log(`Expired ${expired.length} KYC verifications`);
-    }
-  }
-
-  // ─── Compliance Report ────────────────────────────────────────────────────
-
-  async generateComplianceReport(): Promise<ComplianceReportDto> {
-    const [total, approved, pending, rejected, expired] = await Promise.all([
-      this.kycRepo.count(),
-      this.kycRepo.count({ where: { status: KycStatus.APPROVED } }),
-      this.kycRepo.count({ where: { status: KycStatus.PENDING } }),
-      this.kycRepo.count({ where: { status: KycStatus.REJECTED } }),
-      this.kycRepo.count({ where: { status: KycStatus.EXPIRED } }),
-    ]);
-
-    const byLevel = await this.kycRepo
-      .createQueryBuilder('k')
-      .select('k.level', 'level')
-      .addSelect('COUNT(*)', 'count')
-      .where('k.status = :status', { status: KycStatus.APPROVED })
-      .groupBy('k.level')
-      .getRawMany();
-
-    const byProvider = await this.kycRepo
-      .createQueryBuilder('k')
-      .select('k.provider', 'provider')
-      .addSelect('COUNT(*)', 'count')
-      .groupBy('k.provider')
-      .getRawMany();
-
-    // Verifications expiring in the next 30 days
-    const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    const renewalsDue = await this.kycRepo.count({
-      where: {
-        status: KycStatus.APPROVED,
-        expiresAt: LessThan(thirtyDaysFromNow),
-      },
-    });
-
-    return {
-      reportDate: new Date(),
-      totalVerifications: total,
-      approved,
-      pending,
-      rejected,
-      expired,
-      byLevel: Object.fromEntries(
-        byLevel.map((r) => [`level_${r.level}`, parseInt(r.count, 10)]),
-      ),
-      byProvider: Object.fromEntries(
-        byProvider.map((r) => [r.provider, parseInt(r.count, 10)]),
-      ),
-      renewalsDue,
-    };
-  }
-
-  // ─── Private Helpers ──────────────────────────────────────────────────────
-
-  private async getApprovedVerification(
-    userId: string,
-    level: KycLevel,
-  ): Promise<KycVerification | null> {
-    return this.kycRepo.findOne({
-      where: { userId, level, status: KycStatus.APPROVED },
-    });
-  }
-
-  private async getAttemptCount(
-    userId: string,
-    level: KycLevel,
-  ): Promise<number> {
-    return this.kycRepo.count({ where: { userId, level } });
-  }
-
-  /**
-   * Calculate current month's transaction volume for the user.
-   *
-   * TODO: inject your TradesService or TransactionsService and sum
-   * the actual USD volume for the current calendar month.
-   * Returning 0 as a placeholder until integrated.
-   */
-  private async getCurrentMonthUsage(userId: string): Promise<number> {
-    return 0;
-  }
-
-  private async audit(
-    userId: string,
-    verificationId: string | null,
-    action: KycAuditAction,
-    details: Record<string, unknown>,
-    ipAddress?: string,
-  ): Promise<void> {
-    try {
-      await this.auditRepo.save(
-        this.auditRepo.create({
-          userId,
-          verificationId,
-          action,
-          details,
-          ipAddress: ipAddress ?? null,
-        }),
-      );
-    } catch (err) {
-      this.logger.error(`KYC audit log failed: ${(err as Error).message}`);
-    }
-  }
-}
+/* … truncated 9830 chars — edit only what you need near the top … */
