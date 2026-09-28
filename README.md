@@ -561,3 +561,6 @@ MIT
 
 <!-- handsoff-issue-1162 -->
 - #1162: Add dead-letter handling for failed background jobs
+
+<!-- handsoff-issue-1237 -->
+- #1237: Add Redis failover behavior tests for cache-backed services
