@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WebsocketGateway } from './websocket.gateway';
 import { SocketManagerService } from './services/socket-manager.service';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
+import { WsAuthService } from './services/ws-auth.service';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { WsJwtGuard } from './guards/ws-jwt.guard';
       }),
     }),
   ],
-  providers: [WebsocketGateway, SocketManagerService, WsJwtGuard],
-  exports: [SocketManagerService, WebsocketGateway],
+  providers: [WebsocketGateway, SocketManagerService, WsJwtGuard, WsAuthService],
+  exports: [SocketManagerService, WebsocketGateway, WsAuthService],
 })
 export class WebsocketModule {}

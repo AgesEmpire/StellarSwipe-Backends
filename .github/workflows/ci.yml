@@ -128,7 +128,21 @@ jobs:
           NODE_ENV: test
 
       - name: Detect OpenAPI drift
-        run: npm run openapi:check
+        run: |
+          set -o pipefail
+          if ! npm run openapi:check 2>&1 | tee openapi-drift.log; then
+            echo "::error::OpenAPI specification drift detected. The committed spec (openapi.json) does not match the generated output (openapi.generated.json)."
+            echo ""
+            echo "### OpenAPI drift diff"
+            echo '```diff'
+            diff -u openapi.json openapi.generated.json || true
+            echo '```'
+            echo ""
+            echo "If this drift is intentional, regenerate and commit the specification:"
+            echo "  npm run openapi:generate && npm run openapi:check -- --update"
+            echo "See README.md (OpenAPI specification drift) for the approved update workflow."
+            exit 1
+          fi
 
       - name: Upload OpenAPI drift report
         if: failure()
@@ -138,6 +152,7 @@ jobs:
           path: |
             openapi.json
             openapi.generated.json
+            openapi-drift.log
           if-no-files-found: ignore
 
   e2e:

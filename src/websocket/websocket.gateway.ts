@@ -69,6 +69,14 @@ export class WebsocketGateway
       return;
     }
 
+    if (!this.isAuthorizedForRoom(client, body.room)) {
+      this.logger.warn(
+        `Socket ${client.id} not authorized for room ${body.room}`,
+      );
+      this.closeUnauthorized(client);
+      return;
+    }
+
     await client.join(body.room);
   }
 
@@ -86,6 +94,26 @@ export class WebsocketGateway
 
   private isAllowedRoom(room?: string): room is SocketRoom {
     return Object.values(SocketRoom).includes(room as SocketRoom);
+  }
+
+  private isAuthorizedForRoom(client: Socket, room: SocketRoom): boolean {
+    try {
+      const user = this.wsJwtGuard.validateSocket(client);
+
+      if (room === SocketRoom.SIGNALS_FEED) {
+        return true;
+      }
+
+      if (room === SocketRoom.LEADERBOARD_TOP100) {
+        return true;
+      }
+
+      return client.rooms.has(this.socketManager.getUserRoom(user.sub));
+    } catch {
+      this.logger.warn(`Socket credential invalid: ${client.id}`);
+      this.closeUnauthorized(client);
+      return false;
+    }
   }
 
   private closeUnauthorized(client: Socket): void {

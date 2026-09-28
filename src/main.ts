@@ -42,6 +42,7 @@ import { DeprecationInterceptor } from './versioning/interceptors/deprecation.in
 import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
 import { VersionManagerService } from './versioning/version-manager.service';
 import { RequestSizeLimitMiddleware } from './common/middleware/request-size-limit.middleware';
+import { validateConfigurationRelationships } from './common/config/config-relationship.validator';
 
 initTracing();
 
@@ -59,6 +60,11 @@ async function bootstrap() {
   // Set Winston as the default logger
   app.useLogger(logger);
   logger.setContext('Bootstrap');
+
+  // Validate cross-field configuration relationships (network endpoints,
+  // retry limits, timeout budgets) before wiring up any runtime behaviour.
+  // Invalid combinations abort startup with actionable errors (#1232).
+  validateConfigurationRelationships(configService);
 
   // Initialize Sentry
   sentryService.init();
@@ -165,12 +171,7 @@ async function bootstrap() {
     new I18nValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }),
-  );
+     
 
   // Redis Adapter for WebSockets
   const redisIoAdapter = new RedisIoAdapter(app, configService);
@@ -261,6 +262,4 @@ async function bootstrap() {
     process.exit(0);
   });
 }
-  app.useGlobalInter
 
-/* … truncated 4486 chars — edit only what you need near the top … */
