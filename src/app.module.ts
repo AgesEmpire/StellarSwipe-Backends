@@ -44,6 +44,8 @@ import { BackupModule } from './backup/backup.module';
 import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { OutboxModule } from './outbox/outbox.module';
+import { SecurityAuditModule } from './audit-log/security/security-audit.module';
 import { DrModule } from './disaster-recovery/dr.module';
 import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module';
 import { DocumentationModule } from './documentation/documentation.module';
@@ -141,6 +143,8 @@ import { NftModule } from './nft/nft.module';
     AdminAnalyticsModule,
     MonitoringModule,
     WebhooksModule,
+    OutboxModule,
+    SecurityAuditModule,
     DrModule,
     MarketIntelligenceModule,
     DocumentationModule,
