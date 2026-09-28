@@ -35,11 +35,11 @@ export class I18nAppService {
      */
     getSupportedLanguage(lang: string): string {
         if (!lang) return 'en';
-
-        // Extract base language code (e.g., 'en-US' -> 'en')
         const baseLang = lang.split('-')[0].toLowerCase();
+        return this.getSupportedLanguages().includes(baseLang) ? baseLang : 'en';
+    }
 
-        const supported = ['en', 'yo', 'ig', 'ha'];
-        return supported.includes(baseLang) ? baseLang : 'en';
+    getSupportedLanguages(): string[] {
+        return ['en', 'es', 'fr', 'yo', 'ig', 'ha'];
     }
 }

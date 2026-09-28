@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DataSource, QueryRunner, QueryExecutor, Log } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ConfigService } from '@nestjs/config';
 
 /**
  * Query Performance Analysis Result
@@ -57,16 +58,17 @@ export class QueryAnalyzerService implements OnModuleInit {
   constructor(
     private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
+    private readonly configService: ConfigService,
   ) {
     // Load configuration from environment
     this.slowQueryThresholdMs = parseInt(
-      process.env.SLOW_QUERY_THRESHOLD_MS || '100',
+      this.configService.get<string>('SLOW_QUERY_THRESHOLD_MS') || '100',
       10,
     );
-    this.enableQueryLogging = process.env.ENABLE_QUERY_LOGGING === 'true';
-    this.logExplainAnalyze = process.env.LOG_EXPLAIN_ANALYZE === 'true';
+    this.enableQueryLogging = this.configService.get<string>('ENABLE_QUERY_LOGGING') === 'true';
+    this.logExplainAnalyze = this.configService.get<string>('LOG_EXPLAIN_ANALYZE') === 'true';
     this.maxLoggedQueries = parseInt(
-      process.env.MAX_LOGGED_QUERIES || '1000',
+      this.configService.get<string>('MAX_LOGGED_QUERIES') || '1000',
       10,
     );
   }

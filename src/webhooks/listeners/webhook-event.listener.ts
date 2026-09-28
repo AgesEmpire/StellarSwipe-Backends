@@ -78,6 +78,67 @@ export class WebhookEventListener {
     });
   }
 
+  @OnEvent('contest.updated', { async: true })
+  async onContestUpdated(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('contest.updated', {
+      contestId: event['contestId'],
+      status: event['status'],
+      winnerId: event['winnerId'],
+      prizePool: event['prizePool'],
+    });
+  }
+
+  @OnEvent('payout.completed', { async: true })
+  async onPayoutCompleted(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payout.completed', {
+      payoutId: event['payoutId'],
+      userId: event['userId'],
+      amount: event['amount'],
+      currency: event['currency'],
+      txHash: event['txHash'],
+    });
+  }
+
+  @OnEvent('payment.stellar.received', { async: true })
+  async onStellarPaymentReceived(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payment.stellar.received', {
+      txHash: event['txHash'],
+      ledger: event['ledger'],
+      accountId: event['accountId'],
+      amount: event['amount'],
+      assetCode: event['assetCode'],
+      assetIssuer: event['assetIssuer'],
+      from: event['from'],
+      memo: event['memo'],
+    });
+  }
+
+  @OnEvent('payment.stellar.sent', { async: true })
+  async onStellarPaymentSent(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payment.stellar.sent', {
+      txHash: event['txHash'],
+      ledger: event['ledger'],
+      accountId: event['accountId'],
+      amount: event['amount'],
+      assetCode: event['assetCode'],
+      assetIssuer: event['assetIssuer'],
+      to: event['to'],
+      memo: event['memo'],
+    });
+  }
+
+  @OnEvent('payment.stellar.failed', { async: true })
+  async onStellarPaymentFailed(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payment.stellar.failed', {
+      txHash: event['txHash'],
+      ledger: event['ledger'],
+      accountId: event['accountId'],
+      amount: event['amount'],
+      assetCode: event['assetCode'],
+      reason: event['reason'],
+    });
+  }
+
   private async dispatch(
     eventName: string,
     data: Record<string, unknown>,

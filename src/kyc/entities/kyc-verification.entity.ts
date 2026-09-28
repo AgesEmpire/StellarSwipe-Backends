@@ -6,6 +6,7 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
+import { encryptedColumn } from '../../security/encrypted-column.transformer';
 
 export enum KycStatus {
   PENDING = 'pending',
@@ -73,11 +74,11 @@ export class KycVerification {
   verificationId: string | null;
 
   /** Persona inquiry ID (for widget session resumption) */
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true, transformer: encryptedColumn() })
   inquiryId: string | null;
 
   /** Session token for the Persona embedded flow */
-  @Column({ type: 'varchar', length: 1000, nullable: true })
+  @Column({ type: 'text', nullable: true, transformer: encryptedColumn() })
   sessionToken: string | null;
 
   @Column({ type: 'timestamp', nullable: true })

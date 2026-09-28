@@ -5,6 +5,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import { MultisigService } from './multisig.service';
 import { MultisigController } from './multisig.controller';
 import { PendingTransaction } from './entities/pending-transaction.entity';
+import { XdrOperationTypeGuard } from './guards/xdr-operation-type.guard';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PendingTransaction } from './entities/pending-transaction.entity';
       },
       inject: [ConfigService],
     },
+    XdrOperationTypeGuard,
   ],
   exports: [MultisigService],
 })

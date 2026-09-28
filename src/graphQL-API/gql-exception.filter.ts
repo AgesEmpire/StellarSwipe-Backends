@@ -1,5 +1,6 @@
 import { Catch, ArgumentsHost, HttpException, Logger } from '@nestjs/common';
 import { GqlExceptionFilter, GqlArgumentsHost } from '@nestjs/graphql';
+import { ConfigService } from '@nestjs/config';
 import { GraphQLError } from 'graphql';
 
 /**
@@ -12,6 +13,8 @@ import { GraphQLError } from 'graphql';
 @Catch()
 export class GraphqlExceptionFilter implements GqlExceptionFilter {
   private readonly logger = new Logger(GraphqlExceptionFilter.name);
+
+  constructor(private readonly configService: ConfigService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     GqlArgumentsHost.create(host);
@@ -39,7 +42,7 @@ export class GraphqlExceptionFilter implements GqlExceptionFilter {
     this.logger.error(`[GQL] Unhandled exception: ${msg}`, (exception as Error)?.stack);
 
     return new GraphQLError(
-      process.env.NODE_ENV === 'production' ? 'Internal server error' : msg,
+      this.configService.get<string>('NODE_ENV') === 'production' ? 'Internal server error' : msg,
       { extensions: { code: 'INTERNAL_SERVER_ERROR' } },
     );
   }

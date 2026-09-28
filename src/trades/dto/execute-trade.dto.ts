@@ -9,6 +9,7 @@ import {
   Min,
   Max,
 } from 'class-validator';
+import { IsStellarPrecision } from '../../common/decorators/is-stellar-precision.decorator';
 import { TradeSide } from '../entities/trade.entity';
 
 export class ExecuteTradeDto {
@@ -26,16 +27,19 @@ export class ExecuteTradeDto {
 
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsPositive()
+  @IsStellarPrecision()
   amount!: number;
 
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsOptional()
   @IsPositive()
+  @IsStellarPrecision()
   stopLossPrice?: number;
 
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsOptional()
   @IsPositive()
+  @IsStellarPrecision()
   takeProfitPrice?: number;
 
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -61,7 +65,18 @@ export class CloseTradeDto {
   @IsNumber({ maxDecimalPlaces: 8 })
   @IsOptional()
   @IsPositive()
+  @IsStellarPrecision()
   exitPrice?: number;
+
+  /**
+   * Optimistic concurrency token. Must match the trade's current version.
+   * Omitting it skips the check (backward-compatible); providing a stale
+   * value returns 409 Conflict.
+   */
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  version?: number;
 }
 
 export class GetUserTradesDto {

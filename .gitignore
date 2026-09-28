@@ -49,3 +49,9 @@ package-lock.json
 # Rust / Soroban
 target/
 **/target/
+
+# Issues tracking file
+vrickish.md
+
+# Somzilla issues file
+somzilla.md

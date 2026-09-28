@@ -1,0 +1,345 @@
+name: Soroban Contract Build & Deploy
+
+on:
+  # Automatically deploy when contracts change on main
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contracts-deploy.yml'
+
+  # Manual trigger: choose environment and optionally skip deploy
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target network environment'
+        required: true
+        type: choice
+        options:
+          - testnet
+          - futurenet
+        default: testnet
+      deploy:
+        description: 'Deploy WASM after successful build + test?'
+        required: false
+        type: boolean
+        default: true
+      contract_name:
+        description: 'Contract workspace member to deploy (leave blank for all)'
+        required: false
+        type: string
+        default: ''
+
+env:
+  # Stellar CLI version pinned for reproducibility
+  STELLAR_CLI_VERSION: '21.0.1'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Job 1: Build and test ────────────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    outputs:
+      # Pass the artifact name downstream for the deploy job
+      wasm_artifact: ${{ steps.artifact-name.outputs.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + wasm32 target
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build artefacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install stellar-cli
+        run: cargo install stellar-cli --version ${{ env.STELLAR_CLI_VERSION }} --locked
+
+      # ── Contract-level tests — failure blocks deployment ────────────────────
+      - name: Run contract tests (native)
+        working-directory: contracts
+        run: cargo test --workspace --verbose
+
+      - name: Run Clippy lint
+        working-directory: contracts
+        run: cargo clippy --workspace -- -D warnings
+
+      # ── Build WASM artefacts ────────────────────────────────────────────────
+      - name: Build WASM (release)
+        working-directory: contracts
+        run: cargo build --workspace --target wasm32-unknown-unknown --release
+
+      - name: Optimise WASM artefacts with stellar-cli
+        working-directory: contracts
+        run: |
+          for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
+            name=$(basename "$wasm" .wasm)
+            echo "Optimising $name…"
+            stellar contract optimize --wasm "$wasm" --wasm-out "${wasm%.wasm}.optimized.wasm" || \
+              cp "$wasm" "${wasm%.wasm}.optimized.wasm"
+          done
+
+      - name: Determine artifact name
+        id: artifact-name
+        run: echo "name=wasm-contracts-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload WASM artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: contracts/target/wasm32-unknown-unknown/release/*.optimized.wasm
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── Job 2: Deploy to testnet ─────────────────────────────────────────────────
+  deploy-testnet:
+    name: Deploy → Testnet
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testnet
+
+    # Run when:
+    #   • push to main (automatic deploy to testnet)
+    #   • manual trigger with environment=testnet AND deploy=true
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.environment == 'testnet' &&
+       github.event.inputs.deploy == 'true')
+
+    outputs:
+      contract_ids: ${{ steps.deploy.outputs.contract_ids }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + wasm32 target
+        run: |
+          rustup update stable
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install stellar-cli
+        run: cargo install stellar-cli --version ${{ env.STELLAR_CLI_VERSION }} --locked
+
+      - name: Download WASM artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-and-test.outputs.wasm_artifact }}
+          path: wasm-artifacts
+
+      - name: Configure stellar-cli for testnet
+        run: |
+          stellar network add testnet \
+            --rpc-url https://soroban-testnet.stellar.org:443 \
+            --network-passphrase "Test SDF Network ; September 2015" \
+            || true  # ignore if already configured
+
+      - name: Import deployer identity
+        env:
+          DEPLOYER_SECRET: ${{ secrets.TESTNET_DEPLOYER_SECRET }}
+        run: |
+          echo "$DEPLOYER_SECRET" | stellar keys add deployer --secret-key --stdin
+
+      - name: Deploy contracts and capture IDs
+        id: deploy
+        env:
+          CONTRACT_NAME_FILTER: ${{ github.event.inputs.contract_name }}
+        run: |
+          RESULTS=()
+
+          for wasm in wasm-artifacts/*.optimized.wasm; do
+            name=$(basename "$wasm" .optimized.wasm)
+
+            # Filter to a specific contract if requested
+            if [[ -n "${CONTRACT_NAME_FILTER}" && "${name}" != "${CONTRACT_NAME_FILTER}" ]]; then
+              echo "Skipping ${name} (filter: ${CONTRACT_NAME_FILTER})"
+              continue
+            fi
+
+            echo "Uploading WASM for ${name}…"
+            WASM_HASH=$(stellar contract upload \
+              --network testnet \
+              --source deployer \
+              --wasm "${wasm}" \
+              2>&1 | tail -1)
+
+            echo "Deploying ${name} (hash: ${WASM_HASH})…"
+            CONTRACT_ID=$(stellar contract deploy \
+              --network testnet \
+              --source deployer \
+              --wasm-hash "${WASM_HASH}" \
+              2>&1 | tail -1)
+
+            echo "  ${name} → ${CONTRACT_ID}"
+            RESULTS+=("${name}=${CONTRACT_ID}")
+
+            # Write per-contract ID file for artifact upload
+            echo "${CONTRACT_ID}" > "contract-id-${name}.txt"
+          done
+
+          # Serialise all results as JSON for downstream consumers
+          JSON_ARRAY=$(printf '%s\n' "${RESULTS[@]}" | \
+            jq -R 'split("=") | {(.[0]): .[1]}' | \
+            jq -s 'add // {}')
+
+          echo "contract_ids=${JSON_ARRAY}" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "Deployed contract IDs:"
+          echo "${JSON_ARRAY}"
+
+      - name: Upload contract ID artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-ids-testnet-${{ github.sha }}
+          path: contract-id-*.txt
+          retention-days: 90
+
+      - name: Summarise deployment
+        run: |
+          echo "## Testnet Deployment — $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract | Contract ID |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for f in contract-id-*.txt; do
+            name=$(basename "$f" .txt | sed 's/contract-id-//')
+            id=$(cat "$f")
+            echo "| ${name} | \`${id}\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  # ── Job 3: Deploy to futurenet ───────────────────────────────────────────────
+  deploy-futurenet:
+    name: Deploy → Futurenet
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: futurenet
+
+    # Only on manual trigger with environment=futurenet AND deploy=true
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.environment == 'futurenet' &&
+      github.event.inputs.deploy == 'true'
+
+    outputs:
+      contract_ids: ${{ steps.deploy.outputs.contract_ids }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + wasm32 target
+        run: |
+          rustup update stable
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install stellar-cli
+        run: cargo install stellar-cli --version ${{ env.STELLAR_CLI_VERSION }} --locked
+
+      - name: Download WASM artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-and-test.outputs.wasm_artifact }}
+          path: wasm-artifacts
+
+      - name: Configure stellar-cli for futurenet
+        run: |
+          stellar network add futurenet \
+            --rpc-url https://rpc-futurenet.stellar.org:443 \
+            --network-passphrase "Test SDF Future Network ; October 2022" \
+            || true
+
+      - name: Import deployer identity
+        env:
+          DEPLOYER_SECRET: ${{ secrets.FUTURENET_DEPLOYER_SECRET }}
+        run: |
+          echo "$DEPLOYER_SECRET" | stellar keys add deployer --secret-key --stdin
+
+      - name: Deploy contracts and capture IDs
+        id: deploy
+        env:
+          CONTRACT_NAME_FILTER: ${{ github.event.inputs.contract_name }}
+        run: |
+          RESULTS=()
+
+          for wasm in wasm-artifacts/*.optimized.wasm; do
+            name=$(basename "$wasm" .optimized.wasm)
+
+            if [[ -n "${CONTRACT_NAME_FILTER}" && "${name}" != "${CONTRACT_NAME_FILTER}" ]]; then
+              echo "Skipping ${name}"
+              continue
+            fi
+
+            echo "Uploading WASM for ${name}…"
+            WASM_HASH=$(stellar contract upload \
+              --network futurenet \
+              --source deployer \
+              --wasm "${wasm}" \
+              2>&1 | tail -1)
+
+            echo "Deploying ${name}…"
+            CONTRACT_ID=$(stellar contract deploy \
+              --network futurenet \
+              --source deployer \
+              --wasm-hash "${WASM_HASH}" \
+              2>&1 | tail -1)
+
+            echo "  ${name} → ${CONTRACT_ID}"
+            RESULTS+=("${name}=${CONTRACT_ID}")
+            echo "${CONTRACT_ID}" > "contract-id-${name}.txt"
+          done
+
+          JSON_ARRAY=$(printf '%s\n' "${RESULTS[@]}" | \
+            jq -R 'split("=") | {(.[0]): .[1]}' | \
+            jq -s 'add // {}')
+
+          echo "contract_ids=${JSON_ARRAY}" >> "$GITHUB_OUTPUT"
+          echo "Deployed contract IDs: ${JSON_ARRAY}"
+
+      - name: Upload contract ID artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-ids-futurenet-${{ github.sha }}
+          path: contract-id-*.txt
+          retention-days: 90
+
+      - name: Summarise deployment
+        run: |
+          echo "## Futurenet Deployment — $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract | Contract ID |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for f in contract-id-*.txt; do
+            name=$(basename "$f" .txt | sed 's/contract-id-//')
+            id=$(cat "$f")
+            echo "| ${name} | \`${id}\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  # ── Job 4: Notify Slack on failure ───────────────────────────────────────────
+  notify-failure:
+    name: Notify on failure
+    needs: [build-and-test, deploy-testnet, deploy-futurenet]
+    runs-on: ubuntu-latest
+    if: failure()
+
+    steps:
+      - name: Slack failure notification
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: >-
+            {"text":"❌ Soroban contract build/deploy failed on ${{ github.ref_name }} — <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true

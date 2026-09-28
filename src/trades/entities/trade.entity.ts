@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   Index,
   ManyToOne,
   JoinColumn,
@@ -25,6 +26,12 @@ export enum TradeSide {
   SELL = 'sell',
 }
 
+// Composite index for paginated trade history queries (most common access pattern)
+@Index('idx_trades_user_created_at', ['userId', 'createdAt'])
+// Composite index for open-positions queries (user_id + status + closed_at IS NULL)
+@Index('idx_trades_user_status_closed', ['userId', 'status', 'closedAt'])
+// Index for signal-based lookups
+@Index('idx_trades_signal_id', ['signalId'])
 @Entity('trades')
 export class Trade {
   @PrimaryGeneratedColumn('uuid')
@@ -153,6 +160,14 @@ export class Trade {
   @Column({ name: 'parent_trade_id', type: 'uuid', nullable: true })
   parentTradeId?: string;
 
+  /**
+   * Optimistic concurrency token. Incremented on every successful update.
+   * Clients must echo the current version back when submitting updates;
+   * a mismatch returns 409 Conflict instead of silently overwriting.
+   */
+  @Column({ type: 'int', default: 1 })
+  version!: number;
+
   @Column({
     name: 'original_amount',
     type: 'decimal',
@@ -170,4 +185,8 @@ export class Trade {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deletedAt?: Date;
 }

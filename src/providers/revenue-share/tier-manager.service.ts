@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -10,6 +10,7 @@ import {
   PayoutStatus,
 } from './entities/revenue-share-tier.entity';
 import { ProviderStats } from '../../signals/entities/provider-stats.entity';
+import { updateWithVersionCheck } from '../../common/utils/optimistic-update.util';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interfaces
@@ -396,22 +397,33 @@ export class TierManagerService implements OnModuleInit {
     return this.tierRepo.findOne({ where: { tierLevel } });
   }
 
+  /**
+   * Updates a tier's threshold/bonus parameters using an atomic
+   * compare-and-swap on `version`, so two admins editing the same tier
+   * concurrently can't have one silently overwrite the other's change.
+   */
   async updateTierConfig(
     tierLevel: ProviderTierLevel,
     updates: Partial<Pick<RevenueShareTier, 'revenueSharePercentage' | 'minWinRate' | 'minSignals' | 'minCopiers' | 'performanceBonusUsdc' | 'monthlyRetentionBonusUsdc' | 'isActive'>>,
+    expectedVersion?: number,
   ): Promise<RevenueShareTier> {
     const tier = await this.tierRepo.findOne({ where: { tierLevel } });
     if (!tier) {
-      throw new Error(`Tier ${tierLevel} not found`);
+      throw new NotFoundException(`Tier ${tierLevel} not found`);
     }
 
-    Object.assign(tier, updates);
-    const saved = await this.tierRepo.save(tier);
+    await updateWithVersionCheck(
+      this.tierRepo,
+      'RevenueShareTier',
+      tier.id,
+      expectedVersion ?? tier.version,
+      updates,
+    );
 
     // Invalidate cache
     await this.refreshTierCache();
 
-    return saved;
+    return this.tierRepo.findOneOrFail({ where: { tierLevel } });
   }
 
   // ─── Payout Recording ──────────────────────────────────────────────────────

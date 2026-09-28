@@ -1,4 +1,5 @@
 import { ObjectType, Field, ID, Float, Int } from '@nestjs/graphql';
+import { AuthorizedField } from './plugins/field-auth.plugin';
 
 @ObjectType()
 export class TradeType {
@@ -23,19 +24,32 @@ export class TradeType {
   @Field(() => Float)
   size: number;
 
-  @Field(() => Float, { nullable: true, description: 'Realised PnL in USD' })
+  @AuthorizedField(() => Float, {
+    nullable: true,
+    description: 'Realised PnL in USD',
+    permissions: ['trades:read-pnl'],
+  })
   pnl?: number;
 
-  @Field(() => Float, { nullable: true, description: 'PnL as a percentage of position' })
+  @AuthorizedField(() => Float, {
+    nullable: true,
+    description: 'PnL as a percentage of position',
+    permissions: ['trades:read-pnl'],
+  })
   pnlPercent?: number;
 
-  @Field(() => Float, { nullable: true })
+  @AuthorizedField(() => Float, {
+    nullable: true,
+    permissions: ['trades:read-fees'],
+  })
   fees?: number;
 
   @Field(() => String, { nullable: true })
   signalId?: string;
 
-  @Field(() => String)
+  @AuthorizedField(() => String, {
+    permissions: ['trades:read-user-id'],
+  })
   userId: string;
 
   @Field()

@@ -10,7 +10,11 @@ import {
 } from 'typeorm';
 import { Webhook } from './webhook.entity';
 
-export type DeliveryStatus = 'pending' | 'success' | 'failed';
+export type DeliveryStatus =
+  | 'pending'
+  | 'success'
+  | 'failed'
+  | 'permanently_failed';
 
 @Entity('webhook_deliveries')
 export class WebhookDelivery {

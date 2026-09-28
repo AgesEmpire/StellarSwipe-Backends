@@ -43,3 +43,11 @@ export function recordDbQuery(
 ): void {
   prometheus.dbQueryDuration.observe({ operation, entity }, durationSeconds);
 }
+
+export function recordHealthCheck(
+  prometheus: PrometheusService,
+  service: string,
+  isUp: boolean,
+): void {
+  prometheus.serviceHealthStatus.set({ service }, isUp ? 1 : 0);
+}

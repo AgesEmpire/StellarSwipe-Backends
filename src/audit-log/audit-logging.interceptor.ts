@@ -12,6 +12,7 @@ import { Request } from 'express';
 import { AuditService } from '../audit.service';
 import { AuditAction, AuditStatus } from '../entities/audit-log.entity';
 import { CreateAuditLogDto } from '../dto/audit-query.dto';
+import { CORRELATION_ID_HEADER } from '../common/correlation/correlation-id.store';
 
 export const AUDIT_ACTION_KEY = 'auditAction';
 export const AUDIT_RESOURCE_KEY = 'auditResource';
@@ -71,7 +72,7 @@ export class AuditLoggingInterceptor implements NestInterceptor {
       ipAddress: this.extractIp(request),
       userAgent: request.headers['user-agent'],
       sessionId: (request as any).sessionID,
-      requestId: request.headers['x-request-id'] as string,
+      requestId: request.headers[CORRELATION_ID_HEADER] as string,
       metadata: options.getMetadata?.(request) ?? this.buildDefaultMetadata(request),
     };
 

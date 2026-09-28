@@ -2,6 +2,8 @@ import { Injectable, LoggerService as NestLoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
+import { CorrelationIdStore } from '../correlation/correlation-id.store';
+import { redactSensitiveFields } from './log-redaction';
 
 /**
  * Winston-based logger service with structured logging
@@ -12,20 +14,13 @@ export class LoggerService implements NestLoggerService {
   private logger!: winston.Logger;
   private context?: string;
 
-  // Sensitive fields to sanitize from logs
-  private readonly sensitiveFields = [
-    'password',
-    'token',
-    'apiKey',
-    'secretKey',
-    'privateKey',
-    'authorization',
-    'secret',
-    'accessToken',
-    'refreshToken',
-  ];
+  // Field-level redaction is now handled by the standalone redactSensitiveFields
+  // utility (log-redaction.ts), which supports configurable field lists via env.
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly correlationIdStore: CorrelationIdStore,
+  ) {
     this.initializeLogger();
   }
 
@@ -48,6 +43,7 @@ export class LoggerService implements NestLoggerService {
             winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
             winston.format.printf((info) => {
               const ctx = info.context ? `[${info.context}]` : '';
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
               const { timestamp, level, message, context, ...meta } = info;
               const metaStr = Object.keys(meta).length
                 ? `\n${JSON.stringify(meta, null, 2)}`
@@ -115,49 +111,35 @@ export class LoggerService implements NestLoggerService {
   }
 
   /**
-   * Sanitize sensitive data from objects
+   * Base fields attached to every log line: logger context plus the
+   * request-scoped correlation ID, service, and environment.
+   */
+  private baseMeta(): Record<string, any> {
+    const correlationId = this.correlationIdStore.getCorrelationId();
+    const service =
+      this.configService.get('app.name') ??
+      process.env.SERVICE_NAME ??
+      'stellarswipe-backend';
+    const environment =
+      this.configService.get('app.nodeEnv') ??
+      process.env.NODE_ENV ??
+      'development';
+    return {
+      service,
+      environment,
+      context: this.context,
+      ...(correlationId ? { correlationId } : {}),
+    };
+  }
+
+  /**
+   * Redact sensitive / PII fields from a log metadata object before writing.
+   * Delegates to the configurable redactSensitiveFields utility so that field
+   * lists can be extended without touching this file.
    */
   private sanitize(obj: any): any {
-    if (!obj || typeof obj !== 'object') {
-      return obj;
-    }
-
-    // Handle circular references
-    const seen = new WeakSet();
-    const sanitizeRecursive = (item: any): any => {
-      if (item === null || typeof item !== 'object') {
-        return item;
-      }
-
-      if (seen.has(item)) {
-        return '[Circular]';
-      }
-
-      seen.add(item);
-
-      if (Array.isArray(item)) {
-        return item.map((element) => sanitizeRecursive(element));
-      }
-
-      const sanitized: any = {};
-      for (const key in item) {
-        if (Object.prototype.hasOwnProperty.call(item, key)) {
-          if (
-            this.sensitiveFields.some((field) =>
-              key.toLowerCase().includes(field.toLowerCase()),
-            )
-          ) {
-            sanitized[key] = '[REDACTED]';
-          } else {
-            sanitized[key] = sanitizeRecursive(item[key]);
-          }
-        }
-      }
-
-      return sanitized;
-    };
-
-    return sanitizeRecursive(obj);
+    if (!obj || typeof obj !== 'object') return obj;
+    return redactSensitiveFields(obj);
   }
 
   /**
@@ -173,7 +155,7 @@ export class LoggerService implements NestLoggerService {
   info(message: string, context?: Record<string, any>): void {
     const sanitizedContext = this.sanitize(context);
     this.logger.info(message, {
-      context: this.context,
+      ...this.baseMeta(),
       ...sanitizedContext,
     });
   }
@@ -184,7 +166,7 @@ export class LoggerService implements NestLoggerService {
   warn(message: string, context?: Record<string, any>): void {
     const sanitizedContext = this.sanitize(context);
     this.logger.warn(message, {
-      context: this.context,
+      ...this.baseMeta(),
       ...sanitizedContext,
     });
   }
@@ -202,19 +184,22 @@ export class LoggerService implements NestLoggerService {
     const sanitizedContext = this.sanitize(context);
 
     if (errorOrTrace instanceof Error) {
+      const sanitizedError = this.sanitize({
+        name: errorOrTrace.name,
+        message: errorOrTrace.message,
+        stack: errorOrTrace.stack,
+      });
       this.logger.error(message, {
-        context: this.context,
-        error: {
-          name: errorOrTrace.name,
-          message: errorOrTrace.message,
-          stack: errorOrTrace.stack,
-        },
+        ...this.baseMeta(),
+        error: sanitizedError,
         ...sanitizedContext,
       });
     } else {
+      const sanitizedTrace =
+        typeof errorOrTrace === 'string' ? errorOrTrace : this.sanitize(errorOrTrace);
       this.logger.error(message, {
-        context: this.context,
-        trace: errorOrTrace,
+        ...this.baseMeta(),
+        trace: sanitizedTrace,
         ...sanitizedContext,
       });
     }
@@ -226,7 +211,7 @@ export class LoggerService implements NestLoggerService {
   debug(message: string, context?: Record<string, any>): void {
     const sanitizedContext = this.sanitize(context);
     this.logger.debug(message, {
-      context: this.context,
+      ...this.baseMeta(),
       ...sanitizedContext,
     });
   }
@@ -237,7 +222,7 @@ export class LoggerService implements NestLoggerService {
   verbose(message: string, context?: Record<string, any>): void {
     const sanitizedContext = this.sanitize(context);
     this.logger.verbose(message, {
-      context: this.context,
+      ...this.baseMeta(),
       ...sanitizedContext,
     });
   }

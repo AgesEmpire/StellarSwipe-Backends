@@ -7,6 +7,8 @@ import { SendGridProvider } from './providers/sendgrid.provider';
 import { SESProvider } from './providers/ses.provider';
 import { EmailLog } from './entities/email-log.entity';
 import { UnsubscribeList } from './entities/unsubscribe-list.entity';
+import { TemplateEngineService } from './template-engine.service';
+import { EmailTemplateRegistry } from './email-template.registry';
 
 @Module({
   imports: [
@@ -19,7 +21,7 @@ import { UnsubscribeList } from './entities/unsubscribe-list.entity';
       },
     ]),
   ],
-  providers: [EmailService, SendGridProvider, SESProvider],
-  exports: [EmailService],
+  providers: [EmailService, SendGridProvider, SESProvider, TemplateEngineService, EmailTemplateRegistry],
+  exports: [EmailService, TemplateEngineService],
 })
 export class EmailModule {}

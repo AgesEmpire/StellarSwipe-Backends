@@ -8,6 +8,7 @@ import {
   Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { encryptedColumn } from '../../security/encrypted-column.transformer';
 
 @Entity('payment_methods')
 @Index(['userId', 'provider'])
@@ -29,7 +30,7 @@ export class PaymentMethod {
   @Column({ length: 50 })
   provider!: string; // 'stripe', 'paypal', etc.
 
-  @Column({ name: 'provider_token', length: 255 })
+  @Column({ name: 'provider_token', type: 'text', transformer: encryptedColumn() })
   providerToken!: string;
 
   @Column({ name: 'display_name', nullable: true })

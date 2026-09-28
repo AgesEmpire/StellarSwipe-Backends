@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { APP_FILTER } from '@nestjs/core';
 import { StellarConfigService } from '../config/stellar.service';
 import { CacheModule } from '../cache/cache.module';
 import { AccountManagerService } from './account/account-manager.service';
@@ -11,12 +14,33 @@ import { HorizonStreamController } from './services/horizon-stream.controller';
 import { HorizonStreamService } from './services/horizon-stream.service';
 import { EventProcessorService } from './services/event-processor.service';
 import { StellarIntegrationService } from './services/stellar-integration.service';
+import { StellarProviderService } from './services/stellar-provider.service';
+import { WalletBalanceSyncJob } from './jobs/wallet-balance-sync.job';
+import { User } from '../users/entities/user.entity';
+import { OnChainEvent } from './entities/on-chain-event.entity';
+import { IngestionCheckpoint } from './entities/ingestion-checkpoint.entity';
+import { SubmittedOperation } from './entities/submitted-operation.entity';
+import { OnChainSyncService } from './on-chain-sync.service';
+import { OnChainSyncJob } from './on-chain-sync.job';
+import { StellarTxReconciliationService } from './reconciliation/stellar-tx-reconciliation.service';
+import { StellarTxReconciliationJob } from './reconciliation/stellar-tx-reconciliation.job';
+import { FeeBumpModule } from './fee-bump/fee-bump.module';
+import { ClaimableBalanceModule } from './claimable-balance/claimable-balance.module';
+import { SponsoredReservesModule } from './sponsored-reserves/sponsored-reserves.module';
+import { HorizonExceptionFilter } from './errors/horizon-error.filter';
+import { HttpRetryModule } from '../http/http.module';
 
 @Module({
   imports: [
     ConfigModule,
     EventEmitterModule.forRoot(),
     CacheModule,
+    ScheduleModule.forRoot(),
+    TypeOrmModule.forFeature([User, OnChainEvent, IngestionCheckpoint, SubmittedOperation]),
+    FeeBumpModule,
+    ClaimableBalanceModule,
+    SponsoredReservesModule,
+    HttpRetryModule,
   ],
   controllers: [TrustlineController, HorizonStreamController],
   providers: [
@@ -27,6 +51,13 @@ import { StellarIntegrationService } from './services/stellar-integration.servic
     HorizonStreamService,
     EventProcessorService,
     StellarIntegrationService,
+    StellarProviderService,
+    WalletBalanceSyncJob,
+    OnChainSyncService,
+    OnChainSyncJob,
+    StellarTxReconciliationService,
+    StellarTxReconciliationJob,
+    { provide: APP_FILTER, useClass: HorizonExceptionFilter },
   ],
   exports: [
     StellarConfigService,
@@ -36,6 +67,12 @@ import { StellarIntegrationService } from './services/stellar-integration.servic
     HorizonStreamService,
     EventProcessorService,
     StellarIntegrationService,
+    StellarProviderService,
+    WalletBalanceSyncJob,
+    OnChainSyncService,
+    FeeBumpModule,
+    ClaimableBalanceModule,
+    SponsoredReservesModule,
   ],
 })
 export class StellarModule {}

@@ -29,6 +29,9 @@ import {
   ManualReviewDto,
   ComplianceReportDto,
 } from './dto/start-kyc.dto';
+import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
+import { AuditAction } from '../audit-log/entities/audit-log.entity';
+import { ExposeSensitiveFields } from '../common/decorators/expose-sensitive-fields.decorator';
 
 @ApiTags('KYC / Identity Verification')
 @ApiBearerAuth()
@@ -39,6 +42,7 @@ export class KycController {
   // ─── User-facing endpoints ────────────────────────────────────────────────
 
   @Post('start')
+  @Audit({ action: AuditAction.KYC_SUBMITTED, resource: 'kyc' })
   @ApiOperation({ summary: 'Initiate or resume a KYC verification flow' })
   @ApiResponse({ status: 201, type: StartKycResponseDto })
   startKyc(
@@ -127,6 +131,9 @@ export class KycController {
 
   @Get('admin/user/:userId')
   @ApiOperation({ summary: '[Admin] Get all KYC verifications for a user' })
+  // Compliance/support review needs the raw identity fields on this record —
+  // opt out of the default public sensitive-field redaction.
+  @ExposeSensitiveFields()
   adminGetUserKyc(
     @Param('userId', ParseUUIDPipe) userId: string,
   ): Promise<KycStatusDto[]> {
@@ -134,6 +141,7 @@ export class KycController {
   }
 
   @Patch('admin/verification/:id/review')
+  @Audit({ action: AuditAction.KYC_MANUAL_REVIEW, resource: 'kyc', getResourceId: (req) => req.params.id })
   @ApiOperation({
     summary: '[Admin] Manually approve or reject a KYC verification',
   })

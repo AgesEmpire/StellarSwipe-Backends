@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { unlink, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import { BackupMonitoringService } from './backup-monitoring.service';
 
 const execAsync = promisify(exec);
 
@@ -24,8 +25,14 @@ export class BackupService {
   private readonly dbUser: string;
   private readonly dbPassword: string;
   private readonly gpgPassphrase: string;
+  private readonly s3Bucket: string;
+  private readonly s3Region: string;
+  private readonly s3Enabled: boolean;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private readonly monitoring: BackupMonitoringService,
+  ) {
     this.backupDir = this.configService.get('BACKUP_DIR', '/var/backups/stellarswipe');
     this.dbHost = this.configService.get('DATABASE_HOST', 'localhost');
     this.dbPort = this.configService.get('DATABASE_PORT', 5432);
@@ -33,6 +40,9 @@ export class BackupService {
     this.dbUser = this.configService.get('DATABASE_USER', 'postgres');
     this.dbPassword = this.configService.get('DATABASE_PASSWORD', '');
     this.gpgPassphrase = this.configService.get('BACKUP_GPG_PASSPHRASE', 'change-me');
+    this.s3Bucket = this.configService.get('BACKUP_S3_BUCKET', '');
+    this.s3Region = this.configService.get('BACKUP_S3_REGION', 'us-east-1');
+    this.s3Enabled = !!this.s3Bucket;
     this.ensureBackupDir();
   }
 
@@ -50,6 +60,7 @@ export class BackupService {
     const filePath = join(this.backupDir, filename);
     const gzPath = join(this.backupDir, gzFilename);
     const encryptedPath = join(this.backupDir, encryptedFilename);
+    const start = Date.now();
 
     try {
       this.logger.log(`Starting ${type} backup...`);
@@ -59,9 +70,21 @@ export class BackupService {
       await this.verifyBackup(encryptedPath);
       await unlink(filePath);
       await unlink(gzPath);
+
+      const { size } = await stat(encryptedPath);
+      const durationMs = Date.now() - start;
+
+      // Offsite S3 upload
+      let offsiteOk: boolean | undefined;
+      if (this.s3Enabled) {
+        offsiteOk = await this.uploadToS3(encryptedPath, `${type}/${encryptedFilename}`);
+      }
+
+      this.monitoring.record({ type, success: true, durationMs, sizeBytes: size, offsite: offsiteOk });
       this.logger.log(`Backup completed: ${encryptedFilename}`);
       return encryptedPath;
     } catch (error) {
+      this.monitoring.record({ type, success: false, durationMs: Date.now() - start, error: error.message });
       this.logger.error(`Backup failed: ${error.message}`);
       throw error;
     }
@@ -145,6 +168,20 @@ export class BackupService {
     } catch (error) {
       this.logger.error(`Restore failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  private async uploadToS3(localPath: string, s3Key: string): Promise<boolean> {
+    const s3Uri = `s3://${this.s3Bucket}/${s3Key}`;
+    try {
+      await execAsync(
+        `aws s3 cp ${localPath} ${s3Uri} --region ${this.s3Region} --storage-class STANDARD_IA`,
+      );
+      this.logger.log(`Offsite upload OK: ${s3Uri}`);
+      return true;
+    } catch (err) {
+      this.logger.error(`Offsite upload failed: ${(err as Error).message}`);
+      return false;
     }
   }
 

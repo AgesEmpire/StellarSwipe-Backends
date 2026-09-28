@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThanOrEqual } from 'typeorm';
 import { Contest, ContestMetric, ContestStatus } from './entities/contest.entity';
 import { Signal, SignalStatus } from '../signals/entities/signal.entity';
-import { CreateContestDto, ContestEntryDto, ContestLeaderboardDto } from './dto/contest.dto';
+import { CreateContestDto, ContestEntryDto, ContestLeaderboardDto, UpdateContestDto } from './dto/contest.dto';
 
 interface ContestEntry {
   provider: string;
@@ -42,6 +42,26 @@ export class ContestsService {
       winners: null,
     });
 
+    return this.contestRepository.save(contest);
+  }
+
+  async updateContest(id: string, dto: UpdateContestDto): Promise<Contest> {
+    const contest = await this.getContest(id);
+
+    if (contest.status === ContestStatus.FINALIZED) {
+      throw new BadRequestException('Cannot update a finalized contest');
+    }
+
+    if (dto.startTime || dto.endTime) {
+      const startTime = new Date(dto.startTime || contest.startTime);
+      const endTime = new Date(dto.endTime || contest.endTime);
+
+      if (endTime <= startTime) {
+        throw new BadRequestException('End time must be after start time');
+      }
+    }
+
+    Object.assign(contest, dto);
     return this.contestRepository.save(contest);
   }
 

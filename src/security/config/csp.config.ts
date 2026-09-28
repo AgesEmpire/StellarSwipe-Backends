@@ -42,5 +42,11 @@ export const cspConfig = registerAs('csp', () => ({
     'X-Content-Type-Options': 'nosniff',
     'X-XSS-Protection': '1; mode=block',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
+    // HSTS: 1 year, include subdomains, preload-ready
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+    // Disable browser features not needed by the API
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': 'same-origin',
   },
 }));

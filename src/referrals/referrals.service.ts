@@ -12,6 +12,8 @@ import { Trade, TradeStatus } from '../trades/entities/trade.entity';
 import { ReferralStatsDto } from './dto/referral-stats.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
 @Injectable()
 export class ReferralsService {
   private readonly logger = new Logger(ReferralsService.name);
@@ -28,10 +30,9 @@ export class ReferralsService {
   ) {}
 
   generateReferralCode(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 8; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+      code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
     }
     return code;
   }
@@ -39,23 +40,35 @@ export class ReferralsService {
   async getUserReferralCode(userId: string): Promise<string> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      select: ['id', 'username', 'walletAddress'],
+      select: ['id', 'referralCode'],
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Generate code from wallet address for consistency
-    const hash = (user.walletAddress || '').slice(-8).toUpperCase();
-    return hash.replace(/[^A-Z0-9]/g, '').padEnd(8, '2');
+    if (user.referralCode) {
+      return user.referralCode;
+    }
+
+    // Generate a unique code, retrying on collision (birthday paradox is negligible at scale)
+    let code: string;
+    let attempts = 0;
+    do {
+      code = this.generateReferralCode();
+      const existing = await this.userRepository.findOne({ where: { referralCode: code } });
+      if (!existing) break;
+      attempts++;
+    } while (attempts < 5);
+
+    await this.userRepository.update(userId, { referralCode: code! });
+    return code!;
   }
 
   async claimReferral(
     userId: string,
     referralCode: string,
   ): Promise<Referral> {
-    // Check if user already claimed a referral
     const existingClaim = await this.referralRepository.findOne({
       where: { referredId: userId },
     });
@@ -64,19 +77,19 @@ export class ReferralsService {
       throw new BadRequestException('User already claimed a referral code');
     }
 
-    // Find referrer by code
-    const referrer = await this.findUserByReferralCode(referralCode);
+    const referrer = await this.userRepository.findOne({
+      where: { referralCode },
+      select: ['id'],
+    });
 
     if (!referrer) {
       throw new BadRequestException('Invalid referral code');
     }
 
-    // Prevent self-referral
     if (referrer.id === userId) {
       throw new BadRequestException('Cannot refer yourself');
     }
 
-    // Create referral record
     const referral = this.referralRepository.create({
       referrerId: referrer.id,
       referredId: userId,
@@ -103,7 +116,6 @@ export class ReferralsService {
       return;
     }
 
-    // Check if this is user's first completed trade
     const previousTrades = await this.tradeRepository.count({
       where: {
         userId: trade.userId,
@@ -112,10 +124,9 @@ export class ReferralsService {
     });
 
     if (previousTrades !== 1) {
-      return; // Not first trade
+      return;
     }
 
-    // Check trade value meets minimum
     const tradeValue = parseFloat(trade.totalValue);
     if (tradeValue < this.MIN_TRADE_VALUE_USD) {
       this.logger.log(
@@ -124,7 +135,6 @@ export class ReferralsService {
       return;
     }
 
-    // Find pending referral
     const referral = await this.referralRepository.findOne({
       where: {
         referredId: trade.userId,
@@ -137,34 +147,28 @@ export class ReferralsService {
       return;
     }
 
-    // Update referral status
     referral.status = ReferralStatus.COMPLETED;
     referral.firstTradeId = tradeId;
     await this.referralRepository.save(referral);
 
-    // Distribute reward
     await this.distributeReward(referral);
   }
 
   private async distributeReward(referral: Referral): Promise<void> {
     try {
-      // In production, this would interact with Stellar SDK to send XLM
-      // For now, we'll simulate the reward distribution
       const rewardAmount = parseFloat(referral.rewardAmount);
 
       this.logger.log(
         `Distributing ${rewardAmount} XLM reward to referrer ${referral.referrerId}`,
       );
 
-      // Simulate transaction hash
-      const txHash = `SIMULATED_TX_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const txHash = `SIMULATED_TX_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 
       referral.status = ReferralStatus.REWARDED;
       referral.rewardedAt = new Date();
       referral.rewardTxHash = txHash;
       await this.referralRepository.save(referral);
 
-      // Emit event for notifications
       this.eventEmitter.emit('referral.rewarded', {
         referrerId: referral.referrerId,
         referredId: referral.referredId,
@@ -216,21 +220,5 @@ export class ReferralsService {
         rewardedAt: r.rewardedAt,
       })),
     };
-  }
-
-  private async findUserByReferralCode(code: string): Promise<User | null> {
-    // Since we generate codes from wallet addresses, we need to find matching user
-    const users = await this.userRepository.find({
-      select: ['id', 'username', 'walletAddress'],
-    });
-
-    for (const user of users) {
-      const userCode = await this.getUserReferralCode(user.id);
-      if (userCode === code) {
-        return user;
-      }
-    }
-
-    return null;
   }
 }

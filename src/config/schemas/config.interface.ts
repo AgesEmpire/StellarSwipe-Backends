@@ -1,6 +1,6 @@
 export interface AppConfig {
   port: number;
-  environment: 'development' | 'testnet' | 'mainnet';
+  environment: 'development' | 'test' | 'testnet' | 'mainnet';
   host: string;
   apiPrefix: string;
   apiVersion: string;
@@ -10,6 +10,8 @@ export interface AppConfig {
   logMaxSize: string;
   corsOrigin: string[];
   corsCredentials: boolean;
+  slippageToleranceBps: number;
+  shutdownDrainTimeoutMs: number;
 }
 
 export interface DatabaseConfig {
@@ -20,9 +22,21 @@ export interface DatabaseConfig {
   database: string;
   synchronize: boolean;
   logging: boolean;
+  readTimeoutMs?: number;
+  writeTimeoutMs?: number;
   ssl?: {
     rejectUnauthorized: boolean;
   };
+}
+
+export interface HorizonBulkheadCategoryConfig {
+  maxConcurrent: number;
+  maxQueue: number;
+}
+
+export interface HorizonBulkheadConfig {
+  read: HorizonBulkheadCategoryConfig;
+  write: HorizonBulkheadCategoryConfig;
 }
 
 export interface StellarConfig {
@@ -32,6 +46,9 @@ export interface StellarConfig {
   networkPassphrase: string;
   apiTimeout: number;
   maxRetries: number;
+  maxCallDepth: number;
+  maxCallDepthViolationPolicy: 'reject' | 'warn';
+  horizonBulkhead: HorizonBulkheadConfig;
 }
 
 export interface RedisConfig {
@@ -39,6 +56,8 @@ export interface RedisConfig {
   port: number;
   db: number;
   password?: string;
+  operationTimeoutMs?: number;
+  policies?: { cache: string; session: string; rateLimit: string };
 }
 
 export interface JwtConfig {

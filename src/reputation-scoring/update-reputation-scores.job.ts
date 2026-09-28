@@ -6,6 +6,10 @@ import {
   ReputationScoringService,
   ProviderMetrics,
 } from '../services/reputation-scoring.service';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
+
+const LOCK_KEY = 'update-reputation-scores';
+const LOCK_TTL_MS = 10 * 60 * 1000; // 10 min — job normally runs in < 5 min
 
 /**
  * Raw row returned by the provider metrics aggregation query.
@@ -31,14 +35,26 @@ export class UpdateReputationScoresJob {
   constructor(
     private readonly reputationScoringService: ReputationScoringService,
     private readonly dataSource: DataSource,
+    private readonly distributedLock: DistributedLockService,
   ) {}
 
   /**
    * Runs every day at 02:00 UTC to refresh all provider reputation scores.
-   * The off-peak time reduces load contention with user-facing traffic.
+   * The distributed lock ensures only one replica executes per scheduled tick.
    */
   @Cron('0 2 * * *', { name: 'update-reputation-scores', timeZone: 'UTC' })
   async handleCron(): Promise<void> {
+    const { ran } = await this.distributedLock.withLock(
+      LOCK_KEY,
+      LOCK_TTL_MS,
+      () => this.run(),
+    );
+    if (!ran) {
+      this.logger.log('Skipping reputation score update — another replica is running it');
+    }
+  }
+
+  private async run(): Promise<void> {
     this.logger.log('Starting daily reputation score update job');
     const startTime = Date.now();
 
@@ -60,6 +76,43 @@ export class UpdateReputationScoresJob {
       this.logger.error('Reputation score update job failed', error);
       throw error;
     }
+  }
+
+  /**
+   * Weekly full-recompute safeguard against incremental drift.
+   * Runs every Sunday at 03:00 UTC.
+   */
+  @Cron('0 3 * * 0', { name: 'full-recompute-reputation-scores', timeZone: 'UTC' })
+  async handleFullRecompute(): Promise<void> {
+    const { ran } = await this.distributedLock.withLock(
+      `${LOCK_KEY}:full-recompute`,
+      LOCK_TTL_MS,
+      () => this.runFullRecompute(),
+    );
+    if (!ran) {
+      this.logger.log('Skipping full recompute — another replica is running it');
+    }
+  }
+
+  private async runFullRecompute(): Promise<void> {
+    this.logger.log('Starting weekly full reputation recompute (drift safeguard)');
+    const startTime = Date.now();
+    const metrics = await this.fetchAllProviderMetrics();
+
+    if (metrics.length === 0) {
+      this.logger.warn('No provider metrics found — skipping full recompute');
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      metrics.map((m) => this.reputationScoringService.fullRecompute(m)),
+    );
+
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(
+      `Full recompute finished in ${elapsed}s: ${metrics.length - failed} succeeded, ${failed} failed`,
+    );
   }
 
   /**

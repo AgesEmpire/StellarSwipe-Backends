@@ -18,16 +18,23 @@ export class FeatureFlagGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest();
-    const userId = request.user?.id || request.query?.userId || request.body?.userId;
+    // For admin/system-triggered workflows there may be no authenticated end-user;
+    // fall back to a stable bucket so boolean/global flags can still be evaluated.
+    const userId =
+      request.user?.id || request.query?.userId || request.body?.userId || 'system';
 
-    if (!userId) {
-      throw new ForbiddenException('User ID required for feature flag evaluation');
-    }
+    const tenantId = request.user?.tenantId || request.headers?.['x-tenant-id'];
+    const result = await this.flagsService.evaluateFlag(flagName, userId, {
+      tenantId,
+      environment: process.env.NODE_ENV,
+    });
 
-    const result = await this.flagsService.evaluateFlag(flagName, userId);
-    
     if (!result.enabled) {
-      throw new ForbiddenException(`Feature ${flagName} is not enabled for this user`);
+      throw new ForbiddenException(
+        result.fallback
+          ? `Feature ${flagName} is unavailable (safe fallback: ${result.reason})`
+          : `Feature ${flagName} is not enabled for this user`,
+      );
     }
 
     request.featureVariant = result.variant;

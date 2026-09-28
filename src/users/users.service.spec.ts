@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { UsersService } from './users.service';
 import { User } from './entities/user.entity';
 import { UserPreference } from './entities/user-preference.entity';
@@ -13,11 +14,13 @@ describe('UsersService', () => {
   let userRepository: ReturnType<typeof createMockRepository>;
   let preferenceRepository: ReturnType<typeof createMockRepository>;
   let sessionRepository: ReturnType<typeof createMockRepository>;
+  let eventEmitter: { emit: jest.Mock };
 
   beforeEach(async () => {
     userRepository = createMockRepository<User>();
     preferenceRepository = createMockRepository<UserPreference>();
     sessionRepository = createMockRepository<Session>();
+    eventEmitter = { emit: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -25,6 +28,7 @@ describe('UsersService', () => {
         { provide: getRepositoryToken(User), useValue: userRepository },
         { provide: getRepositoryToken(UserPreference), useValue: preferenceRepository },
         { provide: getRepositoryToken(Session), useValue: sessionRepository },
+        { provide: EventEmitter2, useValue: eventEmitter },
       ],
     }).compile();
 
@@ -53,6 +57,23 @@ describe('UsersService', () => {
       expect(result).toBeDefined();
       expect(userRepository.save).toHaveBeenCalled();
       expect(preferenceRepository.save).toHaveBeenCalled();
+    });
+
+    it('emits a provider.created event so the provider becomes searchable', async () => {
+      const dto = { username: 'testuser', walletAddress: 'GABC123...' };
+      const user = userFactory(dto);
+      const preference = { id: 'pref-123', userId: user.id };
+
+      userRepository.findOne.mockResolvedValue(null);
+      userRepository.create.mockReturnValue(user);
+      userRepository.save.mockResolvedValue(user);
+      preferenceRepository.create.mockReturnValue(preference);
+      preferenceRepository.save.mockResolvedValue(preference);
+      userRepository.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(user);
+
+      const result = await service.createUser(dto);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith('provider.created', result);
     });
 
     it('should throw ConflictException if wallet already exists', async () => {

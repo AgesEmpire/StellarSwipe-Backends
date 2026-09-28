@@ -1,16 +1,37 @@
 import { Module } from '@nestjs/common';
 import { TerminusModule } from '@nestjs/terminus';
+import { BullModule } from '@nestjs/bull';
 import { HealthController } from './health.controller';
 import {
   StellarHealthIndicator,
   SorobanHealthIndicator,
   DatabaseHealthIndicator,
   RedisHealthIndicator,
+  QueueHealthIndicator,
+  KafkaHealthIndicator,
+  DatabasePoolHealthIndicator,
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
+import { HealthSummaryService } from './health-summary.service';
+import { ReadinessService } from './readiness.service';
+import { MonitoringModule } from '../monitoring/monitoring.module';
+import { SyntheticMonitoringService } from './synthetic-monitoring.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from '../users/entities/user.entity';
+import { Signal } from '../signals/entities/signal.entity';
+import { Trade } from '../trades/entities/trade.entity';
+import { StreamingModule } from '../streaming/streaming.module';
+import { DatabaseOptimizationModule } from '../database/database.module';
 
 @Module({
-  imports: [TerminusModule],
+  imports: [
+    TerminusModule,
+    MonitoringModule,
+    BullModule.registerQueue({ name: 'priority-queue' }),
+    TypeOrmModule.forFeature([User, Signal, Trade]),
+    StreamingModule,
+    DatabaseOptimizationModule,
+  ],
   controllers: [HealthController],
   providers: [
     StellarConfigService,
@@ -18,12 +39,24 @@ import { StellarConfigService } from '../config/stellar.service';
     SorobanHealthIndicator,
     DatabaseHealthIndicator,
     RedisHealthIndicator,
+    QueueHealthIndicator,
+    KafkaHealthIndicator,
+    DatabasePoolHealthIndicator,
+    HealthSummaryService,
+    SyntheticMonitoringService,
+    ReadinessService,
   ],
   exports: [
     StellarHealthIndicator,
     SorobanHealthIndicator,
     DatabaseHealthIndicator,
     RedisHealthIndicator,
+    QueueHealthIndicator,
+    KafkaHealthIndicator,
+    DatabasePoolHealthIndicator,
+    HealthSummaryService,
+    SyntheticMonitoringService,
+    ReadinessService,
   ],
 })
 export class HealthModule {}

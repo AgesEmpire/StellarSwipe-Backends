@@ -21,6 +21,24 @@ ${document.info.description ?? ''}
 
 ${(document.tags ?? []).map((t) => `- [${t.name}](#${t.name.toLowerCase().replace(/\s+/g, '-')})`).join('\n')}
 
+## Standard Error Response
+
+All API errors share the same response shape:
+
+\`\`\`
+{
+  "statusCode": 400,
+  "errorCode": "V1001",
+  "message": "Validation failed",
+  "path": "/api/v1/users",
+  "timestamp": "2026-08-19T12:00:00.000Z",
+  "requestId": "c1c0d0bb-8f70-4d5d-85fa-94d1af0d3a41",
+  "details": {
+    "email": ["email must be an email address"]
+  }
+}
+\`\`\`
+
 ## Error Codes
 
 | HTTP Status | Meaning |

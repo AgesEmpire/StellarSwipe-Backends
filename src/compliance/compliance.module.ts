@@ -10,14 +10,6 @@ import { ComplianceReportingService } from './compliance-reporting.service';
 import { ComplianceService } from './compliance.service';
 import { ComplianceController } from './compliance.controller';
 import { ComplianceLog } from './entities/compliance-log.entity';
- Management
-import { RegulatoryReportingModule } from './regulatory-reporting/regulatory-reporting.module';
-
-@Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([ComplianceLog]), RegulatoryReportingModule],
-  providers: [GeoBlockService, SanctionsScreeningService, ComplianceReportingService],
-  controllers: [ComplianceController],
-  exports: [GeoBlockService, SanctionsScreeningService, ComplianceReportingService, RegulatoryReportingModule],
 import { SuspiciousActivity } from './aml/entities/suspicious-activity.entity';
 import { AmlMonitoringService } from './aml/aml-monitoring.service';
 import { PatternDetectionService } from './aml/pattern-detection.service';
@@ -31,13 +23,27 @@ import { TradeReportExporterService } from './exporters/trade-report-exporter.se
 import { AuditTrailExporterService } from './exporters/audit-trail-exporter.service';
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
+import { TransactionLimitsModule } from './transaction-limits/transaction-limits.module';
+import { TradeEligibilityService } from './trade-eligibility.service';
+import { TradeEligibilityController } from './trade-eligibility.controller';
+import { SignedUrlGeneratorService } from './exporters/signed-url-generator.service';
+import { SignedUrlDownloadController } from './exporters/signed-url-download.controller';
 
 @Module({
   imports: [
     ConfigModule,
     ScheduleModule.forRoot(),
-    TypeOrmModule.forFeature([ComplianceLog, SuspiciousActivity, Trade, User, Signal, AuditLog]),
+    TypeOrmModule.forFeature([
+      ComplianceLog,
+      SuspiciousActivity,
+      Trade,
+      User,
+      Signal,
+      AuditLog,
+      TradeEligibilityDecision,
+    ]),
     BullModule.registerQueue({ name: AML_QUEUE }),
+    TransactionLimitsModule,
   ],
   providers: [
     GeoBlockService,
@@ -52,16 +58,19 @@ import { FinancialReportGenerator } from './reports/financial-report.generator';
     AuditTrailExporterService,
     GdprReportGenerator,
     FinancialReportGenerator,
+    TradeEligibilityService,
+    SignedUrlGeneratorService,
   ],
-  controllers: [ComplianceController],
+  controllers: [ComplianceController, TradeEligibilityController, SignedUrlDownloadController],
   exports: [
     GeoBlockService,
     SanctionsScreeningService,
     ComplianceReportingService,
     ComplianceService,
     AmlMonitoringService,
+    TransactionLimitsModule,
+    TradeEligibilityService,
   ],
-main
 })
 export class ComplianceModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

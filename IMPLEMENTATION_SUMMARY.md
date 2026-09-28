@@ -1,202 +1,293 @@
-# Implementation Summary: Environment-Specific Configuration Management
+# Pull Request: Implement Issues #530, #532, #533
 
-**Issue**: [#8 - Implement Environment-Specific Configuration Management](https://github.com/AgesEmpire/StellarSwipe-Backends/issues/8)
+## Summary
 
-**Status**: ✅ Completed
+This PR implements three critical backend infrastructure features:
+- **Issue #530**: Health checks endpoints for container orchestration
+- **Issue #532**: Cache invalidation system for signal updates and trades
+- **Issue #533**: Market data ingestion pipeline for Stellar asset pairs
 
-## Overview
-
-Implemented a robust, type-safe configuration management system for StellarSwipe Backend that supports multiple environments (development, testnet, mainnet) with Joi validation and secrets management.
-
-## What Was Implemented
-
-### 1. Configuration Schema & Types
-- **[src/config/schemas/config.interface.ts](src/config/schemas/config.interface.ts)**: TypeScript interfaces for all configuration types (AppConfig, DatabaseConfig, StellarConfig, RedisConfig, JwtConfig, SentryConfig)
-- **[src/config/schemas/config.schema.ts](src/config/schemas/config.schema.ts)**: Joi validation schema that validates all environment variables on startup
-
-### 2. Environment-Specific Configuration
-- **[src/config/environments/development.ts](src/config/environments/development.ts)**: Development environment defaults
-- **[src/config/environments/testnet.ts](src/config/environments/testnet.ts)**: Testnet environment defaults
-- **[src/config/environments/mainnet.ts](src/config/environments/mainnet.ts)**: Mainnet environment defaults
-- **[src/config/configuration.ts](src/config/configuration.ts)**: Environment orchestration logic
-
-### 3. Configuration Modules
-Updated all existing config modules to use type-safe interfaces:
-- **[src/config/app.config.ts](src/config/app.config.ts)**: Application & Sentry configuration
-- **[src/config/database.config.ts](src/config/database.config.ts)**: Database & Redis configuration
-- **[src/config/stellar.config.ts](src/config/stellar.config.ts)**: Stellar network configuration with auto-detection
-- **[src/config/jwt.config.ts](src/config/jwt.config.ts)**: JWT authentication configuration (new)
-
-### 4. Environment Files
-- **[.env.development](.env.development)**: Development environment template
-- **[.env.testnet](.env.testnet)**: Testnet environment template
-- **[.env.mainnet](.env.mainnet)**: Mainnet environment template
-- **[.env.example](.env.example)**: Comprehensive example with all variables documented
-
-### 5. Application Integration
-- **[src/app.module.ts](src/app.module.ts)**: Integrated Joi validation schema and environment-specific file loading
-- **[src/main.ts](src/main.ts)**: Fixed to use correct configuration paths and variables
-
-### 6. Security & Secrets Management
-- **[.gitignore](.gitignore)**: Updated to ensure all environment files with secrets are never committed
-- Added patterns for: `.env`, `.env.*`, `*.pem`, `*.key`, `credentials.json`, etc.
-
-### 7. Documentation
-- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**: Comprehensive configuration guide with:
-  - Quick start guide
-  - Complete environment variables reference
-  - Type-safe access patterns
-  - Validation documentation
-  - Secrets management best practices
-  - Troubleshooting guide
-- **[src/config/README.md](src/config/README.md)**: Configuration module documentation
-
-### 8. Bug Fixes
-- Resolved merge conflict in [src/config/stellar.service.ts](src/config/stellar.service.ts)
-- Fixed merge conflict in [package.json](package.json)
-- Fixed Sentry integration to use `nodeProfilingIntegration()` instead of deprecated `ProfilingIntegration`
-- Fixed `nest-cli.json` plugin configuration issue
-- Updated Sentry service to use correct config paths (`sentry.*` instead of `app.sentry.*`)
-
-## Features Implemented
-
-✅ **Environment-specific config files** - Separate configs for development, testnet, mainnet
-✅ **Secrets management** - Environment files gitignored, templates provided
-✅ **Configuration validation on startup** - Joi schema validates all required variables
-✅ **Easy environment switching** - Simple `NODE_ENV` variable controls environment
-✅ **Type-safe configuration access** - TypeScript interfaces for all config objects
-✅ **Multiple network support** - Testnet and mainnet with correct URLs
-✅ **JWT configuration** - Secure token management
-✅ **Comprehensive documentation** - Full guides and examples
-
-## File Structure
-
-```
-src/config/
-├── schemas/
-│   ├── config.interface.ts    # TypeScript interfaces
-│   └── config.schema.ts        # Joi validation schema
-├── environments/
-│   ├── development.ts          # Development defaults
-│   ├── testnet.ts             # Testnet defaults
-│   └── mainnet.ts             # Mainnet defaults
-├── configuration.ts            # Environment orchestrator
-├── app.config.ts              # App & Sentry config
-├── database.config.ts         # Database & Redis config
-├── stellar.config.ts          # Stellar network config
-├── jwt.config.ts              # JWT config
-├── stellar.service.ts         # Stellar config service
-└── README.md                  # Module documentation
-
-.env.development               # Development template
-.env.testnet                   # Testnet template
-.env.mainnet                   # Mainnet template
-.env.example                   # Example with docs
-
-docs/
-└── CONFIGURATION.md           # Complete configuration guide
-```
-
-## Environment Variables
-
-All required variables are documented in:
-- [.env.example](.env.example)
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-
-### Key Variables
-- `NODE_ENV`: Environment type (development, testnet, mainnet)
-- `DATABASE_*`: PostgreSQL connection settings
-- `REDIS_*`: Redis connection settings
-- `STELLAR_NETWORK`: Stellar network (testnet or mainnet)
-- `JWT_SECRET`: JWT signing secret (min 32 characters)
-- `SENTRY_DSN`: Optional error tracking
-
-## Validation
-
-The configuration validates on application startup:
-- Required variables must be present
-- Types must match (string, number, boolean)
-- Enums must match allowed values
-- URLs must be valid
-- JWT secret must be at least 32 characters
-
-**If validation fails, the application will not start.**
-
-## Usage
-
-### Quick Start
-
-```bash
-# Development
-cp .env.development .env
-npm run start:dev
-
-# Testnet
-cp .env.testnet .env
-NODE_ENV=testnet npm run start
-
-# Mainnet
-cp .env.mainnet .env
-NODE_ENV=mainnet npm run start:prod
-```
-
-### Type-Safe Access
-
-```typescript
-import { ConfigService } from '@nestjs/config';
-
-constructor(private config: ConfigService) {}
-
-const port = this.config.get<number>('app.port');
-const network = this.config.get<string>('stellar.network');
-```
-
-## Testing
-
-Build successful:
-```bash
-npm run build  # ✅ Passes
-```
-
-## Security Considerations
-
-- ✅ All `.env` files are gitignored
-- ✅ Secrets never in source control
-- ✅ JWT secrets require minimum 32 characters
-- ✅ Production uses AWS Secrets Manager (documented)
-- ✅ Database SSL enabled for mainnet
-- ✅ Sentry sanitizes sensitive headers
-
-## Dependencies Added
-
-- `joi@^18.0.2`: Configuration validation
-
-## Next Steps (Optional Enhancements)
-
-1. **AWS Secrets Manager Integration**: Implement automatic secret loading from AWS Secrets Manager for production
-2. **Config Caching**: Optimize config access with caching layer
-3. **Hot Reload**: Support config hot-reloading without restart (for non-critical changes)
-4. **Config Service Tests**: Add unit tests for configuration validation
-5. **Migration Guide**: Document migration from old config system
-
-## Documentation
-
-- **Configuration Guide**: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- **Config Module README**: [src/config/README.md](src/config/README.md)
-- **Environment Examples**: `.env.example`, `.env.development`, `.env.testnet`, `.env.mainnet`
-
-## Validation Checklist
-
-✅ App fails to start with invalid config
-✅ Environment switching works (NODE_ENV controls behavior)
-✅ Secrets never in source control (gitignored)
-✅ Type-safe config access throughout app
-✅ Environment-specific config files created
-✅ Configuration validation on startup
-✅ Easy environment switching via NODE_ENV
-✅ Comprehensive documentation provided
+All implementations include comprehensive test coverage and production-ready error handling.
 
 ---
 
-**Implementation Date**: 2026-01-21
-**Implemented By**: Claude Sonnet 4.5
+## Issue #530: Health Checks for Backend APIs
+
+### Changes Made
+
+#### 1. **New Endpoints** (`src/health/health.controller.ts`)
+- ✅ `/health/healthz` - Liveness probe for Kubernetes (minimal checks)
+- ✅ `/health/ready` - Readiness probe for container orchestrators (comprehensive checks)
+- Existing endpoints remain for backward compatibility (`/health`, `/health/db`, `/health/cache`, etc.)
+
+#### 2. **Health Status Validation**
+- Database connectivity checks
+- Redis cache availability verification
+- Stellar network reachability testing
+- Soroban smart contract endpoint verification
+
+#### 3. **Response Format**
+- Detailed failure reasons included in responses
+- HTTP status codes align with health state
+- Event logging for monitoring and alerting
+
+#### 4. **Testing** (`src/health/health.controller.spec.ts`)
+- Tests for healthy and degraded states
+- Verification of dependency checks per endpoint
+- Startup health check retry logic verification
+- Detailed response format validation
+
+### Acceptance Criteria Met
+- ✅ `/healthz` and `/ready` endpoints implemented
+- ✅ Health checks verify DB, cache, and Soroban endpoint reachability
+- ✅ Detailed failure reasons returned
+- ✅ Container orchestrators can use these endpoints
+- ✅ Tests confirm healthy and degraded states are reported correctly
+
+---
+
+## Issue #532: Cache Invalidation for Updated Signals
+
+### Changes Made
+
+#### 1. **Enhanced Cache Invalidation Service** (`src/cache/cache-invalidation.service.ts`)
+- **Signal Update Invalidation**: Invalidates feed, asset-specific, and provider-specific caches
+  - `invalidateSignalUpdate(signalId, assetPair?, providerId?)` method
+  - Handles signal creation, status changes, updates, and expiration
+  
+- **Trade Completion Invalidation**: Invalidates portfolio and leaderboard caches
+  - `invalidateAfterTrade(userId, assetPair?, tradeAmount?)` method
+  - Refreshes user rankings and dashboard data
+  
+- **Dashboard Invalidation**: Clears aggregated dashboard data
+  - `invalidateDashboard(userId)` method
+  - Triggers after trades and portfolio updates
+
+- **Event Emission**: All invalidation operations emit events for monitoring
+  - `cache.invalidated.signal` - Signal cache invalidation
+  - `cache.invalidated.trade` - Trade completion cache invalidation
+  - `cache.invalidated.dashboard` - Dashboard cache invalidation
+  - `cache.invalidated.user` - User data cache invalidation
+
+#### 2. **Event Listeners** 
+- **Signal Cache Invalidation Listener** (`src/cache/signal-cache-invalidation.listener.ts`)
+  - Listens for events: `signal.created`, `signal.status-changed`, `signal.updated`, `signal.expired`
+  - Automatically triggers cache invalidation on signal events
+  
+- **Trade Cache Invalidation Listener** (`src/cache/trade-cache-invalidation.listener.ts`)
+  - Listens for events: `trade.executed`, `trade.closed`, `portfolio.updated`, `metrics.updated`
+  - Maintains portfolio and leaderboard cache coherence
+
+#### 3. **Cache Key Management**
+- Centralized cache key builders for consistency
+- `SignalCacheKeys` - Feed and signal-specific cache keys
+- `LeaderboardCacheKeys` - Leaderboard cache keys
+- `UserCacheKeys` - User data cache keys (existing)
+
+#### 4. **Monitoring and Metrics** 
+- `getInvalidationMetrics()` - Reports listener counts and event names
+- Event timestamps for tracking invalidation latency
+- Logging for cache coherence auditing
+
+#### 5. **Testing** (`src/cache/cache-invalidation.service.spec.ts`)
+- Signal update invalidation tests
+- Portfolio and leaderboard invalidation tests
+- Dashboard invalidation tests
+- Cache coherence and stale data prevention tests
+- Concurrent invalidation handling
+- Event emission verification
+- Monitoring metrics tests
+
+### Acceptance Criteria Met
+- ✅ Signal update events invalidate relevant cached feed pages
+- ✅ Portfolio and leaderboard cache refresh after trades
+- ✅ Invalidations are safe and avoid stale user-facing data
+- ✅ Event monitoring for invalidation and cache coherence
+- ✅ Tests confirm updated data is returned after invalidation
+
+---
+
+## Issue #533: Market Data Ingestion Pipeline
+
+### Changes Made
+
+#### 1. **Market Data Ingestion Service** (`src/market-intelligence/market-data-ingestion.service.ts`)
+- **Multi-Source Data Ingestion**:
+  - Primary source: Stellar DEX (SDEX) via `SdexPriceProvider`
+  - Fallback source: CoinGecko price oracle via `CoinGeckoPriceProvider`
+  - Automatic failover when primary source fails
+
+- **Periodic Ingestion**:
+  - `ingestMarketData(assetPair)` - Fetch and store single asset pair
+  - `ingestAllMarketData()` - Bulk ingestion for all supported assets
+  - Concurrent ingestion with configurable concurrency limit (3)
+  - Prevents concurrent ingestion of same asset pair
+
+- **Data Normalization**:
+  - Converts raw price data to standard format
+  - Handles 8-decimal precision for Stellar assets
+  - Normalizes liquidity and volume data
+  - Order book aggregation from SDEX
+
+- **Failure Handling**:
+  - 3-attempt retry logic with exponential backoff
+  - Graceful degradation when all sources fail
+  - Doesn't block backend availability
+  - Comprehensive error logging
+
+- **Caching**:
+  - 5-minute cache TTL for market snapshots
+  - Recent snapshots stored in Redis
+  - Database fallback for persistent storage
+
+- **Event Emission**:
+  - `market.data.ingested` - Successful ingestion
+  - `market.ingestion.failed` - All sources failed
+  - `market.ingestion.error` - Unexpected errors
+  - `market.ingestion.completed` - Bulk ingestion completion with metrics
+
+#### 2. **Market Snapshot Entity** (`src/market-intelligence/entities/market-snapshot.entity.ts`)
+- Persistent storage for market data
+- Fields: assetPair, baseAsset, counterAsset, price, liquidity, volume24h
+- Order book snapshot storage (JSON)
+- Metadata including bid-ask spread, 24h high/low, price change
+- Indexes for efficient querying by asset pair and timestamp
+
+#### 3. **Scheduled Ingestion Jobs** (`src/market-intelligence/jobs/market-data-ingestion.job.ts`)
+- **Bulk Ingestion Job**: Every 5 minutes for all supported assets
+- **Critical Asset Job**: Every minute for BTC/USD, ETH/USD, XLM/USD
+- Job health tracking and metrics
+- Event emission for monitoring
+
+#### 4. **Market Data API Controller** (`src/market-intelligence/market-data-ingestion.controller.ts`)
+- `POST /api/v1/market-intelligence/ingestion/ingest-all` - Trigger bulk ingestion
+- `POST /api/v1/market-intelligence/ingestion/ingest/:assetPair` - Trigger single asset ingestion
+- `GET /api/v1/market-intelligence/ingestion/snapshot/:assetPair` - Get latest snapshot
+- `GET /api/v1/market-intelligence/ingestion/supported-assets` - List supported assets
+- `GET /api/v1/market-intelligence/ingestion/health` - Pipeline health and metrics
+- `POST /api/v1/market-intelligence/ingestion/add-asset/:assetPair` - Add new asset at runtime
+
+#### 5. **Module Integration** (`src/market-intelligence/market-intelligence.module.ts`)
+- Integrated into MarketIntelligenceModule
+- TypeORM entity registration for MarketSnapshot
+- Scheduled job providers
+- Service exports for other modules
+
+#### 6. **Testing** (`src/market-intelligence/market-data-ingestion.service.spec.ts`)
+- Successful SDEX ingestion
+- CoinGecko fallback on SDEX failure
+- Retry logic verification (3 attempts with backoff)
+- Concurrent ingestion prevention
+- Partial failure handling in bulk ingestion
+- Cache management and fallback
+- Event emission on success/failure
+- Error resilience (doesn't block backend)
+- Asset management (add/list)
+- Monitoring metrics
+
+### Supported Asset Pairs
+- XLM/USD, BTC/USD, ETH/USD
+- XLM/EUR, BTC/XLM, ETH/XLM
+- Extensible at runtime
+
+### Acceptance Criteria Met
+- ✅ Pipeline periodically ingests price and liquidity data from SDEX and price oracles
+- ✅ Recent market snapshots stored in cache and database
+- ✅ Data normalized for feed and execution use
+- ✅ Failures retried and logged without blocking backend
+- ✅ Tests validate ingestion of sample market data payloads
+
+---
+
+## Implementation Details
+
+### Cache Module Updates
+- Added `SignalCacheInvalidationListener` provider
+- Added `TradeCacheInvalidationListener` provider
+- Exported both listeners for use throughout application
+
+### Event System Integration
+- Uses NestJS `@nestjs/event-emitter` for event-driven cache invalidation
+- Events are async to prevent blocking operations
+- Error handling in listeners prevents cascade failures
+
+### Error Handling Strategy
+- Non-blocking failures (market data not cached but service available)
+- Comprehensive logging for debugging
+- Event emission for monitoring
+- Graceful degradation
+
+---
+
+## Testing Summary
+
+### Coverage by Issue
+- **#530**: 10 test cases covering liveness, readiness, health states
+- **#532**: 25+ test cases covering cache invalidation, monitoring, event emission
+- **#533**: 20+ test cases covering ingestion, retry, concurrency, error handling
+
+### Key Test Scenarios
+- ✅ Healthy and degraded states
+- ✅ Cache coherence after updates
+- ✅ Concurrent operation safety
+- ✅ Failure and retry logic
+- ✅ Event emission and monitoring
+- ✅ Data normalization
+- ✅ Edge cases and error conditions
+
+---
+
+## Migration Notes
+
+### No Breaking Changes
+- All existing endpoints remain functional
+- New endpoints added alongside existing ones
+- Cache invalidation is backward compatible
+- MarketDataIngestion is new module without affecting existing code
+
+### Database Migration (Optional)
+- New `market_snapshots` table created by TypeORM
+- No impact on existing data
+- Indexes created for performance
+
+### Configuration
+- No new configuration required
+- Uses existing Redis cache configuration
+- Uses existing database configuration
+
+---
+
+## Future Enhancements
+- Real-time market data via WebSocket subscriptions
+- Additional price source integrations (Kraken, Binance)
+- Advanced market analysis and indicators
+- Cache warming strategies
+- Distributed tracing for cache invalidation
+
+---
+
+## Files Modified/Created
+
+### Modified Files
+1. `src/health/health.controller.ts` - Added /healthz and /ready endpoints
+2. `src/cache/cache-invalidation.service.ts` - Enhanced with signal/trade invalidation
+3. `src/cache/cache.module.ts` - Added listeners to providers
+4. `src/market-intelligence/market-intelligence.module.ts` - Added new services
+
+### Created Files
+1. `src/cache/signal-cache-invalidation.listener.ts` - Signal cache invalidation listener
+2. `src/cache/trade-cache-invalidation.listener.ts` - Trade cache invalidation listener
+3. `src/market-intelligence/market-data-ingestion.service.ts` - Market data ingestion service
+4. `src/market-intelligence/market-data-ingestion.controller.ts` - API endpoints
+5. `src/market-intelligence/jobs/market-data-ingestion.job.ts` - Scheduled jobs
+6. `src/market-intelligence/entities/market-snapshot.entity.ts` - Database entity
+7. `src/health/health.controller.spec.ts` - Health check tests
+8. `src/cache/cache-invalidation.service.spec.ts` - Cache invalidation tests
+9. `src/market-intelligence/market-data-ingestion.service.spec.ts` - Market data ingestion tests
+
+---
+
+## Related Issues
+- Closes #530: Implement health checks for backend APIs
+- Closes #532: Implement cache invalidation for updated signals
+- Closes #533: Build market data ingestion pipeline

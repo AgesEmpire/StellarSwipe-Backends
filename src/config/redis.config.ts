@@ -17,6 +17,17 @@ export const redisCacheConfig = registerAs('redisCache', () => ({
     maxRetriesPerRequest: 3,
     enableReadyCheck: true,
 
+    // Every cache command is bounded independently of Redis reconnect retries.
+    operationTimeoutMs: parseInt(process.env.REDIS_OPERATION_TIMEOUT_MS || '500', 10),
+    recoveryAlertThreshold: parseInt(process.env.REDIS_RECOVERY_ALERT_THRESHOLD || '3', 10),
+
+    // Cache reads fail open; session reads fail closed; rate limits fail open.
+    policies: {
+        cache: process.env.REDIS_CACHE_FAILURE_POLICY || 'fail-open',
+        session: process.env.REDIS_SESSION_FAILURE_POLICY || 'fail-closed',
+        rateLimit: process.env.REDIS_RATE_LIMIT_FAILURE_POLICY || 'fail-open',
+    },
+
     // Key prefix for namespacing
     keyPrefix: 'stellarswipe:',
 

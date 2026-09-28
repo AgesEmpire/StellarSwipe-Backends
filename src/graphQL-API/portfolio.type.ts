@@ -1,4 +1,5 @@
 import { ObjectType, Field, ID, Float, Int } from '@nestjs/graphql';
+import { AuthorizedField } from './plugins/field-auth.plugin';
 
 @ObjectType()
 export class PositionType {
@@ -74,10 +75,14 @@ export class PortfolioType {
   @Field(() => ID)
   id: string;
 
-  @Field()
+  @AuthorizedField(() => String, {
+    permissions: ['portfolio:read-user-id'],
+  })
   userId: string;
 
-  @Field(() => Float)
+  @AuthorizedField(() => Float, {
+    permissions: ['portfolio:read-value'],
+  })
   totalValueUsd: number;
 
   @Field(() => Float)

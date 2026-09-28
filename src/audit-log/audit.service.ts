@@ -8,6 +8,7 @@ import { Repository, Between, FindOptionsWhere, LessThan } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AuditLog, AuditAction, AuditStatus } from './entities/audit-log.entity';
 import { AuditQueryDto, CreateAuditLogDto } from './dto/audit-query.dto';
+import { resolveRetentionDays } from '../common/retention/retention.config';
 
 const SENSITIVE_FIELDS = [
   'password',
@@ -37,7 +38,8 @@ export interface AuditLogPage {
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
-  private readonly RETENTION_DAYS = 730; // 2 years
+  /** Configurable via RETENTION_AUDIT_LOG_DAYS — defaults to 2 years. See docs/guides/retention-policy.md. */
+  private readonly RETENTION_DAYS = resolveRetentionDays('auditLogDays');
 
   constructor(
     @InjectRepository(AuditLog)

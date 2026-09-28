@@ -17,6 +17,7 @@ import { PaginationInput } from '../inputs/pagination.input';
 import { ProvidersService } from '../../providers/providers.service';
 import { DataLoaderSet } from '../utils/dataloader-factory';
 import { Public } from '../../common/decorators/public.decorator';
+import { RateLimit, RateLimitTier } from '../../common/decorators/rate-limit.decorator';
 
 interface GqlContext {
   loaders: DataLoaderSet;
@@ -32,6 +33,7 @@ export class ProviderResolver {
   // ─── Queries ───────────────────────────────────────────────────────────────
 
   @Public()
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 50, window: 60 })
   @Query(() => PaginatedProvidersType, {
     description: 'Paginated list of all verified signal providers',
   })
@@ -43,6 +45,7 @@ export class ProviderResolver {
   }
 
   @Public()
+  @RateLimit({ tier: RateLimitTier.PUBLIC, limit: 100, window: 60 })
   @Query(() => ProviderType, { nullable: true, description: 'Fetch a single provider by ID' })
   async provider(@Args('id', { type: () => ID }) id: string): Promise<ProviderType | null> {
     return this.providersService.findById(id);

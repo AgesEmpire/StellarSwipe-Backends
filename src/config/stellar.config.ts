@@ -33,6 +33,33 @@ export const stellarConfig = registerAs(
       networkPassphrase,
       apiTimeout: parseInt(process.env.STELLAR_API_TIMEOUT || '30000', 10),
       maxRetries: parseInt(process.env.STELLAR_MAX_RETRIES || '3', 10),
+      maxCallDepth: parseInt(process.env.STELLAR_MAX_CALL_DEPTH || '5', 10),
+      maxCallDepthViolationPolicy: (process.env.STELLAR_MAX_CALL_DEPTH_POLICY as 'reject' | 'warn') || 'reject',
+      // Bulkhead isolation for Horizon API calls. Read and write categories get
+      // dedicated, bounded concurrency pools so a degraded category cannot
+      // exhaust the shared request pool and starve the other.
+      horizonBulkhead: {
+        read: {
+          maxConcurrent: parseInt(
+            process.env.STELLAR_HORIZON_READ_MAX_CONCURRENT || '20',
+            10,
+          ),
+          maxQueue: parseInt(
+            process.env.STELLAR_HORIZON_READ_MAX_QUEUE || '100',
+            10,
+          ),
+        },
+        write: {
+          maxConcurrent: parseInt(
+            process.env.STELLAR_HORIZON_WRITE_MAX_CONCURRENT || '5',
+            10,
+          ),
+          maxQueue: parseInt(
+            process.env.STELLAR_HORIZON_WRITE_MAX_QUEUE || '25',
+            10,
+          ),
+        },
+      },
     };
   },
 );

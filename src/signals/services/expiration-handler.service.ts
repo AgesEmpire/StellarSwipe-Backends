@@ -303,18 +303,18 @@ export class ExpirationHandlerService {
   }
 
   async queueExpirationCheck(signalId: string): Promise<void> {
-    await this.expirationQueue.add('check-signal-expiration', { signalId });
+    await this.expirationQueue.add('check-signal-expiration', { signalId }, { priority: 10 }); // HIGH
   }
 
   async queueBatchExpirationCheck(): Promise<void> {
-    await this.expirationQueue.add('check-all-expirations', {});
+    await this.expirationQueue.add('check-all-expirations', {}, { priority: 100 }); // NORMAL
   }
 
   async queueGracePeriodCheck(): Promise<void> {
-    await this.expirationQueue.add('check-grace-periods', {});
+    await this.expirationQueue.add('check-grace-periods', {}, { priority: 100 }); // NORMAL
   }
 
   async queueExpirationWarnings(minutesBefore: number): Promise<void> {
-    await this.expirationQueue.add('send-expiration-warnings', { minutesBefore });
+    await this.expirationQueue.add('send-expiration-warnings', { minutesBefore }, { priority: 100 }); // NORMAL
   }
 }

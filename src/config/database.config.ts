@@ -9,11 +9,12 @@ export const databaseConfig = registerAs(
     username: process.env.DATABASE_USER || 'postgres',
     password: process.env.DATABASE_PASSWORD || 'password',
     database: process.env.DATABASE_NAME || 'stellarswipe',
-    synchronize:
-      process.env.NODE_ENV !== 'production' &&
-      process.env.NODE_ENV !== 'mainnet' &&
-      process.env.NODE_ENV !== 'public',
+    // Never auto-sync the schema outside of the test environment — all
+    // schema changes must go through versioned migrations.
+    synchronize: process.env.NODE_ENV === 'test',
     logging: process.env.DATABASE_LOGGING === 'true',
+    readTimeoutMs: parseInt(process.env.DATABASE_READ_TIMEOUT_MS || '5000', 10),
+    writeTimeoutMs: parseInt(process.env.DATABASE_WRITE_TIMEOUT_MS || '10000', 10),
     // TypeORM specific properties
     type: 'postgres',
     entities: ['dist/**/*.entity{.ts,.js}'],
@@ -36,9 +37,10 @@ export const databaseConfig = registerAs(
         10,
       ),
       statement_timeout: parseInt(
-        process.env.DATABASE_STATEMENT_TIMEOUT || '100000',
+        process.env.DATABASE_STATEMENT_TIMEOUT || process.env.DATABASE_WRITE_TIMEOUT_MS || '10000',
         10,
       ),
+      query_timeout: parseInt(process.env.DATABASE_QUERY_TIMEOUT || '10000', 10),
     },
     // Query performance settings
     maxQueryExecutionTime: parseInt(
@@ -53,6 +55,22 @@ export const databaseConfig = registerAs(
             rejectUnauthorized: false,
           }
         : undefined,
+    // Read replica configuration
+    replica: {
+      host: process.env.DATABASE_REPLICA_HOST || process.env.DATABASE_HOST || 'localhost',
+      port: parseInt(process.env.DATABASE_REPLICA_PORT || process.env.DATABASE_PORT || '5432', 10),
+      username: process.env.DATABASE_REPLICA_USER || process.env.DATABASE_USER || 'postgres',
+      password: process.env.DATABASE_REPLICA_PASSWORD || process.env.DATABASE_PASSWORD || 'password',
+      database: process.env.DATABASE_REPLICA_NAME || process.env.DATABASE_NAME || 'stellarswipe',
+      ssl:
+        process.env.NODE_ENV === 'production' ||
+        process.env.NODE_ENV === 'mainnet' ||
+        process.env.NODE_ENV === 'public'
+          ? {
+              rejectUnauthorized: false,
+            }
+          : undefined,
+    },
   }),
 );
 
