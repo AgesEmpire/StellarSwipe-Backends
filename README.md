@@ -561,3 +561,12 @@ MIT
 
 <!-- handsoff-issue-1162 -->
 - #1162: Add dead-letter handling for failed background jobs
+
+<!-- handsoff-issue-1167 -->
+- #1167: Add optimistic concurrency control for mutable resources
+
+<!-- handsoff-issue-1237 -->
+- #1237: Add Redis failover behavior tests for cache-backed services
+
+<!-- handsoff-issue-1238 -->
+- #1238: Add correlation context to scheduled and queued task logs

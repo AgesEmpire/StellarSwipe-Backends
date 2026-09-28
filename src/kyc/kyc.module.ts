@@ -10,6 +10,7 @@ import { KycService } from './kyc.service';
 import { KycController } from './kyc.controller';
 import { KycGuard } from './kyc.guard';
 import { KycEventListener } from './kyc-event.listener';
+import { KycExpiryListener } from './kyc-expiry.listener';
 import { PersonaProvider } from './providers/persona.provider';
 import { OnfidoProvider } from './providers/onfido.provider';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -27,6 +28,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     KycService,
     KycGuard,
     KycEventListener,
+    KycExpiryListener,
     PersonaProvider,
     OnfidoProvider,
   ],

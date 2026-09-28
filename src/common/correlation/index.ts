@@ -1,3 +1,4 @@
+export * from './correlation-id';
 export {
   CorrelationIdStore,
   CORRELATION_ID_HEADER,

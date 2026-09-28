@@ -71,6 +71,30 @@ Rules of thumb:
 To bypass hooks in an emergency you can pass `--no-verify` to `git commit` /
 `git push`, but please don't make a habit of it.
 
+## OpenAPI specification
+
+The committed OpenAPI specification is the source of truth for our public API
+contract. CI regenerates it deterministically and compares the result against
+the committed file; the `openapi-drift` job fails whenever controller or DTO
+changes produce undocumented API drift.
+
+### Updating the specification
+
+When a change to a controller or DTO intentionally alters the API surface:
+
+1. Regenerate the specification locally:
+   ```bash
+   npm run openapi:generate
+   ```
+2. Review the diff in the committed specification file to confirm every change
+   is intentional and documented.
+3. Commit the regenerated specification alongside the code change in the same
+   PR, so reviewers can see the API contract change next to the implementation.
+
+If CI reports drift you did not intend, revert the offending controller/DTO
+change or update the specification as above. Never edit the generated
+specification by hand — always regenerate it so the output stays deterministic.
+
 ## Architecture Decision Records (ADRs)
 
 When your PR modifies architecturally-significant code paths (GraphQL API, authentication, external integrations, etc.), you must create or reference an ADR documenting the decision.
