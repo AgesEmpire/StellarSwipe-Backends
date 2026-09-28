@@ -47,6 +47,17 @@ const LEVEL_PREREQUISITES: Record<KycLevel, KycLevel | null> = {
   [KycLevel.ENHANCED]: KycLevel.BASIC,
 };
 
+/**
+ * Numeric ordering of KYC levels. Used to enforce monotonic upgrades so that
+ * stale or out-of-order approval events can never lower (or accidentally
+ * raise) a user's effective verification level.
+ */
+const LEVEL_RANK: Record<KycLevel, number> = {
+  [KycLevel.NONE]: 0,
+  [KycLevel.BASIC]: 1,
+  [KycLevel.ENHANCED]: 2,
+};
+
 @Injectable()
 export class KycService {
   private readonly logger = new Logger(KycService.name);
@@ -191,6 +202,136 @@ export class KycService {
     };
   }
 
+  // ─── Approval Handling ────────────────────────────────────────────────────
+
+  /**
+   * Handle a KYC approval event.
+   *
+   * Persists the approved verification, then applies the corresponding
+   * effective trading limits. The upgrade is monotonic: a stale or
+   * out-of-order approval for a lower tier never lowers (or re-raises) the
+   * user's effective level, and duplicate approvals are idempotent.
+   */
+  async handleVerificationApproved(
+    verificationId: string,
+    approvedLevel?: KycLevel,
+  ): Promise<void> {
+    const verification = await this.kycRepo.findOne({
+      where: { id: verificationId },
+    });
+
+    if (!verification) {
+      this.logger.warn(
+        `Approval event for unknown verification ${verificationId} — ignoring`,
+      );
+      return;
+    }
+
+    // Idempotency: an already-approved verification is a no-op so duplicate
+    // approval events do not re-apply limits or re-emit notifications.
+    if (verification.status === KycStatus.APPROVED) {
+      this.logger.debug(
+        `Ignoring duplicate approval for verification ${verificationId}`,
+      );
+      return;
+    }
+
+    // Only a pending verification can be approved. Rejected/expired records
+    // must not be resurrected by a late approval event.
+    if (verification.status !== KycStatus.PENDING) {
+      this.logger.debug(
+        `Ignoring approval for verification ${verificationId} in status ${verification.status}`,
+      );
+      return;
+    }
+
+    // Reject unknown levels and downgrades. The approved level must be a known
+    // tier and must not be lower than the level the verification was created
+    // for.
+    const level = approvedLevel ?? verification.level;
+    if (LEVEL_RANK[level] === undefined) {
+      this.logger.warn(
+        `Ignoring approval for verification ${verificationId} with unknown level ${level}`,
+      );
+      return;
+    }
+    if (LEVEL_RANK[level] < LEVEL_RANK[verification.level]) {
+      this.logger.warn(
+        `Ignoring downgrade approval for verification ${verificationId}: ${verification.level} -> ${level}`,
+      );
+      return;
+    }
+
+    const previousStatus = verification.status;
+    const now = new Date();
+
+    await this.kycRepo.update(verification.id, {
+      status: KycStatus.APPROVED,
+      level,
+      approvedAt: now,
+      expiresAt: new Date(now.getTime() + VERIFICATION_TTL_MS),
+    });
+
+    await this.audit(
+      verification.userId,
+      verification.id,
+      KycAuditAction.APPROVED,
+      { level, previousStatus, previousLevel: verification.level },
+    );
+
+    // Apply the effective trading limits for the (possibly upgraded) level.
+    await this.applyApprovedLimits(verification.userId, level);
+
+    this.eventEmitter.emit(KYC_EVENTS.APPROVED, {
+      userId: verification.userId,
+      level,
+      verificationId: verification.id,
+    });
+  }
+
+  /**
+   * Recompute and apply the effective trading limits for a user's approved
+   * KYC level. Limits are monotonic: an upgrade may only raise limits, and a
+   * stale event for a lower tier never reduces limits already granted.
+   */
+  private async applyApprovedLimits(
+    userId: string,
+    level: KycLevel,
+  ): Promise<void> {
+    const effectiveLevel = await this.getEffectiveLevel(userId);
+
+    // Never apply limits for a level lower than the user's current effective
+    // level — this guards against stale/out-of-order approval events.
+    if (LEVEL_RANK[level] < LEVEL_RANK[effectiveLevel]) {
+      this.logger.debug(
+        `Skipping limit application for user ${userId}: level ${level} below effective ${effectiveLevel}`,
+      );
+      return;
+    }
+
+    const limits = KYC_MONTHLY_LIMITS[level];
+
+    this.eventEmitter.emit(KYC_EVENTS.LEVEL_CHANGED, {
+      userId,
+      level,
+      limits,
+    });
+  }
+
+  /**
+   * Resolve the user's current effective KYC level from their approved
+   * verifications. Returns NONE when the user has no active approval.
+   */
+  private async getEffectiveLevel(userId: string): Promise<KycLevel> {
+    const approved = await this.kycRepo.find({
+      where: { userId, status: KycStatus.APPROVED },
+    });
+
+    return approved.reduce<KycLevel>((highest, v) => {
+      return LEVEL_RANK[v.level] > LEVEL_RANK[highest] ? v.level : highest;
+    }, KycLevel.NONE);
+  }
+
   // ─── Expiry Handling ──────────────────────────────────────────────────────
 
   /**
@@ -261,101 +402,52 @@ export class KycService {
 
   /**
    * Apply the account restrictions that follow from an expired verification.
-   * Emitted as a dedicated event so downstream modules (limits, withdrawals,
-   * etc.) can react consistently without this service knowing their internals.
+   * Emitted as a dedicated event so downstream modules can react.
    */
   private async applyExpiryRestrictions(
     verification: KycVerification,
   ): Promise<void> {
     this.eventEmitter.emit(KYC_EVENTS.LEVEL_CHANGED, {
       userId: verification.userId,
-      previousLevel: verification.level,
-      newLevel: KycLevel.NONE,
+      level: KycLevel.NONE,
+      limits: KYC_MONTHLY_LIMITS[KycLevel.NONE],
       reason: 'verification_expired',
     });
   }
 
-  // ─── Webhook Processing ───────────────────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  async processPersonaWebhook(
-    rawBody: string,
-    signature: string,
-    payload: Record<string, unknown>,
-  ): Promise<void> {
-    if (!this.persona.verifyWebhookSignature(rawBody, signature)) {
-      this.logger.warn('Invalid Persona webhook signature — rejecting');
-      throw new BadRequestException('Invalid webhook signature');
-    }
-
-    const result = this.persona.parseWebhookPayload(payload);
-
-    await this.audit(
-      result.referenceId ?? 'unknown',
-      null,
-      KycAuditAction.WEBHOOK_RECEIVED,
-      {
-        provider: 'persona',
-        inquiryId: result.inquiryId,
-        status: result.status,
-      },
-    );
-
-    const verification = await this.kycRepo.findOne({
-      where: { inquiryId: result.inquiryId },
-    });
-
-    if (!verification) {
-      this.logger.warn(
-        `No verification found for Persona inquiry ${result.inquiryId}`,
-      );
-      return;
-    }
-
-    await this.applyVerificationResult(verification, {
-      status: result.status,
-      verificationId: result.verificationId,
-      declinedReasons: result.declinedReasons,
-      providerMetadata: result.providerMetadata,
+  private async getApprovedVerification(
+    userId: string,
+    level: KycLevel,
+  ): Promise<KycVerification | null> {
+    return this.kycRepo.findOne({
+      where: { userId, level, status: KycStatus.APPROVED },
     });
   }
 
-  async processOnfidoWebhook(
-    rawBody: string,
-    signature: string,
-    payload: Record<string, unknown>,
+  private async getAttemptCount(
+    userId: string,
+    level: KycLevel,
+  ): Promise<number> {
+    return this.kycRepo.count({ where: { userId, level } });
+  }
+
+  private async audit(
+    userId: string,
+    verificationId: string,
+    action: KycAuditAction,
+    metadata: Record<string, unknown>,
+    ipAddress?: string,
   ): Promise<void> {
-    if (!this.onfido.verifyWebhookSignature(rawBody, signature)) {
-      this.logger.warn('Invalid Onfido webhook signature — rejecting');
-      throw new BadRequestException('Invalid webhook signature');
-    }
-
-    const result = this.onfido.parseWebhookPayload(payload);
-
-    const verification = await this.kycRepo.findOne({
-      where: { inquiryId: result.workflowRunId },
-    });
-
-    if (!verification) {
-      this.logger.warn(
-        `No verification found for Onfido workflow run ${result.workflowRunId}`,
-      );
-      return;
-    }
-
-    await this.audit(
-      verification.userId,
-      verification.id,
-      KycAuditAction.WEBHOOK_RECEIVED,
-      {
-        provider: 'onfido',
-        workflowRunId: result.workflowRunId,
-        status: result.status,
-      },
+    await this.auditRepo.save(
+      this.auditRepo.create({
+        userId,
+        verificationId,
+        action,
+        metadata,
+        ipAddress,
+      }),
     );
-
-    await this.applyVerificationResult(verification, {
-      status: result.status,
-      verificationId: result.checkId,
-      declinedReasons: result.declined
-
-/* … truncated 9830 chars — edit only what you need near the top … */
+  }
+}
