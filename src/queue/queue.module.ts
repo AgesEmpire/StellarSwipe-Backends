@@ -1,12 +1,43 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
-import { PriorityQueueService } from './priority-queue.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ConfigModule } from '@nestjs/config';
+import {
+  PriorityQueueService,
+  PRIORITY_QUEUE,
+  CRITICAL_QUEUE,
+  LOW_PRIORITY_QUEUE,
+} from './priority-queue.service';
+import { QueueBackpressureService } from './queue-backpressure.service';
+import { QueueMetricsService } from './queue-metrics.service';
+import { queuePressureConfig } from './queue-pressure.config';
+import { DeadLetterService } from './dead-letter.service';
+import { DEAD_LETTER_QUEUE } from './dead-letter.constants';
+import { CorrelationModule } from '../common/correlation/correlation.module';
 
 @Module({
   imports: [
-    BullModule.registerQueue({ name: 'priority-queue' }),
+    BullModule.registerQueue(
+      { name: PRIORITY_QUEUE },
+      { name: CRITICAL_QUEUE },
+      { name: LOW_PRIORITY_QUEUE },
+      { name: DEAD_LETTER_QUEUE },
+    ),
+    ConfigModule.forFeature(queuePressureConfig),
+    ScheduleModule.forRoot(),
+    CorrelationModule,
   ],
-  providers: [PriorityQueueService],
-  exports: [PriorityQueueService],
+  providers: [
+    PriorityQueueService,
+    QueueBackpressureService,
+    QueueMetricsService,
+    DeadLetterService,
+  ],
+  exports: [
+    PriorityQueueService,
+    QueueBackpressureService,
+    QueueMetricsService,
+    DeadLetterService,
+  ],
 })
 export class QueueModule {}

@@ -12,9 +12,16 @@ import { UpiProvider } from './providers/upi.provider';
 import { RegionalRouter } from './utils/regional-router';
 import { MpesaWebhookHandler } from './webhooks/mpesa-webhook.handler';
 import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
+import { WebhookVerifierService } from '../../integrations/webhooks/webhook-verifier.service';
+import { WebhookIdempotencyModule } from '../../common/webhook-idempotency.module';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 
 @Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([LocalPayment, PaymentConfig])],
+  imports: [
+    ConfigModule,
+    TypeOrmModule.forFeature([LocalPayment, PaymentConfig]),
+    WebhookIdempotencyModule,
+  ],
   providers: [
     LocalPaymentService,
     MpesaProvider,
@@ -24,6 +31,8 @@ import { PaystackWebhookHandler } from './webhooks/paystack-webhook.handler';
     RegionalRouter,
     MpesaWebhookHandler,
     PaystackWebhookHandler,
+    WebhookVerifierService,
+    DistributedLockService,
   ],
   controllers: [LocalPaymentController],
   exports: [LocalPaymentService],

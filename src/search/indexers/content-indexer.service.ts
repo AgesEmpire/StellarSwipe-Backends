@@ -5,6 +5,9 @@ import { ProviderContent } from '../../content/entities/provider-content.entity'
 import { User } from '../../users/entities/user.entity';
 import { ElasticsearchConfigService } from '../services/elasticsearch.service';
 import { OnEvent } from '@nestjs/event-emitter';
+import { FeatureFlagsService } from '../../feature-flags/feature-flags.service';
+
+const SEARCH_INDEX_REFRESH_FLAG = 'search-index-refresh';
 
 @Injectable()
 export class ContentIndexerService {
@@ -17,21 +20,33 @@ export class ContentIndexerService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly elasticsearchService: ElasticsearchConfigService,
+    private readonly featureFlagsService: FeatureFlagsService,
   ) {}
 
   @OnEvent('content.created')
   async handleContentCreated(content: ProviderContent) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.indexContent(content);
   }
 
   @OnEvent('content.updated')
   async handleContentUpdated(content: ProviderContent) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.updateContentIndex(content);
   }
 
   @OnEvent('content.deleted')
   async handleContentDeleted(contentId: string) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.deleteContentIndex(contentId);
+  }
+
+  private async isRefreshEnabled(): Promise<boolean> {
+    const enabled = await this.featureFlagsService.isFlagEnabled(SEARCH_INDEX_REFRESH_FLAG);
+    if (!enabled) {
+      this.logger.debug(`Search index refresh skipped — '${SEARCH_INDEX_REFRESH_FLAG}' flag is disabled`);
+    }
+    return enabled;
   }
 
   async indexContent(content: ProviderContent): Promise<void> {

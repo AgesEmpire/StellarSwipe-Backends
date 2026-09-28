@@ -7,25 +7,20 @@ import {
   Max,
   MaxLength,
   ArrayNotEmpty,
-  IsIn,
+  IsEnum,
 } from 'class-validator';
-
-const VALID_SCOPES = [
-  'read:signals',
-  'read:portfolio',
-  'write:trades',
-  'write:signals',
-];
+import { ApiKeyScope } from '../enums/api-key-scope.enum';
 
 export class CreateApiKeyDto {
   @IsString()
   @MaxLength(100)
   name!: string;
 
+  /** Scopes granted to this key. Must be values from ApiKeyScope. */
   @IsArray()
   @ArrayNotEmpty()
-  @IsIn(VALID_SCOPES, { each: true })
-  scopes!: string[];
+  @IsEnum(ApiKeyScope, { each: true })
+  scopes!: ApiKeyScope[];
 
   @IsOptional()
   @IsInt()

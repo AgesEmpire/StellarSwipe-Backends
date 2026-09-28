@@ -190,6 +190,10 @@ describe('RbacService', () => {
       mockRoleRepository.findOne.mockResolvedValue(mockRole);
       mockUserRoleRepository.create.mockReturnValue(mockUserRole);
       mockUserRoleRepository.save.mockResolvedValue(mockUserRole);
+      // No active roles before, one active role (this assignment) after.
+      mockUserRoleRepository.find
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ roleId }]);
 
       const result = await service.assignRoleToUser(userId, roleId, assignedBy);
 
@@ -216,6 +220,81 @@ describe('RbacService', () => {
       await expect(service.assignRoleToUser(userId, roleId, assignedBy)).rejects.toThrow(
         'Role not found'
       );
+    });
+
+    it('should write an audit entry with a before/after diff when a single role is added (issue #820)', async () => {
+      const userId = 'user1';
+      const roleId = 'role2';
+      const assignedBy = 'admin1';
+      const mockRole = { id: roleId, name: 'Editor' };
+      const mockUserRole = { id: 'userRole2', userId, roleId, assignedBy, status: 'active' };
+
+      mockRoleRepository.findOne.mockResolvedValue(mockRole);
+      mockUserRoleRepository.create.mockReturnValue(mockUserRole);
+      mockUserRoleRepository.save.mockResolvedValue(mockUserRole);
+      // Before: user already holds 'role1'. After: user holds 'role1' and the newly assigned 'role2'.
+      mockUserRoleRepository.find
+        .mockResolvedValueOnce([{ roleId: 'role1' }])
+        .mockResolvedValueOnce([{ roleId: 'role1' }, { roleId }]);
+
+      await service.assignRoleToUser(userId, roleId, assignedBy);
+
+      expect(mockPermissionAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: assignedBy,
+          targetUserId: userId,
+          action: 'role_assigned',
+          beforeState: { roleIds: ['role1'] },
+          afterState: { roleIds: ['role1', roleId] },
+        }),
+      );
+    });
+  });
+
+  describe('revokeRoleFromUser', () => {
+    it('should write an audit entry with a before/after diff when a single role is revoked (issue #820)', async () => {
+      const userId = 'user1';
+      const roleId = 'role1';
+      const revokedBy = 'admin1';
+      const mockUserRole = { id: 'userRole1', userId, roleId, status: 'active' };
+      const mockRole = { id: roleId, name: 'Editor' };
+
+      mockUserRoleRepository.findOne.mockResolvedValue(mockUserRole);
+      mockUserRoleRepository.save.mockResolvedValue({ ...mockUserRole, status: 'revoked' });
+      mockRoleRepository.findOne.mockResolvedValue(mockRole);
+      // Before: role is active. After: revocation removes it from the active set.
+      mockUserRoleRepository.find
+        .mockResolvedValueOnce([{ roleId }])
+        .mockResolvedValueOnce([]);
+
+      await service.revokeRoleFromUser(userId, roleId, revokedBy);
+
+      expect(mockPermissionAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: revokedBy,
+          targetUserId: userId,
+          action: 'role_revoked',
+          beforeState: { roleIds: [roleId] },
+          afterState: { roleIds: [] },
+        }),
+      );
+    });
+
+    it('should not write an audit entry when revoking a role the user does not hold (no-op, issue #820)', async () => {
+      const userId = 'user1';
+      const roleId = 'role-not-held';
+      const revokedBy = 'admin1';
+
+      mockUserRoleRepository.findOne.mockResolvedValue(null);
+      // Clear call history accumulated by earlier tests in this suite (no global
+      // mock-reset config) so this assertion reflects only this scenario.
+      mockPermissionAuditService.log.mockClear();
+
+      await expect(
+        service.revokeRoleFromUser(userId, roleId, revokedBy),
+      ).rejects.toThrow('Role assignment not found');
+
+      expect(mockPermissionAuditService.log).not.toHaveBeenCalled();
     });
   });
 

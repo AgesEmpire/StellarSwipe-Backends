@@ -1,12 +1,13 @@
 import {
   Injectable,
+  Logger,
   NestInterceptor,
   ExecutionContext,
   CallHandler,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import {
   DEPRECATED_KEY,
   DEPRECATION_METADATA_KEY,
@@ -30,6 +31,8 @@ import {
  */
 @Injectable()
 export class DeprecationInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(DeprecationInterceptor.name);
+
   constructor(private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
@@ -65,6 +68,14 @@ export class DeprecationInterceptor implements NestInterceptor {
         parts.push(`Please migrate to v${options.successorVersion}.`);
 
       res.setHeader('X-Deprecation-Notice', parts.join(' '));
+
+      const req: Request = context.switchToHttp().getRequest();
+      const caller = (req as any).user?.id ?? (req as any).user?.walletAddress ?? req.ip ?? 'anonymous';
+      const route = `${req.method} ${req.originalUrl ?? req.url}`;
+      this.logger.warn(
+        `Deprecated endpoint called: route=${route} caller=${caller} sunset=${options?.sunsetDate ?? 'unset'}`,
+        { type: 'deprecated_endpoint_usage', route, caller, sunsetDate: options?.sunsetDate },
+      );
     }
 
     return next.handle();

@@ -8,8 +8,11 @@ import {
   Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { ApiKeyScope } from '../enums/api-key-scope.enum';
 
 @Entity('api_keys')
+@Index(['userId', 'tenantId'])
+@Index(['tenantId'])
 export class ApiKey {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -17,14 +20,26 @@ export class ApiKey {
   @Column({ type: 'uuid' })
   userId!: string;
 
+  @Column({ type: 'uuid', nullable: true })
+  tenantId?: string; // Multi-tenant support
+
   @Column({ length: 100 })
   name!: string;
 
   @Column({ length: 60 })
   keyHash!: string;
 
+  @Column({ length: 60, nullable: true })
+  previousKeyHash?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  overlapUntil?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  revokedAt?: Date | null;
+
   @Column('simple-array')
-  scopes!: string[];
+  scopes!: ApiKeyScope[];
 
   @Column({ type: 'timestamp', nullable: true })
   lastUsed?: Date;
@@ -34,6 +49,9 @@ export class ApiKey {
 
   @Column({ type: 'int', default: 1000 })
   rateLimit!: number;
+
+  @Column({ type: 'boolean', default: false })
+  isActive!: boolean;
 
   @CreateDateColumn()
   createdAt!: Date;

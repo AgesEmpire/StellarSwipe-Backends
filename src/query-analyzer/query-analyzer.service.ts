@@ -98,14 +98,14 @@ export class QueryAnalyzerService {
       );
     }
 
-    // Enqueue analysis
+    // Enqueue analysis (LOW priority — background analytics processing)
     await this.analysisQueue.add(
       'analyze',
       {
         slowQueryId: record.id,
         runExplainAnalyze: dto.runExplainAnalyze ?? false,
       },
-      { attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: true },
+      { priority: 1000, attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: true }, // LOW
     );
 
     return record;

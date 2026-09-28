@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { SocketEvent, SocketRoom } from '../dto/socket-event.dto';
+import { SocketEvent, SocketRoom, contestLeaderboardRoom } from '../dto/socket-event.dto';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_TIMEOUT_MS = 65000;
@@ -57,6 +57,12 @@ export class SocketManagerService {
 
   emitNewSignal(payload: unknown): void {
     this.server?.to(SocketRoom.SIGNALS_FEED).emit(SocketEvent.NEW_SIGNAL, payload);
+  }
+
+  emitContestLeaderboard(contestId: string, payload: unknown): void {
+    this.server
+      ?.to(contestLeaderboardRoom(contestId))
+      .emit(SocketEvent.CONTEST_LEADERBOARD_UPDATED, payload);
   }
 
   private startHeartbeat(client: Socket): void {

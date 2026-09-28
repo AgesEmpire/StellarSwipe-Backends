@@ -6,54 +6,56 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Injectable } from '@nestjs/common';
+import { UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
+import { AuthenticatedGateway } from '../common/gateways/authenticated.gateway';
+import { WsJwtAuthGuard } from '../auth/guards/ws-jwt-auth.guard';
 
-@Injectable()
-@WebSocketGateway({
-  cors: {
-    origin: '*',
-  },
-  namespace: '/dashboard',
-})
-export class DashboardGateway {
+@WebSocketGateway({ cors: { origin: '*' }, namespace: '/dashboard' })
+export class DashboardGateway extends AuthenticatedGateway {
   @WebSocketServer()
   server!: Server;
 
-  constructor(private dashboardService: DashboardService) {}
+  constructor(
+    wsAuthGuard: WsJwtAuthGuard,
+    private readonly dashboardService: DashboardService,
+  ) {
+    super(wsAuthGuard);
+  }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('subscribe')
   async handleSubscribe(
     @MessageBody() data: { userId: string },
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
-    await client.join(`user_${data.userId}`);
-    
-    // Send initial dashboard data
-    const dashboardData = await this.dashboardService.getDashboardData(data.userId);
+    const requestingUser = (client as any).user;
+    // Users may only subscribe to their own room
+    const targetUserId = requestingUser?.id ?? data.userId;
+    await client.join(`user_${targetUserId}`);
+    const dashboardData =
+      await this.dashboardService.getDashboardData(targetUserId);
     client.emit('dashboard_update', dashboardData);
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('unsubscribe')
   async handleUnsubscribe(
     @MessageBody() data: { userId: string },
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
-    await client.leave(`user_${data.userId}`);
+    const targetUserId = (client as any).user?.id ?? data.userId;
+    await client.leave(`user_${targetUserId}`);
   }
 
   async broadcastUpdate(userId: string): Promise<void> {
     try {
-      // Invalidate cache first
       await this.dashboardService.invalidateCache(userId);
-      
-      // Get fresh data
-      const dashboardData = await this.dashboardService.getDashboardData(userId);
-      
-      // Broadcast to subscribed clients
+      const dashboardData =
+        await this.dashboardService.getDashboardData(userId);
       this.server.to(`user_${userId}`).emit('dashboard_update', dashboardData);
     } catch (error) {
-      console.error('Error broadcasting dashboard update:', error);
+      this.logger.error('Error broadcasting dashboard update:', error);
     }
   }
 }

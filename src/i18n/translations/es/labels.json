@@ -1,0 +1,11 @@
+{
+    "WALLET_BALANCE": "Saldo de Billetera",
+    "SIGNAL_QUOTA": "Cuota de Señal",
+    "QUOTA_REMAINING": "Cuota Restante",
+    "QUOTA_RESET": "Restablecimiento de Cuota",
+    "DEPLOYMENT_STATUS": "Estado de Despliegue",
+    "SYNC_STATUS": "Estado de Sincronización",
+    "PROVIDER": "Proveedor",
+    "LOCALE": "Idioma",
+    "SUPPORTED_LANGUAGES": "Idiomas Admitidos"
+}

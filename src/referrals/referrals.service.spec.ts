@@ -10,22 +10,22 @@ import { Trade, TradeStatus } from '../trades/entities/trade.entity';
 
 describe('ReferralsService', () => {
   let service: ReferralsService;
-  let referralRepository: Repository<Referral>;
-  let userRepository: Repository<User>;
-  let tradeRepository: Repository<Trade>;
-  let eventEmitter: EventEmitter2;
+  let referralRepository: jest.Mocked<Repository<Referral>>;
+  let userRepository: jest.Mocked<Repository<User>>;
+  let tradeRepository: jest.Mocked<Repository<Trade>>;
+  let eventEmitter: jest.Mocked<EventEmitter2>;
 
   const mockUser = {
     id: 'user-1',
     username: 'testuser',
-    walletAddress: 'GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH',
-  };
+    referralCode: undefined,
+  } as unknown as User;
 
   const mockReferrer = {
     id: 'user-2',
     username: 'referrer',
-    walletAddress: 'GXYZABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF',
-  };
+    referralCode: 'STELLAR1',
+  } as unknown as User;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -46,6 +46,7 @@ describe('ReferralsService', () => {
           useValue: {
             findOne: jest.fn(),
             find: jest.fn(),
+            update: jest.fn(),
           },
         },
         {
@@ -57,97 +58,104 @@ describe('ReferralsService', () => {
         },
         {
           provide: EventEmitter2,
-          useValue: {
-            emit: jest.fn(),
-          },
+          useValue: { emit: jest.fn() },
         },
       ],
     }).compile();
 
     service = module.get<ReferralsService>(ReferralsService);
-    referralRepository = module.get<Repository<Referral>>(
-      getRepositoryToken(Referral),
-    );
-    userRepository = module.get<Repository<User>>(getRepositoryToken(User));
-    tradeRepository = module.get<Repository<Trade>>(getRepositoryToken(Trade));
-    eventEmitter = module.get<EventEmitter2>(EventEmitter2);
+    referralRepository = module.get(getRepositoryToken(Referral));
+    userRepository = module.get(getRepositoryToken(User));
+    tradeRepository = module.get(getRepositoryToken(Trade));
+    eventEmitter = module.get(EventEmitter2);
+  });
+
+  describe('generateReferralCode', () => {
+    it('generates an 8-character alphanumeric code', () => {
+      const code = service.generateReferralCode();
+      expect(code).toHaveLength(8);
+      expect(code).toMatch(/^[A-Z2-9]+$/);
+    });
+
+    it('generates unique codes across multiple calls', () => {
+      const codes = new Set(Array.from({ length: 100 }, () => service.generateReferralCode()));
+      expect(codes.size).toBeGreaterThan(90);
+    });
   });
 
   describe('getUserReferralCode', () => {
-    it('should generate referral code from wallet address', async () => {
-      jest.spyOn(userRepository, 'findOne').mockResolvedValue(mockUser as User);
+    it('returns existing stored code without generating a new one', async () => {
+      userRepository.findOne.mockResolvedValue({ ...mockReferrer } as User);
 
-      const code = await service.getUserReferralCode(mockUser.id);
+      const code = await service.getUserReferralCode(mockReferrer.id);
 
-      expect(code).toBeDefined();
-      expect(code.length).toBe(8);
-      expect(userRepository.findOne).toHaveBeenCalledWith({
-        where: { id: mockUser.id },
-        select: ['id', 'username', 'walletAddress'],
-      });
+      expect(code).toBe('STELLAR1');
+      expect(userRepository.update).not.toHaveBeenCalled();
     });
 
-    it('should throw NotFoundException if user not found', async () => {
-      jest.spyOn(userRepository, 'findOne').mockResolvedValue(null);
+    it('generates and persists a new code when user has none', async () => {
+      userRepository.findOne
+        .mockResolvedValueOnce({ id: 'user-1', referralCode: undefined } as User)
+        .mockResolvedValueOnce(null);
+      userRepository.update.mockResolvedValue({ affected: 1, raw: [], generatedMaps: [] });
 
-      await expect(service.getUserReferralCode('invalid-id')).rejects.toThrow(
-        NotFoundException,
-      );
+      const code = await service.getUserReferralCode('user-1');
+
+      expect(code).toHaveLength(8);
+      expect(userRepository.update).toHaveBeenCalledWith('user-1', { referralCode: code });
+    });
+
+    it('throws NotFoundException if user does not exist', async () => {
+      userRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.getUserReferralCode('invalid-id')).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('claimReferral', () => {
-    it('should successfully claim a referral', async () => {
-      const referralCode = 'STELLAR1';
+    it('successfully claims a referral', async () => {
       const mockReferral = {
         id: 'ref-1',
         referrerId: mockReferrer.id,
         referredId: mockUser.id,
-        referralCode,
+        referralCode: 'STELLAR1',
         status: ReferralStatus.PENDING,
       };
 
-      jest.spyOn(referralRepository, 'findOne').mockResolvedValue(null);
-      jest.spyOn(userRepository, 'find').mockResolvedValue([mockReferrer as User]);
-      jest.spyOn(referralRepository, 'create').mockReturnValue(mockReferral as Referral);
-      jest.spyOn(referralRepository, 'save').mockResolvedValue(mockReferral as Referral);
+      referralRepository.findOne.mockResolvedValue(null);
+      userRepository.findOne.mockResolvedValue({ id: mockReferrer.id } as User);
+      referralRepository.create.mockReturnValue(mockReferral as Referral);
+      referralRepository.save.mockResolvedValue(mockReferral as Referral);
 
-      const result = await service.claimReferral(mockUser.id, referralCode);
+      const result = await service.claimReferral(mockUser.id, 'STELLAR1');
 
       expect(result).toEqual(mockReferral);
       expect(referralRepository.save).toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException if user already claimed', async () => {
-      const existingReferral = { id: 'ref-1', referredId: mockUser.id };
-      jest.spyOn(referralRepository, 'findOne').mockResolvedValue(existingReferral as Referral);
+    it('throws BadRequestException if user already claimed', async () => {
+      referralRepository.findOne.mockResolvedValue({ id: 'ref-1' } as Referral);
 
-      await expect(
-        service.claimReferral(mockUser.id, 'STELLAR1'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.claimReferral(mockUser.id, 'STELLAR1')).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw BadRequestException for self-referral', async () => {
-      jest.spyOn(referralRepository, 'findOne').mockResolvedValue(null);
-      jest.spyOn(userRepository, 'find').mockResolvedValue([mockUser as User]);
+    it('throws BadRequestException for self-referral', async () => {
+      referralRepository.findOne.mockResolvedValue(null);
+      userRepository.findOne.mockResolvedValue({ id: mockUser.id } as User);
 
-      await expect(
-        service.claimReferral(mockUser.id, 'TESTCODE'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.claimReferral(mockUser.id, 'ANYCODE1')).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw BadRequestException for invalid code', async () => {
-      jest.spyOn(referralRepository, 'findOne').mockResolvedValue(null);
-      jest.spyOn(userRepository, 'find').mockResolvedValue([]);
+    it('throws BadRequestException for invalid (unknown) referral code', async () => {
+      referralRepository.findOne.mockResolvedValue(null);
+      userRepository.findOne.mockResolvedValue(null);
 
-      await expect(
-        service.claimReferral(mockUser.id, 'INVALID1'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.claimReferral(mockUser.id, 'INVALID1')).rejects.toThrow(BadRequestException);
     });
   });
 
   describe('checkAndRewardReferral', () => {
-    it('should reward referral on first trade completion', async () => {
+    it('rewards referral on first settled trade above minimum value', async () => {
       const tradeId = 'trade-1';
       const mockTrade = {
         id: tradeId,
@@ -166,58 +174,36 @@ describe('ReferralsService', () => {
         referrer: mockReferrer,
       };
 
-      jest.spyOn(tradeRepository, 'findOne').mockResolvedValue(mockTrade as Trade);
-      jest.spyOn(tradeRepository, 'count').mockResolvedValue(1);
-      jest.spyOn(referralRepository, 'findOne').mockResolvedValue(mockReferral as Referral);
-      jest.spyOn(referralRepository, 'save').mockResolvedValue({
-        ...mockReferral,
-        status: ReferralStatus.REWARDED,
-      } as Referral);
-      jest.spyOn(eventEmitter, 'emit');
+      tradeRepository.findOne.mockResolvedValue(mockTrade as Trade);
+      tradeRepository.count.mockResolvedValue(1);
+      referralRepository.findOne.mockResolvedValue(mockReferral as Referral);
+      referralRepository.save.mockResolvedValue({ ...mockReferral, status: ReferralStatus.REWARDED } as Referral);
+      eventEmitter.emit.mockReturnValue(true);
 
       await service.checkAndRewardReferral(tradeId);
 
       expect(referralRepository.save).toHaveBeenCalledTimes(2);
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'referral.rewarded',
-        expect.objectContaining({
-          referrerId: mockReferrer.id,
-          referredId: mockUser.id,
-          amount: 5,
-        }),
-      );
+      expect(eventEmitter.emit).toHaveBeenCalledWith('referral.rewarded', expect.objectContaining({
+        referrerId: mockReferrer.id,
+        referredId: mockUser.id,
+        amount: 5,
+      }));
     });
 
-    it('should not reward if trade value below minimum', async () => {
-      const mockTrade = {
-        id: 'trade-1',
-        userId: mockUser.id,
-        status: TradeStatus.SETTLED,
-        totalValue: '5.00',
-        user: mockUser,
-      };
-
-      jest.spyOn(tradeRepository, 'findOne').mockResolvedValue(mockTrade as Trade);
-      jest.spyOn(tradeRepository, 'count').mockResolvedValue(1);
-      jest.spyOn(referralRepository, 'save');
+    it('does not reward if trade value is below minimum', async () => {
+      const mockTrade = { id: 'trade-1', userId: mockUser.id, status: TradeStatus.SETTLED, totalValue: '5.00', user: mockUser };
+      tradeRepository.findOne.mockResolvedValue(mockTrade as Trade);
+      tradeRepository.count.mockResolvedValue(1);
 
       await service.checkAndRewardReferral('trade-1');
 
       expect(referralRepository.save).not.toHaveBeenCalled();
     });
 
-    it('should not reward if not first trade', async () => {
-      const mockTrade = {
-        id: 'trade-1',
-        userId: mockUser.id,
-        status: TradeStatus.SETTLED,
-        totalValue: '15.00',
-        user: mockUser,
-      };
-
-      jest.spyOn(tradeRepository, 'findOne').mockResolvedValue(mockTrade as Trade);
-      jest.spyOn(tradeRepository, 'count').mockResolvedValue(2);
-      jest.spyOn(referralRepository, 'save');
+    it('does not reward if it is not the user\'s first settled trade', async () => {
+      const mockTrade = { id: 'trade-1', userId: mockUser.id, status: TradeStatus.SETTLED, totalValue: '15.00', user: mockUser };
+      tradeRepository.findOne.mockResolvedValue(mockTrade as Trade);
+      tradeRepository.count.mockResolvedValue(2);
 
       await service.checkAndRewardReferral('trade-1');
 
@@ -226,7 +212,11 @@ describe('ReferralsService', () => {
   });
 
   describe('getReferralStats', () => {
-    it('should return referral statistics', async () => {
+    it('returns referral statistics with referred user list', async () => {
+      userRepository.findOne
+        .mockResolvedValueOnce({ id: mockUser.id, referralCode: 'TESTCODE' } as unknown as User)
+        .mockResolvedValueOnce(null);
+
       const mockReferrals = [
         {
           id: 'ref-1',
@@ -247,11 +237,11 @@ describe('ReferralsService', () => {
         },
       ];
 
-      jest.spyOn(userRepository, 'findOne').mockResolvedValue(mockUser as User);
-      jest.spyOn(referralRepository, 'find').mockResolvedValue(mockReferrals as Referral[]);
+      referralRepository.find.mockResolvedValue(mockReferrals as Referral[]);
 
       const stats = await service.getReferralStats(mockUser.id);
 
+      expect(stats.referralCode).toBe('TESTCODE');
       expect(stats.totalInvites).toBe(2);
       expect(stats.successfulConversions).toBe(1);
       expect(stats.pendingReferrals).toBe(1);

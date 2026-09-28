@@ -24,12 +24,24 @@ import { AuditTrailExporterService } from './exporters/audit-trail-exporter.serv
 import { GdprReportGenerator } from './reports/gdpr-report.generator';
 import { FinancialReportGenerator } from './reports/financial-report.generator';
 import { TransactionLimitsModule } from './transaction-limits/transaction-limits.module';
+import { TradeEligibilityService } from './trade-eligibility.service';
+import { TradeEligibilityController } from './trade-eligibility.controller';
+import { SignedUrlGeneratorService } from './exporters/signed-url-generator.service';
+import { SignedUrlDownloadController } from './exporters/signed-url-download.controller';
 
 @Module({
   imports: [
     ConfigModule,
     ScheduleModule.forRoot(),
-    TypeOrmModule.forFeature([ComplianceLog, SuspiciousActivity, Trade, User, Signal, AuditLog]),
+    TypeOrmModule.forFeature([
+      ComplianceLog,
+      SuspiciousActivity,
+      Trade,
+      User,
+      Signal,
+      AuditLog,
+      TradeEligibilityDecision,
+    ]),
     BullModule.registerQueue({ name: AML_QUEUE }),
     TransactionLimitsModule,
   ],
@@ -46,8 +58,10 @@ import { TransactionLimitsModule } from './transaction-limits/transaction-limits
     AuditTrailExporterService,
     GdprReportGenerator,
     FinancialReportGenerator,
+    TradeEligibilityService,
+    SignedUrlGeneratorService,
   ],
-  controllers: [ComplianceController],
+  controllers: [ComplianceController, TradeEligibilityController, SignedUrlDownloadController],
   exports: [
     GeoBlockService,
     SanctionsScreeningService,
@@ -55,6 +69,7 @@ import { TransactionLimitsModule } from './transaction-limits/transaction-limits
     ComplianceService,
     AmlMonitoringService,
     TransactionLimitsModule,
+    TradeEligibilityService,
   ],
 })
 export class ComplianceModule implements NestModule {

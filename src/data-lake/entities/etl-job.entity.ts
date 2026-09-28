@@ -16,6 +16,7 @@ export enum EtlJobType {
   USER_EVENTS = 'user_events',
   TRADES = 'trades',
   SIGNALS = 'signals',
+  POSITIONS = 'positions',
 }
 
 @Entity('etl_jobs')

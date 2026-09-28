@@ -2,6 +2,10 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { HttpRetryService } from './http-retry.service';
 import { CircuitBreakerService } from './circuit-breaker.service';
+import { MonitoringModule } from '../monitoring/monitoring.module';
+import { PrometheusService } from '../monitoring/metrics/prometheus.service';
+import { Registry } from 'prom-client';
+import { defaultHttpModuleOptions } from './http-client-defaults';
 
 /**
  * HttpRetryModule
@@ -16,12 +20,18 @@ import { CircuitBreakerService } from './circuit-breaker.service';
  */
 @Module({
   imports: [
-    HttpModule.register({
-      timeout: 10_000,
-      maxRedirects: 3,
-    }),
+    HttpModule.register(defaultHttpModuleOptions()),
+    MonitoringModule,
   ],
-  providers: [HttpRetryService, CircuitBreakerService],
+  providers: [
+    HttpRetryService,
+    {
+      provide: CircuitBreakerService,
+      useFactory: (prometheus: PrometheusService) =>
+        new CircuitBreakerService(prometheus.registry),
+      inject: [PrometheusService],
+    },
+  ],
   exports: [HttpRetryService, CircuitBreakerService],
 })
 export class HttpRetryModule {}

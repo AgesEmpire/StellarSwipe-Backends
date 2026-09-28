@@ -36,12 +36,31 @@ export const connectionPoolConfig = registerAs(
     // Enable PTIME (statement execution time) logging
     // Log queries that take longer than 100ms
     statement_timeout: parseInt(
-      process.env.DATABASE_STATEMENT_TIMEOUT || '100000',
+      process.env.DATABASE_STATEMENT_TIMEOUT || process.env.DATABASE_WRITE_TIMEOUT_MS || '10000',
       10,
     ), // 100 seconds max
 
     // Enable query cancellation on socket timeout
     query_timeout: parseInt(process.env.DATABASE_QUERY_TIMEOUT || '10000', 10), // 10 seconds
+  }),
+);
+
+/**
+ * Read Replica Connection Pool Configuration
+ */
+export const connectionPoolReplicaConfig = registerAs(
+  'connectionPoolReplica',
+  (): PoolOptions => ({
+    min: parseInt(process.env.DATABASE_REPLICA_POOL_MIN || '5', 10),
+    max: parseInt(process.env.DATABASE_REPLICA_POOL_MAX || '20', 10),
+    idleTimeoutMillis: parseInt(
+      process.env.DATABASE_REPLICA_POOL_IDLE_TIMEOUT || '30000',
+      10,
+    ),
+    connectionTimeoutMillis: parseInt(
+      process.env.DATABASE_REPLICA_POOL_CONNECTION_TIMEOUT || '2000',
+      10,
+    ),
   }),
 );
 

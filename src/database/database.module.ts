@@ -10,6 +10,9 @@ import { MonitoringModule } from '../monitoring/monitoring.module';
 import { SchemaVersioningService } from './schema-versioning.service';
 import { SchemaVersion } from './schema-version.entity';
 import { QueryMonitorService } from './query-monitor.service';
+import { MigrationRunnerService } from './migration-runner.service';
+import { MigrationRunnerController } from './migration-runner.controller';
+import { DatabaseRetryService } from './database-retry.service';
 
 @Global()
 @Module({
@@ -18,6 +21,7 @@ import { QueryMonitorService } from './query-monitor.service';
     EventEmitterModule.forRoot(),
     MonitoringModule,
   ],
+  controllers: [MigrationRunnerController],
   providers: [
     QueryAnalyzerService,
     IndexManagerService,
@@ -25,6 +29,8 @@ import { QueryMonitorService } from './query-monitor.service';
     ConnectionPoolMetricsService,
     SchemaVersioningService,
     QueryMonitorService,
+    MigrationRunnerService,
+    DatabaseRetryService,
   ],
   exports: [
     QueryAnalyzerService,
@@ -33,6 +39,8 @@ import { QueryMonitorService } from './query-monitor.service';
     ConnectionPoolMetricsService,
     SchemaVersioningService,
     QueryMonitorService,
+    MigrationRunnerService,
+    DatabaseRetryService,
   ],
 })
 export class DatabaseOptimizationModule {}

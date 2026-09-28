@@ -1,18 +1,23 @@
 import { Module, Global } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterService } from './event-emitter.service';
 import { EventReplayService } from './event-replay.service';
+import { EventSerializerService } from './event-serializer';
 import { TradeEventListener } from './listeners/trade-event.listener';
 import { SignalEventListener } from './listeners/signal-event.listener';
 import { PortfolioEventListener } from './listeners/portfolio-event.listener';
 import { ReferralEventListener } from './referral-event.listener';
 import { ReferralsModule } from '../referrals/referrals.module';
+import { OutboxModule } from './outbox/outbox.module';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 
 @Global()
 @Module({
   imports: [
+    OutboxModule,
+    ScheduleModule.forRoot(),
     EventEmitterModule.forRoot({
       global: true,
       wildcard: false,
@@ -29,11 +34,17 @@ import { AuditLog } from '../audit-log/entities/audit-log.entity';
   providers: [
     EventEmitterService,
     EventReplayService,
+    EventSerializerService,
     TradeEventListener,
     SignalEventListener,
     PortfolioEventListener,
     ReferralEventListener,
   ],
-  exports: [EventEmitterService, EventReplayService],
+  exports: [
+    EventEmitterService,
+    EventReplayService,
+    EventSerializerService,
+    OutboxModule,
+  ],
 })
 export class EventsModule {}

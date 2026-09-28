@@ -1,10 +1,11 @@
-import { Processor, Process } from '@nestjs/bull';
+import { Processor, Process, OnQueueFailed } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BulkExport, ExportFormat, ExportType } from './entities/bulk-export.entity';
 import { ExportsService, EXPORT_JOB, EXPORT_QUEUE } from './exports.service';
+import { DeadLetterService } from '../jobs/dead-letter.service';
 
 interface ExportJobData {
   exportId: string;
@@ -18,6 +19,7 @@ export class ExportProcessor {
     private readonly exportsService: ExportsService,
     @InjectRepository(BulkExport)
     private readonly exportRepo: Repository<BulkExport>,
+    private readonly deadLetterService: DeadLetterService,
   ) {}
 
   @Process(EXPORT_JOB)
@@ -62,8 +64,17 @@ export class ExportProcessor {
       [ExportType.CONTEST_RESULTS]: 100,
       [ExportType.SIGNALS]: 250,
       [ExportType.PORTFOLIO]: 50,
+      [ExportType.TAX_REPORT]: 365,
     };
 
     return rowCounts[type] ?? 0;
+  }
+
+  @OnQueueFailed()
+  async onFailed(job: Job, error: Error): Promise<void> {
+    const attempts = job.opts.attempts ?? 1;
+    if (job.attemptsMade >= attempts) {
+      await this.deadLetterService.capture(job, error);
+    }
   }
 }

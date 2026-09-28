@@ -4,6 +4,9 @@ import { Repository } from 'typeorm';
 import { Signal } from '../../signals/entities/signal.entity';
 import { ElasticsearchConfigService } from '../services/elasticsearch.service';
 import { OnEvent } from '@nestjs/event-emitter';
+import { FeatureFlagsService } from '../../feature-flags/feature-flags.service';
+
+const SEARCH_INDEX_REFRESH_FLAG = 'search-index-refresh';
 
 @Injectable()
 export class SignalIndexerService {
@@ -14,21 +17,33 @@ export class SignalIndexerService {
     @InjectRepository(Signal)
     private readonly signalRepository: Repository<Signal>,
     private readonly elasticsearchService: ElasticsearchConfigService,
+    private readonly featureFlagsService: FeatureFlagsService,
   ) {}
 
   @OnEvent('signal.created')
   async handleSignalCreated(signal: Signal) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.indexSignal(signal);
   }
 
   @OnEvent('signal.updated')
   async handleSignalUpdated(signal: Signal) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.updateSignalIndex(signal);
   }
 
   @OnEvent('signal.deleted')
   async handleSignalDeleted(signalId: string) {
+    if (!(await this.isRefreshEnabled())) return;
     await this.deleteSignalIndex(signalId);
+  }
+
+  private async isRefreshEnabled(): Promise<boolean> {
+    const enabled = await this.featureFlagsService.isFlagEnabled(SEARCH_INDEX_REFRESH_FLAG);
+    if (!enabled) {
+      this.logger.debug(`Search index refresh skipped — '${SEARCH_INDEX_REFRESH_FLAG}' flag is disabled`);
+    }
+    return enabled;
   }
 
   async indexSignal(signal: Signal): Promise<void> {

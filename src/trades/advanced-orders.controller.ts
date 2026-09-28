@@ -9,7 +9,14 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UseGuards,
+  Request,
 } from '@nestjs/common';
+import { RateLimit, RateLimitTier } from '../common/decorators/rate-limit.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OwnershipGuard } from '../common/guards/ownership.guard';
+import { CheckOwnership } from '../common/decorators/check-ownership.decorator';
+import { AdvancedOrder } from './entities/advanced-order.entity';
 import { OcoOrderService } from './services/oco-order.service';
 import { IcebergOrderService } from './services/iceberg-order.service';
 import {
@@ -37,6 +44,7 @@ export class AdvancedOrdersController {
    */
   @Post('oco')
   @HttpCode(HttpStatus.CREATED)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async createOcoOrder(
     @Body() dto: CreateOcoOrderDto,
   ): Promise<OcoOrderResponseDto> {
@@ -49,6 +57,7 @@ export class AdvancedOrdersController {
    */
   @Delete('oco/:orderId')
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async cancelOcoOrder(
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Body() dto: CancelOcoOrderDto,
@@ -58,14 +67,16 @@ export class AdvancedOrdersController {
 
   /**
    * Get a single OCO order.
-   * GET /trades/advanced/oco/:orderId?userId=...
+   * GET /trades/advanced/oco/:orderId
    */
   @Get('oco/:orderId')
+  @UseGuards(JwtAuthGuard, OwnershipGuard)
+  @CheckOwnership('orderId', AdvancedOrder)
   async getOcoOrder(
     @Param('orderId', ParseUUIDPipe) orderId: string,
-    @Query('userId', ParseUUIDPipe) userId: string,
+    @Request() req: any,
   ): Promise<OcoOrderResponseDto> {
-    return this.ocoService.getOrder(orderId, userId);
+    return this.ocoService.getOrder(orderId, req.user.id);
   }
 
   /**
@@ -86,6 +97,7 @@ export class AdvancedOrdersController {
    */
   @Post('oco/:orderId/check')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async checkOcoOrder(
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Body('sourceSecret') sourceSecret: string,
@@ -101,6 +113,7 @@ export class AdvancedOrdersController {
    */
   @Post('iceberg')
   @HttpCode(HttpStatus.CREATED)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async createIcebergOrder(
     @Body() dto: CreateIcebergOrderDto,
   ): Promise<IcebergOrderResponseDto> {
@@ -113,6 +126,7 @@ export class AdvancedOrdersController {
    */
   @Delete('iceberg/:orderId')
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async cancelIcebergOrder(
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Body() dto: CancelIcebergOrderDto,
@@ -150,6 +164,7 @@ export class AdvancedOrdersController {
    */
   @Post('iceberg/:orderId/refill')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RateLimit({ tier: RateLimitTier.TRADE })
   async checkIcebergRefill(
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Body('sourceSecret') sourceSecret: string,

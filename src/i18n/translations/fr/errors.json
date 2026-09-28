@@ -26,5 +26,9 @@
     "PAYMENT_GATEWAY_ERROR": "Erreur de passerelle de paiement: {message}",
     "INVALID_PAYMENT_METHOD": "Méthode de paiement invalide",
     "PAYMENT_DECLINED": "Le paiement a été refusé par le fournisseur de paiement",
-    "INSUFFICIENT_FUNDS": "Fonds insuffisants pour cette transaction"
+    "INSUFFICIENT_FUNDS": "Fonds insuffisants pour cette transaction",
+    "QUOTA_EXCEEDED": "Quota de signal dépassé. Votre quota se réinitialise à {resetAt}",
+    "WALLET_SYNC_FAILED": "Échec de la synchronisation du solde du portefeuille. Nouvelle tentative...",
+    "CONTRACT_DEPLOYMENT_FAILED": "Le déploiement du contrat a échoué après {attempts} tentatives",
+    "CONTRACT_ALREADY_DEPLOYED": "Le contrat est déjà déployé avec l'id {contractId}"
 }

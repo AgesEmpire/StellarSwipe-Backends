@@ -145,13 +145,11 @@ export class TradingCacheService implements OnModuleInit {
     fetchFn: () => Promise<T>,
     ttlSeconds: number,
   ): Promise<T> {
-    const cached = await this.cacheService.get<T>(key);
-    if (cached !== undefined && cached !== null) {
-      return cached;
-    }
-    const value = await fetchFn();
-    await this.cacheService.setWithTTL(key, value, ttlSeconds);
-    return value;
+    return this.cacheService.getOrSetWithLock(
+      key,
+      fetchFn,
+      ttlSeconds <= 60 ? 'signal' : 'default',
+    );
   }
 
   // ─── Prefetch registration ─────────────────────────────────────────────────

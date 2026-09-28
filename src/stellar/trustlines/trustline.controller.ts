@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/
 import { TrustlineService } from './trustline.service';
 import { CreateTrustlineDto } from './dto/create-trustline.dto';
 import { TrustlineStatusDto } from './dto/trustline-status.dto';
+import { CheckTrustlineDto, AutoCreateTrustlineDto } from './dto/check-trustline.dto';
 
 @ApiTags('Trustlines')
 @Controller('api/v1/trustlines')
@@ -50,7 +51,7 @@ export class TrustlineController {
   @ApiOperation({ summary: 'Check if trustline exists before trade execution' })
   @ApiResponse({ status: 200, description: 'Trustline check completed' })
   async checkTrustlineBeforeTrade(
-    @Body() body: { publicKey: string; assetCode: string; assetIssuer: string }
+    @Body() body: CheckTrustlineDto
   ) {
     const { publicKey, assetCode, assetIssuer } = body;
     const asset = assetCode === 'XLM' 
@@ -66,7 +67,7 @@ export class TrustlineController {
   @ApiResponse({ status: 201, description: 'Trustline created or already exists' })
   @ApiResponse({ status: 400, description: 'Cannot create trustline' })
   async autoCreateTrustlineForTrade(
-    @Body() body: { publicKey: string; secretKey: string; assetCode: string; assetIssuer: string }
+    @Body() body: AutoCreateTrustlineDto
   ) {
     const { publicKey, secretKey, assetCode, assetIssuer } = body;
     const asset = assetCode === 'XLM' 

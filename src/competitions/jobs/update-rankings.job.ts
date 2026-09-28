@@ -26,6 +26,7 @@ export class UpdateRankingsJob implements OnModuleInit {
         COMPETITION_JOB_UPDATE_RANKINGS,
         {},
         {
+          priority: 1000, // LOW — leaderboard update
           jobId: 'competitions-update-rankings',
           repeat: { every: 60_000 },
           removeOnComplete: true,

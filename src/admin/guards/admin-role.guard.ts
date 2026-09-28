@@ -1,24 +1,42 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { UserRole } from '../../authorization/entities/user-role.entity';
+import { AssignmentStatus } from '../../authorization/entities/user-role.entity';
 
+/**
+ * @deprecated Use RolesGuard with @Roles('admin') instead.
+ */
 @Injectable()
 export class AdminRoleGuard implements CanActivate {
-    constructor(private reflector: Reflector) { }
+  constructor(
+    private readonly reflector: Reflector,
+    @InjectRepository(UserRole)
+    private readonly userRoleRepository: Repository<UserRole>,
+  ) {}
 
-    canActivate(context: ExecutionContext): boolean {
-        const request = context.switchToHttp().getRequest();
-        const user = request.user;
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
 
-        // Assuming user object from JWT is populated via JwtAuthGuard before this guard is called
-        if (!user) {
-            throw new ForbiddenException('User authentication required for admin access');
-        }
-
-        // Usually there is user.role or user.isAdmin depending on implementation
-        if (user.role !== 'ADMIN' && user.isAdmin !== true) {
-            throw new ForbiddenException('Administrative privileges required');
-        }
-
-        return true;
+    if (!user?.id) {
+      throw new ForbiddenException('User authentication required for admin access');
     }
+
+    const userRoles = await this.userRoleRepository.find({
+      where: { userId: user.id, status: AssignmentStatus.ACTIVE },
+      relations: ['role'],
+    });
+
+    const hasAdminRole = userRoles.some(
+      (ur) => ur.isActive() && (ur.role?.name === 'admin' || ur.role?.name === 'ADMIN'),
+    );
+
+    if (!hasAdminRole) {
+      throw new ForbiddenException('Administrative privileges required');
+    }
+
+    return true;
+  }
 }

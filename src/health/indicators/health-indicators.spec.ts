@@ -226,7 +226,8 @@ describe('SorobanHealthIndicator', () => {
       sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
       network: 'testnet',
     } as any;
-    return new SorobanHealthIndicator(stellarConfig);
+    const circuitBreaker = { getState: jest.fn().mockReturnValue('CLOSED') } as any;
+    return new SorobanHealthIndicator(stellarConfig, circuitBreaker);
   };
 
   const getSorobanMock = () =>
@@ -270,6 +271,74 @@ describe('SorobanHealthIndicator', () => {
     } catch (err) {
       expect((err as HealthCheckError).causes).toMatchObject({
         soroban: { status: 'down', error: 'connection timeout' },
+      });
+    }
+  });
+});
+
+// ── QueueHealthIndicator ──────────────────────────────────────────────────────
+
+import { QueueHealthIndicator } from './queue.health';
+
+describe('QueueHealthIndicator', () => {
+  const makeIndicator = (overrides: {
+    getJobCounts?: jest.Mock;
+    isPaused?: jest.Mock;
+  } = {}) => {
+    const queue = {
+      getJobCounts: overrides.getJobCounts ?? jest.fn().mockResolvedValue({
+        waiting: 0,
+        active: 1,
+        completed: 42,
+        failed: 0,
+        delayed: 0,
+      }),
+      isPaused: overrides.isPaused ?? jest.fn().mockResolvedValue(false),
+    } as any;
+    return new QueueHealthIndicator(queue);
+  };
+
+  it('returns up when queue is reachable', async () => {
+    const result = await makeIndicator().isHealthy('queue');
+    expect(result.queue.status).toBe('up');
+  });
+
+  it('includes job counts and paused flag in the up result', async () => {
+    const result = await makeIndicator().isHealthy('queue');
+    expect(result.queue).toMatchObject({
+      waiting: 0,
+      active: 1,
+      completed: 42,
+      failed: 0,
+      delayed: 0,
+      paused: false,
+    });
+    expect(result.queue.latency).toMatch(/\d+ms/);
+  });
+
+  it('reflects paused:true when queue is paused', async () => {
+    const result = await makeIndicator({
+      isPaused: jest.fn().mockResolvedValue(true),
+    }).isHealthy('queue');
+    expect(result.queue.paused).toBe(true);
+  });
+
+  it('throws HealthCheckError when getJobCounts fails', async () => {
+    await expect(
+      makeIndicator({
+        getJobCounts: jest.fn().mockRejectedValue(new Error('Redis connection lost')),
+      }).isHealthy('queue'),
+    ).rejects.toBeInstanceOf(HealthCheckError);
+  });
+
+  it('includes error message in the down result', async () => {
+    try {
+      await makeIndicator({
+        getJobCounts: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+      }).isHealthy('queue');
+    } catch (err) {
+      expect((err as HealthCheckError).causes).toMatchObject({
+        queue: { status: 'down', error: 'ECONNREFUSED' },
       });
     }
   });

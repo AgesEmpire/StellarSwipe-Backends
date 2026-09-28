@@ -11,8 +11,11 @@ import { ApprovalAction } from './entities/approval-workflow.entity';
 import { PermissionChecker } from './utils/permission-checker';
 import { PolicyEvaluator } from './utils/policy-evaluator';
 import { PermissionsGuard } from './guards/permissions.guard';
+import { RolesGuard } from './guards/roles.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
+import { GqlOwnershipGuard } from './guards/gql-ownership.guard';
 import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
+import { PermissionMatrixService } from './permission-matrix.service';
 
 @Module({
   imports: [
@@ -32,16 +35,22 @@ import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-a
     PermissionChecker,
     PolicyEvaluator,
     PermissionsGuard,
+    RolesGuard,
     WorkflowApprovalGuard,
+    GqlOwnershipGuard,
     PermissionAuditService,
+    PermissionMatrixService,
   ],
   exports: [
     RbacService,
     PermissionChecker,
     PolicyEvaluator,
     PermissionsGuard,
+    RolesGuard,
     WorkflowApprovalGuard,
+    GqlOwnershipGuard,
     PermissionAuditService,
+    PermissionMatrixService,
     TypeOrmModule,
   ],
 })

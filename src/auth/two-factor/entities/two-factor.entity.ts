@@ -28,6 +28,15 @@ export class TwoFactor {
   @Column({ type: 'timestamp', nullable: true })
   enabledAt?: Date;
 
+  @Column({ type: 'timestamp', nullable: true })
+  lastSecurityChangeAt?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  recoveryCodesGeneratedAt?: Date;
+
+  @Column({ type: 'int', default: 0 })
+  recoveryCodesUsedCount!: number;
+
   @CreateDateColumn()
   createdAt!: Date;
 

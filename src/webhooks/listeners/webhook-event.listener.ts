@@ -99,6 +99,46 @@ export class WebhookEventListener {
     });
   }
 
+  @OnEvent('payment.stellar.received', { async: true })
+  async onStellarPaymentReceived(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payment.stellar.received', {
+      txHash: event['txHash'],
+      ledger: event['ledger'],
+      accountId: event['accountId'],
+      amount: event['amount'],
+      assetCode: event['assetCode'],
+      assetIssuer: event['assetIssuer'],
+      from: event['from'],
+      memo: event['memo'],
+    });
+  }
+
+  @OnEvent('payment.stellar.sent', { async: true })
+  async onStellarPaymentSent(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payment.stellar.sent', {
+      txHash: event['txHash'],
+      ledger: event['ledger'],
+      accountId: event['accountId'],
+      amount: event['amount'],
+      assetCode: event['assetCode'],
+      assetIssuer: event['assetIssuer'],
+      to: event['to'],
+      memo: event['memo'],
+    });
+  }
+
+  @OnEvent('payment.stellar.failed', { async: true })
+  async onStellarPaymentFailed(event: Record<string, unknown>): Promise<void> {
+    await this.dispatch('payment.stellar.failed', {
+      txHash: event['txHash'],
+      ledger: event['ledger'],
+      accountId: event['accountId'],
+      amount: event['amount'],
+      assetCode: event['assetCode'],
+      reason: event['reason'],
+    });
+  }
+
   private async dispatch(
     eventName: string,
     data: Record<string, unknown>,

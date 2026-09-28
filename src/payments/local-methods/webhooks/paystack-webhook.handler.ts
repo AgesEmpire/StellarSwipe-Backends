@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { LocalPayment } from '../entities/local-payment.entity';
 import { LocalPaymentStatus } from '../providers/base-local.provider';
 import { PaystackProvider } from '../providers/paystack.provider';
+import { WebhookIdempotencyService } from '../../../common/services/webhook-idempotency.service';
 
 @Injectable()
 export class PaystackWebhookHandler {
@@ -13,6 +14,7 @@ export class PaystackWebhookHandler {
     @InjectRepository(LocalPayment)
     private readonly paymentRepo: Repository<LocalPayment>,
     private readonly paystackProvider: PaystackProvider,
+    private readonly idempotency: WebhookIdempotencyService,
   ) {}
 
   async handle(payload: Record<string, any>, signature: string): Promise<void> {
@@ -20,6 +22,10 @@ export class PaystackWebhookHandler {
 
     const { event, data } = payload;
     if (!data?.reference) return;
+
+    const eventId = `${event}:${data.id ?? data.reference}`;
+    const isFirstDelivery = await this.idempotency.markProcessed('paystack', eventId);
+    if (!isFirstDelivery) return;
 
     const payment = await this.paymentRepo.findOne({
       where: { externalRef: data.reference, provider: 'paystack' },

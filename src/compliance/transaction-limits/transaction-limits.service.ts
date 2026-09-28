@@ -7,7 +7,11 @@ import {
   LimitScope,
 } from './entities/transaction-limit.entity';
 import { TransactionUsage } from './entities/transaction-usage.entity';
+import { updateWithVersionCheck } from '../../common/utils/optimistic-update.util';
+import { OptimisticLockException } from '../../common/exceptions/optimistic-lock.exception';
 import Big from 'big.js';
+
+const MAX_USAGE_UPDATE_ATTEMPTS = 3;
 
 export interface LimitCheckResult {
   allowed: boolean;
@@ -134,35 +138,50 @@ export class TransactionLimitsService {
   ): Promise<void> {
     const { periodStart, periodEnd } = this.getPeriodDates(limitType);
 
-    let usage = await this.usageRepository.findOne({
-      where: {
-        userId,
-        limitType,
-        limitScope,
-        periodStart: LessThanOrEqual(periodEnd),
-        periodEnd: MoreThanOrEqual(periodStart),
-      },
-    });
-
-    if (usage) {
-      usage.usedAmount = new Big(usage.usedAmount).plus(amount).toString();
-      await this.usageRepository.save(usage);
-    } else {
-      usage = this.usageRepository.create({
-        userId,
-        limitType,
-        limitScope,
-        usedAmount: amount,
-        currency,
-        periodStart,
-        periodEnd,
+    for (let attempt = 1; attempt <= MAX_USAGE_UPDATE_ATTEMPTS; attempt++) {
+      const usage = await this.usageRepository.findOne({
+        where: {
+          userId,
+          limitType,
+          limitScope,
+          periodStart: LessThanOrEqual(periodEnd),
+          periodEnd: MoreThanOrEqual(periodStart),
+        },
       });
-      await this.usageRepository.save(usage);
-    }
 
-    this.logger.log(
-      `Recorded ${amount} ${currency} usage for user ${userId} - ${limitScope} ${limitType}`,
-    );
+      try {
+        if (usage) {
+          const newAmount = new Big(usage.usedAmount).plus(amount).toString();
+          await updateWithVersionCheck(this.usageRepository, 'TransactionUsage', usage.id, usage.version, {
+            usedAmount: newAmount,
+          } as any);
+        } else {
+          const created = this.usageRepository.create({
+            userId,
+            limitType,
+            limitScope,
+            usedAmount: amount,
+            currency,
+            periodStart,
+            periodEnd,
+          });
+          await this.usageRepository.save(created);
+        }
+
+        this.logger.log(
+          `Recorded ${amount} ${currency} usage for user ${userId} - ${limitScope} ${limitType}`,
+        );
+        return;
+      } catch (error) {
+        if (error instanceof OptimisticLockException && attempt < MAX_USAGE_UPDATE_ATTEMPTS) {
+          this.logger.warn(
+            `Usage record for ${userId}/${limitScope}/${limitType} changed concurrently — retrying (attempt ${attempt})`,
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
   }
 
   private async getApplicableLimits(

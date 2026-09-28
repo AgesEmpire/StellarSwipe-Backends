@@ -2,7 +2,11 @@ jest.mock('uuid', () => ({ v4: () => 'mock-uuid' }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
 import { Webhook } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
@@ -50,7 +54,10 @@ describe('WebhooksService', () => {
       providers: [
         WebhooksService,
         { provide: getRepositoryToken(Webhook), useValue: webhookRepo },
-        { provide: getRepositoryToken(WebhookDelivery), useValue: deliveryRepo },
+        {
+          provide: getRepositoryToken(WebhookDelivery),
+          useValue: deliveryRepo,
+        },
         { provide: SignatureGeneratorService, useValue: signatureGenerator },
         { provide: WebhookSenderService, useValue: webhookSender },
       ],
@@ -64,8 +71,17 @@ describe('WebhooksService', () => {
 
   describe('register', () => {
     it('creates webhook with HMAC secret', async () => {
-      const dto = { url: 'https://example.com/hook', events: ['trade.executed'] };
-      const saved = { id: 'wh-1', userId, ...dto, secret: 'secret-abc', active: true };
+      const dto = {
+        url: 'https://example.com/hook',
+        events: ['trade.executed'],
+      };
+      const saved = {
+        id: 'wh-1',
+        userId,
+        ...dto,
+        secret: 'secret-abc',
+        active: true,
+      };
       webhookRepo.create.mockReturnValue(saved);
       webhookRepo.save.mockResolvedValue(saved);
 
@@ -76,18 +92,34 @@ describe('WebhooksService', () => {
     });
 
     it('rejects unsupported event types', async () => {
-      const dto = { url: 'https://example.com/hook', events: ['unknown.event'] };
-      await expect(service.register(userId, dto as any)).rejects.toThrow(BadRequestException);
+      const dto = {
+        url: 'https://example.com/hook',
+        events: ['unknown.event'],
+      };
+      await expect(service.register(userId, dto as any)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('accepts all supported event types', async () => {
       const supportedEvents = [
-        'trade.executed', 'trade.failed', 'trade.cancelled',
-        'signal.created', 'signal.validated', 'signal.performance.updated',
-        'contest.updated', 'payout.completed',
+        'trade.executed',
+        'trade.failed',
+        'trade.cancelled',
+        'signal.created',
+        'signal.validated',
+        'signal.performance.updated',
+        'contest.updated',
+        'payout.completed',
       ];
       const dto = { url: 'https://example.com/hook', events: supportedEvents };
-      const saved = { id: 'wh-1', userId, ...dto, secret: 'secret-abc', active: true };
+      const saved = {
+        id: 'wh-1',
+        userId,
+        ...dto,
+        secret: 'secret-abc',
+        active: true,
+      };
       webhookRepo.create.mockReturnValue(saved);
       webhookRepo.save.mockResolvedValue(saved);
 
@@ -105,20 +137,41 @@ describe('WebhooksService', () => {
 
     it('throws NotFoundException for missing webhook', async () => {
       webhookRepo.findOne.mockResolvedValue(null);
-      await expect(service.findOne(userId, 'wh-1')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne(userId, 'wh-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('throws ForbiddenException for wrong owner', async () => {
-      webhookRepo.findOne.mockResolvedValue({ id: 'wh-1', userId: 'other-user' });
-      await expect(service.findOne(userId, 'wh-1')).rejects.toThrow(ForbiddenException);
+      webhookRepo.findOne.mockResolvedValue({
+        id: 'wh-1',
+        userId: 'other-user',
+      });
+      await expect(service.findOne(userId, 'wh-1')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
   describe('dispatchEvent', () => {
     it('dispatches to all active webhooks subscribed to event', async () => {
       const webhooks = [
-        { id: 'wh-1', userId, url: 'https://a.com', events: ['trade.executed'], secret: 's1', active: true },
-        { id: 'wh-2', userId, url: 'https://b.com', events: ['trade.executed'], secret: 's2', active: true },
+        {
+          id: 'wh-1',
+          userId,
+          url: 'https://a.com',
+          events: ['trade.executed'],
+          secret: 's1',
+          active: true,
+        },
+        {
+          id: 'wh-2',
+          userId,
+          url: 'https://b.com',
+          events: ['trade.executed'],
+          secret: 's2',
+          active: true,
+        },
       ];
 
       const qb = {
@@ -156,6 +209,61 @@ describe('WebhooksService', () => {
       await service.remove(userId, 'wh-1');
 
       expect(webhookRepo.remove).toHaveBeenCalledWith(webhook);
+    });
+  });
+
+  describe('replayToSubscriber', () => {
+    it('replays event to named subscriber with replay metadata', async () => {
+      const delivery = {
+        id: 'd-1',
+        eventType: 'signal.created',
+        eventId: 'evt-1',
+        payload: {
+          event: 'signal.created',
+          deliveryId: 'd-orig',
+          timestamp: '2024-01-01T00:00:00.000Z',
+          data: {},
+        },
+      };
+      const webhook = {
+        id: 'wh-1',
+        userId,
+        secret: 's1',
+        url: 'https://example.com',
+        active: true,
+        events: ['signal.created'],
+        consecutiveFailures: 0,
+      };
+
+      deliveryRepo.findOne.mockResolvedValue(delivery);
+      webhookRepo.findOne.mockResolvedValue(webhook);
+
+      await service.replayToSubscriber(userId, 'd-1', 'wh-1');
+
+      expect(webhookSender.deliverWebhook).toHaveBeenCalledWith(
+        webhook,
+        expect.objectContaining({ isReplay: true, originalDeliveryId: 'd-1' }),
+      );
+    });
+
+    it('throws NotFoundException for unknown delivery', async () => {
+      deliveryRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.replayToSubscriber(userId, 'd-missing', 'wh-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException for unknown subscriber webhook', async () => {
+      deliveryRepo.findOne.mockResolvedValue({
+        id: 'd-1',
+        payload: {},
+        eventType: 'signal.created',
+        eventId: 'e1',
+      });
+      webhookRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.replayToSubscriber(userId, 'd-1', 'wh-unknown'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

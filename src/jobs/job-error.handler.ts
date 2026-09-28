@@ -15,6 +15,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Job } from 'bull';
+import { isPermanentJobError } from '../common/retry';
 import { DeadLetterService } from './dead-letter.service';
 
 export const JOB_ALERT_EVENT = 'job.alert';
@@ -27,15 +28,6 @@ export interface JobAlertPayload {
   isFatal: boolean;
   timestamp: string;
 }
-
-/** Error classes that should NOT be retried */
-const FATAL_ERROR_PATTERNS = [
-  /unauthorized/i,
-  /forbidden/i,
-  /not found/i,
-  /validation failed/i,
-  /invalid input/i,
-];
 
 /** Sensitive field names to redact from logged job data */
 const SENSITIVE_FIELDS = ['password', 'token', 'secret', 'apiKey', 'privateKey'];
@@ -59,9 +51,10 @@ export class JobErrorHandler {
   async handle(job: Job, error: Error, maxAttempts: number): Promise<void> {
     const isFatal = this.isFatalError(error);
     const exhausted = job.attemptsMade >= maxAttempts;
+    const outcome = isFatal ? 'permanent-failure' : exhausted ? 'retries-exhausted' : 'retry-scheduled';
 
     this.logger.error(
-      `Job ${job.id} on "${job.queue.name}" failed (attempt ${job.attemptsMade}/${maxAttempts}): ${error.message}`,
+      `Job ${job.id} on "${job.queue.name}" failed (attempt ${job.attemptsMade}/${maxAttempts}): ${error.message} outcome=${outcome}`,
       { isFatal, exhausted },
     );
 
@@ -101,8 +94,13 @@ export class JobErrorHandler {
     );
   }
 
+  /**
+   * #1075 — delegates to the shared job-error classifier in
+   * `src/common/retry` so the "what counts as permanent" rule lives in one
+   * place instead of being duplicated per queue/processor.
+   */
   isFatalError(error: Error): boolean {
-    return FATAL_ERROR_PATTERNS.some((pattern) => pattern.test(error.message));
+    return isPermanentJobError(error);
   }
 
   /**

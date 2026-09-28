@@ -27,6 +27,15 @@ export class PrometheusService implements OnModuleInit {
   // Cache metrics
   readonly cacheHitsTotal: Counter;
   readonly cacheMissesTotal: Counter;
+  readonly cacheFallbacksTotal: Counter;
+  readonly cacheOperationTimeoutsTotal: Counter;
+  readonly cacheSingleFlightTotal: Counter;
+  readonly cacheSingleFlightFailuresTotal: Counter;
+  readonly bullShutdownForcedTotal: Counter;
+
+  // Incoming webhook verification metrics
+  readonly webhookVerificationTotal: Counter;
+  readonly webhookSecretIndexUsed: Counter;
 
   // DB metrics
   readonly dbQueryDuration: Histogram;
@@ -36,8 +45,9 @@ export class PrometheusService implements OnModuleInit {
   readonly dbPoolTotal: Gauge;
   readonly dbPoolActive: Gauge;
   readonly dbPoolIdle: Gauge;
-  readonly dbPoolWaiting: Gauge;
+  readonly dbPoolPending: Gauge;
   readonly dbPoolUtilizationRatio: Gauge;
+  readonly dbPoolAcquireTimeoutsTotal: Counter;
 
   // Health check status gauges (1 = up, 0 = down)
   readonly serviceHealthStatus: Gauge;
@@ -110,6 +120,54 @@ export class PrometheusService implements OnModuleInit {
       registers: [this.registry],
     });
 
+    this.cacheFallbacksTotal = new Counter({
+      name: 'cache_fallbacks_total',
+      help: 'Cache operations that used their documented degraded-mode fallback',
+      labelNames: ['operation', 'policy'],
+      registers: [this.registry],
+    });
+
+    this.cacheOperationTimeoutsTotal = new Counter({
+      name: 'cache_operation_timeouts_total',
+      help: 'Cache commands that exceeded their operation timeout',
+      labelNames: ['operation'],
+      registers: [this.registry],
+    });
+
+    this.cacheSingleFlightTotal = new Counter({
+      name: 'cache_single_flight_waiters_total',
+      help: 'Requests coalesced behind an in-flight cache fill',
+      labelNames: ['key_type'],
+      registers: [this.registry],
+    });
+
+    this.cacheSingleFlightFailuresTotal = new Counter({
+      name: 'cache_single_flight_failures_total',
+      help: 'Failed single-flight cache fills',
+      labelNames: ['key_type'],
+      registers: [this.registry],
+    });
+
+    this.bullShutdownForcedTotal = new Counter({
+      name: 'bullmq_shutdown_forced_total',
+      help: 'BullMQ workers forcibly interrupted during shutdown',
+      registers: [this.registry],
+    });
+
+    this.webhookVerificationTotal = new Counter({
+      name: 'webhook_verification_total',
+      help: 'Incoming webhook verification attempts, by provider and outcome',
+      labelNames: ['provider', 'result'],
+      registers: [this.registry],
+    });
+
+    this.webhookSecretIndexUsed = new Counter({
+      name: 'webhook_secret_index_used_total',
+      help: 'Which configured secret (0=current, 1=previous, …) verified an incoming webhook — nonzero values signal a sender still on a rotated-out secret',
+      labelNames: ['provider', 'secret_index'],
+      registers: [this.registry],
+    });
+
     this.dbQueryDuration = new Histogram({
       name: 'db_query_duration_seconds',
       help: 'Database query duration in seconds',
@@ -142,15 +200,21 @@ export class PrometheusService implements OnModuleInit {
       registers: [this.registry],
     });
 
-    this.dbPoolWaiting = new Gauge({
-      name: 'db_pool_connections_waiting',
-      help: 'Connections waiting on a lock or client',
+    this.dbPoolPending = new Gauge({
+      name: 'db_pool_connections_pending',
+      help: 'Requests waiting to acquire a database connection',
       registers: [this.registry],
     });
 
     this.dbPoolUtilizationRatio = new Gauge({
       name: 'db_pool_utilization_ratio',
       help: 'Ratio of total pool connections to configured maximum (0–1)',
+      registers: [this.registry],
+    });
+
+    this.dbPoolAcquireTimeoutsTotal = new Counter({
+      name: 'db_pool_acquisition_timeouts_total',
+      help: 'Connection acquisition requests that timed out',
       registers: [this.registry],
     });
 

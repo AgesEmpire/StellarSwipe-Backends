@@ -96,7 +96,7 @@ export class DeadLetterService implements OnModuleInit {
     const job = await this.dlq.getJob(jobId);
     if (!job) return null;
 
-    const replayed = await targetQueue.add(job.data.data, { attempts: 3 });
+    const replayed = await targetQueue.add(job.data.data, { priority: 100, attempts: 3 }); // NORMAL
     await job.remove();
 
     this.logger.log(

@@ -191,7 +191,7 @@ export class SignalAutoCloseController {
   async queueSingleExpirationCheck(@Body() dto: QueueExpirationCheckDto) {
     const job = await this.expirationQueue.add('check-signal-expiration', {
       signalId: dto.signalId,
-    });
+    }, { priority: 10 }); // HIGH
 
     return {
       message: 'Expiration check queued',
@@ -202,7 +202,7 @@ export class SignalAutoCloseController {
   @Post('jobs/check-all')
   @HttpCode(HttpStatus.ACCEPTED)
   async queueBatchExpirationCheck() {
-    const job = await this.expirationQueue.add('check-all-expirations', {});
+    const job = await this.expirationQueue.add('check-all-expirations', {}, { priority: 100 }); // NORMAL
 
     return {
       message: 'Batch expiration check queued',
@@ -213,7 +213,7 @@ export class SignalAutoCloseController {
   @Post('jobs/check-grace-periods')
   @HttpCode(HttpStatus.ACCEPTED)
   async queueGracePeriodCheck() {
-    const job = await this.expirationQueue.add('check-grace-periods', {});
+    const job = await this.expirationQueue.add('check-grace-periods', {}, { priority: 100 }); // NORMAL
 
     return {
       message: 'Grace period check queued',
@@ -226,7 +226,7 @@ export class SignalAutoCloseController {
   async queueExpirationWarnings(@Body() dto: SendWarningsDto) {
     const job = await this.expirationQueue.add('send-expiration-warnings', {
       minutesBefore: dto.minutesBefore,
-    });
+    }, { priority: 100 }); // NORMAL
 
     return {
       message: 'Expiration warnings job queued',

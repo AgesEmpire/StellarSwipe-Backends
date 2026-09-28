@@ -1,0 +1,34 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: stellarswipe-cache-resilience
+  labels:
+    app: stellarswipe
+spec:
+  groups:
+    - name: stellarswipe.cache-resilience
+      rules:
+        - alert: StellarSwipeRedisOperationTimeouts
+          expr: increase(cache_operation_timeouts_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Redis cache commands are timing out
+            description: Cache commands exceeded the configured request deadline.
+        - alert: StellarSwipeCacheFallbacks
+          expr: increase(cache_fallbacks_total[5m]) > 25
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Cache fallback volume is elevated
+            description: Dependent features are serving degraded responses; check Redis health and database capacity.
+        - alert: StellarSwipeSingleFlightFailures
+          expr: increase(cache_single_flight_failures_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Market-data single-flight fills are failing
+            description: Expensive market-data reads are not being populated successfully.

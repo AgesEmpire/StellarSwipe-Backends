@@ -7,8 +7,11 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { QueryFailedError, EntityNotFoundError } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { SentryService } from '../sentry';
+import { CORRELATION_ID_HEADER } from '../correlation/correlation-id.store';
+import { ErrorResponseDto } from '../dto/error-response.dto';
 import { StellarException, SorobanException } from '../exceptions';
 import { getCorrelationId } from '../correlation';
 
@@ -30,12 +33,15 @@ const SECRET_PATTERN =
 
 export const redact = (value: string): string =>
   value.replace(SECRET_PATTERN, '$1[REDACTED]');
+import { ErrorClassificationService } from '../error-classification/error-classification.service';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   constructor(
     private readonly logger: LoggerService,
     private readonly sentry: SentryService,
+    private readonly errorClassifier: ErrorClassificationService,
+    private readonly configService: ConfigService,
   ) {
     this.logger.setContext(GlobalExceptionFilter.name);
   }
@@ -109,9 +115,39 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       message: Array.isArray(message) ? message.map(redact) : redact(String(message)),
       correlationId,
       timestamp: new Date().toISOString(),
+    const classification = this.errorClassifier.classify(exception);
+
+    this.errorClassifier.logError({
+      classification: classification.classification,
+      code: classification.code,
+      timestamp: new Date().toISOString(),
       path: request.url,
+      method: request.method,
+      originalError: classification.originalError,
+    });
+
+    // Build error response
+    const errorResponse: ErrorResponseDto = {
+      statusCode: classification.httpStatus,
+      errorCode: classification.code,
+      message: classification.message,
+      path: request.url,
+      timestamp: new Date().toISOString(),
+      requestId: (request.headers[CORRELATION_ID_HEADER] as string) || undefined,
     };
 
     response.status(status).json(body);
+    // Include details in development mode
+    if (
+      this.configService.get<string>('NODE_ENV') === 'development' &&
+      classification.originalError
+    ) {
+      errorResponse.details = {
+        name: classification.originalError.name,
+        retryable: classification.isRetryable,
+      };
+    }
+
+    response.status(classification.httpStatus).json(errorResponse);
   }
 }

@@ -4,7 +4,9 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 import { DEAD_LETTER_QUEUE, DeadLetterService } from './dead-letter.service';
 import { JobSchedulerService } from './job-scheduler.service';
+import { JobErrorHandler } from './job-error.handler';
 import { JobsController } from './jobs.controller';
+import { DeadLetterController } from './dead-letter.controller';
 import { AuthModule } from '../auth/auth.module';
 import { ApiKeysModule } from '../api-keys/api-keys.module';
 
@@ -16,8 +18,8 @@ import { ApiKeysModule } from '../api-keys/api-keys.module';
     AuthModule,
     ApiKeysModule,
   ],
-  controllers: [JobsController],
-  providers: [DeadLetterService, JobSchedulerService],
-  exports: [DeadLetterService, JobSchedulerService],
+  controllers: [JobsController, DeadLetterController],
+  providers: [DeadLetterService, JobSchedulerService, JobErrorHandler],
+  exports: [DeadLetterService, JobSchedulerService, JobErrorHandler],
 })
 export class JobsModule {}
