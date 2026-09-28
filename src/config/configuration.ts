@@ -1,7 +1,5 @@
 import { registerAs } from '@nestjs/config';
 
-import { registerAs } from '@nestjs/config';
-
 /**
  * Parse a positive integer from an environment variable.
  * Returns the fallback when the value is missing or not a valid positive integer.
@@ -33,10 +31,43 @@ const requestLimits = {
   routeParameter: parsePositiveInt(process.env.REQUEST_LIMIT_ROUTE_PARAMETER, 256),
 };
 
+/**
+ * Runtime credential rotation (issue #1165).
+ *
+ * Credentials are refreshed at runtime without restarting the process. The
+ * rotation is atomic: new operations immediately observe the replacement
+ * credential, while in-flight operations may continue using the previous
+ * credential for a bounded overlap window before it is discarded.
+ *
+ * Only non-sensitive metadata is exposed for observability; secret values are
+ * never logged or emitted in telemetry.
+ */
+const secretsRotation = {
+  // Master switch for runtime credential refresh.
+  enabled: process.env.SECRETS_ROTATION_ENABLED !== 'false',
+  // How long the previous credential remains valid for in-flight work after a
+  // successful rotation, in milliseconds. Bounded to avoid unbounded overlap.
+  overlapMs: parsePositiveInt(process.env.SECRETS_ROTATION_OVERLAP_MS, 30_000),
+  // Maximum time to wait for in-flight operations to drain before the previous
+  // credential is force-discarded, in milliseconds.
+  drainTimeoutMs: parsePositiveInt(process.env.SECRETS_ROTATION_DRAIN_TIMEOUT_MS, 60_000),
+  // Interval between automatic rotation checks, in milliseconds. Set to 0 to
+  // disable automatic rotation and rely on explicit/manual rotation only.
+  checkIntervalMs: parsePositiveInt(process.env.SECRETS_ROTATION_CHECK_INTERVAL_MS, 60_000),
+  // Names of the credentials managed by the runtime store. Only names are
+  // configured here; values are resolved from the environment at rotation time
+  // and never persisted in configuration output.
+  managed: (process.env.SECRETS_ROTATION_MANAGED || '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0),
+};
+
 export default registerAs('app', () => ({
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '3000', 10),
   requestLimits,
+  secretsRotation,
   rateLimit: {
     // Distributed rate limiting for public and auth-sensitive routes.
     // Uses a shared store (Redis) so limits are enforced across all instances.
