@@ -13,6 +13,7 @@ import { KycEventListener } from './kyc-event.listener';
 import { KycExpiryListener } from './kyc-expiry.listener';
 import { PersonaProvider } from './providers/persona.provider';
 import { OnfidoProvider } from './providers/onfido.provider';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { OnfidoProvider } from './providers/onfido.provider';
     TypeOrmModule.forFeature([KycVerification, KycAuditLog]),
     EventEmitterModule,
     ScheduleModule,
+    NotificationsModule,
   ],
   controllers: [KycController],
   providers: [

@@ -229,6 +229,23 @@ export class KycService {
 
     // Idempotency: an already-approved verification is a no-op so duplicate
     // approval events do not re-apply limits or re-emit notifications.
+    if (veri
+    verificationId: string,
+    approvedLevel?: KycLevel,
+  ): Promise<void> {
+    const verification = await this.kycRepo.findOne({
+      where: { id: verificationId },
+    });
+
+    if (!verification) {
+      this.logger.warn(
+        `Approval event for unknown verification ${verificationId} — ignoring`,
+      );
+      return;
+    }
+
+    // Idempotency: an already-approved verification is a no-op so duplicate
+    // approval events do not re-apply limits or re-emit notifications.
     if (verification.status === KycStatus.APPROVED) {
       this.logger.debug(
         `Ignoring duplicate approval for verification ${verificationId}`,
