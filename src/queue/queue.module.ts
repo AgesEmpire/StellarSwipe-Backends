@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnApplicationShutdown } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
@@ -40,4 +40,10 @@ import { CorrelationModule } from '../common/correlation/correlation.module';
     DeadLetterService,
   ],
 })
-export class QueueModule {}
+export class QueueModule implements OnApplicationShutdown {
+  constructor(private readonly priorityQueueService: PriorityQueueService) {}
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.priorityQueueService.drain();
+  }
+}
