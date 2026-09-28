@@ -17,6 +17,8 @@ import { xaiConfig } from './config/xai.config';
 import { appConfig, sentryConfig } from './config/app.config';
 import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
+import configuration from './config/configuration';
+import { validateEnv } from './config/schemas/config.schema';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
 import { queueRetryConfig } from './queue/queue-retry.config';
@@ -129,6 +131,9 @@ import { SearchModule } from './search/search.module';
         // Suspicious IP ranges: aggressive bucket keyed by IP.
         { name: 'suspicious', ttl: 60_000, limit: 10 },
       ],
+      envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
+      cache: true,
+      validate: validateEnv,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
