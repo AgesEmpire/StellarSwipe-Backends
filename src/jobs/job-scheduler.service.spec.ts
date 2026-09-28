@@ -3,6 +3,51 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { JobSchedulerService, JobDefinition } from './job-scheduler.service';
 import { PermanentError } from '../common/retry';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
+
+// In-memory stand-in for Redis shared by every DistributedLockService created
+// in this file, so separate scheduler instances behave like replicas competing
+// for the same lock store. Honours NX/PX semantics and the CAS release/renew
+// scripts; expiry is driven by Date.now() so fake timers can age leases.
+const mockLockStore = new Map<string, { value: string; expiresAt: number }>();
+
+function mockLiveEntry(key: string) {
+  const entry = mockLockStore.get(key);
+  if (entry && entry.expiresAt <= Date.now()) {
+    mockLockStore.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+
+jest.mock('ioredis', () =>
+  jest.fn().mockImplementation(() => ({
+    set: jest.fn(
+      async (key: string, value: string, _px: string, ttlMs: number) => {
+        if (mockLiveEntry(key)) return null;
+        mockLockStore.set(key, { value, expiresAt: Date.now() + ttlMs });
+        return 'OK';
+      },
+    ),
+    eval: jest.fn(
+      async (
+        script: string,
+        _keys: number,
+        key: string,
+        token: string,
+        ttlMs?: number,
+      ) => {
+        const entry = mockLiveEntry(key);
+        if (!entry || entry.value !== token) return 0;
+        if (script.includes('pexpire'))
+          entry.expiresAt = Date.now() + Number(ttlMs);
+        else mockLockStore.delete(key);
+        return 1;
+      },
+    ),
+    disconnect: jest.fn(),
+  })),
+);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,12 +72,16 @@ async function buildService(configOverrides: Record<string, string> = {}) {
   };
 
   const config = {
-    get: jest.fn((key: string) => configOverrides[key] ?? undefined),
+    get: jest.fn(
+      (key: string, defaultValue?: unknown) =>
+        configOverrides[key] ?? defaultValue,
+    ),
   };
 
   const module = await Test.createTestingModule({
     providers: [
       JobSchedulerService,
+      DistributedLockService,
       { provide: SchedulerRegistry, useValue: registry },
       { provide: ConfigService, useValue: config },
     ],
@@ -40,9 +89,16 @@ async function buildService(configOverrides: Record<string, string> = {}) {
 
   return {
     svc: module.get(JobSchedulerService),
+    lock: module.get(DistributedLockService),
     registry,
     cronJobs,
   };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
 }
 
 function noop(): Promise<void> {
@@ -52,6 +108,8 @@ function noop(): Promise<void> {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('JobSchedulerService', () => {
+  beforeEach(() => mockLockStore.clear());
+
   describe('register()', () => {
     it('adds a cron job to the registry and starts it', async () => {
       const { svc, registry } = await buildService();
@@ -285,6 +343,116 @@ describe('JobSchedulerService', () => {
       expect(handler).toHaveBeenCalledTimes(3);
       const history = svc.getHistory('recovers.job');
       expect(history[0]).toMatchObject({ status: 'success', outcome: 'success' });
+    });
+  });
+
+  describe('multi-instance execution (distributed lock)', () => {
+    const def = (handler: () => Promise<void>): JobDefinition => ({
+      name: 'shared.job',
+      cronEnvKey: 'CRON_SHARED',
+      defaultCron: '0 0 * * *',
+      handler,
+      lockTtlMs: 1_000,
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it('runs a job on only one instance when replicas fire the same tick (contention)', async () => {
+      const replicaA = await buildService();
+      const replicaB = await buildService();
+      const gate = deferred();
+      const handler = jest.fn(() => gate.promise);
+      replicaA.svc.register(def(handler));
+      replicaB.svc.register(def(handler));
+
+      const runA = (replicaA.svc as any).runWithRetry(
+        'shared.job',
+        handler,
+        1,
+        0,
+      );
+      const runB = (replicaB.svc as any).runWithRetry(
+        'shared.job',
+        handler,
+        1,
+        0,
+      );
+      await runB; // B finds the lease held by A and skips
+      gate.resolve();
+      await runA;
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(replicaA.svc.getHistory('shared.job')).toHaveLength(1);
+      expect(replicaB.svc.getHistory('shared.job')).toHaveLength(0);
+    });
+
+    it('releases the lease after a run so the next tick can execute on another instance', async () => {
+      const replicaA = await buildService();
+      const replicaB = await buildService();
+      const handler = jest.fn().mockResolvedValue(undefined);
+      replicaA.svc.register(def(handler));
+      replicaB.svc.register(def(handler));
+
+      await (replicaA.svc as any).runWithRetry('shared.job', handler, 1, 0);
+      await (replicaB.svc as any).runWithRetry('shared.job', handler, 1, 0);
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(replicaB.svc.getHistory('shared.job')[0]).toMatchObject({
+        status: 'success',
+      });
+    });
+
+    it('recovers a lease abandoned by a crashed instance once it expires', async () => {
+      jest.useFakeTimers();
+      const crashed = await buildService();
+      const survivor = await buildService();
+      const handler = jest.fn().mockResolvedValue(undefined);
+      survivor.svc.register(def(handler));
+
+      // The crashed replica took the lease and never released or renewed it.
+      await crashed.lock.acquire('scheduled-job:shared.job', 1_000);
+
+      await (survivor.svc as any).runWithRetry('shared.job', handler, 1, 0);
+      expect(handler).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1_001);
+      await (survivor.svc as any).runWithRetry('shared.job', handler, 1, 0);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the lease alive while a long run exceeds its TTL', async () => {
+      jest.useFakeTimers();
+      const replicaA = await buildService();
+      const replicaB = await buildService();
+      const gate = deferred();
+      const handler = jest.fn(() => gate.promise);
+      replicaA.svc.register(def(handler));
+      replicaB.svc.register(def(handler));
+
+      const runA = (replicaA.svc as any).runWithRetry(
+        'shared.job',
+        handler,
+        1,
+        0,
+      );
+      await jest.advanceTimersByTimeAsync(3_000); // 3× the TTL, renewed by heartbeat
+      await (replicaB.svc as any).runWithRetry('shared.job', handler, 1, 0);
+      gate.resolve();
+      await runA;
+
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the run instead of executing unguarded when the lock store is unreachable', async () => {
+      const { svc, lock } = await buildService();
+      const handler = jest.fn().mockResolvedValue(undefined);
+      svc.register(def(handler));
+      jest.spyOn(lock, 'acquire').mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await expect(
+        (svc as any).runWithRetry('shared.job', handler, 1, 0),
+      ).resolves.toBeUndefined();
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 
