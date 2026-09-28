@@ -39,6 +39,7 @@ import { DeprecationInterceptor } from './versioning/interceptors/deprecation.in
 import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
 import { VersionManagerService } from './versioning/version-manager.service';
 import { RequestSizeLimitMiddleware } from './common/middleware/request-size-limit.middleware';
+import { validateConfigurationRelationships } from './common/config/config-relationship.validator';
 
 initTracing();
 
@@ -56,6 +57,11 @@ async function bootstrap() {
   // Set Winston as the default logger
   app.useLogger(logger);
   logger.setContext('Bootstrap');
+
+  // Validate cross-field configuration relationships (network endpoints,
+  // retry limits, timeout budgets) before wiring up any runtime behaviour.
+  // Invalid combinations abort startup with actionable errors (#1232).
+  validateConfigurationRelationships(configService);
 
   // Initialize Sentry
   sentryService.init();
@@ -162,4 +168,4 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
      
 
-/* … truncated 921 chars — edit only what you need near the top … */
+/* … truncated 71 chars — edit only what you need near the top … */
