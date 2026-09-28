@@ -372,6 +372,8 @@ POST /api/v1/jobs/:name/pause
 POST /api/v1/jobs/:name/resume
 ```
 
+Every replica registers the same cron jobs, so each run takes a Redis lease (`stellarswipe:lock:scheduled-job:<name>`) first. Only the replica holding the lease executes the job; the others skip that tick. The lease is renewed while the job runs and released when it finishes. If a replica crashes mid-run, the lease expires after `lockTtlMs` (default 5 minutes, set per job in `JobDefinition`) and the next tick runs normally. If Redis is unreachable, the run is skipped rather than executed on every replica.
+
 ### Health Check
 
 Queue connectivity is included in the readiness probe:
