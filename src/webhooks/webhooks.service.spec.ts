@@ -4,12 +4,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
 import { Webhook } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { WebhookReplayAudit } from './entities/webhook-replay-audit.entity';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
 
@@ -17,6 +19,7 @@ describe('WebhooksService', () => {
   let service: WebhooksService;
   let webhookRepo: any;
   let deliveryRepo: any;
+  let replayAuditRepo: any;
   let signatureGenerator: jest.Mocked<SignatureGeneratorService>;
   let webhookSender: jest.Mocked<WebhookSenderService>;
 
@@ -35,6 +38,14 @@ describe('WebhooksService', () => {
 
     deliveryRepo = {
       findOne: jest.fn(),
+      find: jest.fn(),
+      findAndCount: jest.fn(),
+    };
+
+    replayAuditRepo = {
+      create: jest.fn((entry) => entry),
+      save: jest.fn(async (entry) => ({ id: 'audit-1', ...entry })),
+      findOne: jest.fn().mockResolvedValue(null),
       findAndCount: jest.fn(),
     };
 
@@ -46,7 +57,7 @@ describe('WebhooksService', () => {
     } as any;
 
     webhookSender = {
-      deliverWebhook: jest.fn().mockResolvedValue(undefined),
+      deliverWebhook: jest.fn().mockResolvedValue({ id: 'replay-delivery-1' }),
       retryDelivery: jest.fn().mockResolvedValue(undefined),
     } as any;
 
@@ -57,6 +68,10 @@ describe('WebhooksService', () => {
         {
           provide: getRepositoryToken(WebhookDelivery),
           useValue: deliveryRepo,
+        },
+        {
+          provide: getRepositoryToken(WebhookReplayAudit),
+          useValue: replayAuditRepo,
         },
         { provide: SignatureGeneratorService, useValue: signatureGenerator },
         { provide: WebhookSenderService, useValue: webhookSender },
@@ -213,57 +228,130 @@ describe('WebhooksService', () => {
   });
 
   describe('replayToSubscriber', () => {
-    it('replays event to named subscriber with replay metadata', async () => {
-      const delivery = {
-        id: 'd-1',
-        eventType: 'signal.created',
-        eventId: 'evt-1',
-        payload: {
-          event: 'signal.created',
-          deliveryId: 'd-orig',
-          timestamp: '2024-01-01T00:00:00.000Z',
-          data: {},
-        },
-      };
-      const webhook = {
-        id: 'wh-1',
-        userId,
-        secret: 's1',
-        url: 'https://example.com',
-        active: true,
-        events: ['signal.created'],
-        consecutiveFailures: 0,
-      };
+    const delivery = {
+      id: 'd-1',
+      eventType: 'signal.created',
+      eventId: 'evt-1',
+      webhook: { id: 'wh-source', userId },
+      payload: {
+        event: 'signal.created',
+        deliveryId: 'd-orig',
+        timestamp: '2024-01-01T00:00:00.000Z',
+        data: {},
+      },
+    };
+    const webhook = {
+      id: 'wh-1',
+      userId,
+      secret: 's1',
+      url: 'https://example.com',
+      active: true,
+      events: ['signal.created'],
+      consecutiveFailures: 0,
+    };
 
+    it('replays event to named subscriber and records a queued audit', async () => {
       deliveryRepo.findOne.mockResolvedValue(delivery);
       webhookRepo.findOne.mockResolvedValue(webhook);
 
-      await service.replayToSubscriber(userId, 'd-1', 'wh-1');
+      const audit = await service.replayToSubscriber(userId, 'd-1', 'wh-1');
 
       expect(webhookSender.deliverWebhook).toHaveBeenCalledWith(
         webhook,
         expect.objectContaining({ isReplay: true, originalDeliveryId: 'd-1' }),
       );
+      expect(audit).toEqual(
+        expect.objectContaining({
+          requestedBy: userId,
+          originalDeliveryId: 'd-1',
+          targetWebhookId: 'wh-1',
+          replayDeliveryId: 'replay-delivery-1',
+          outcome: 'queued',
+        }),
+      );
     });
 
-    it('throws NotFoundException for unknown delivery', async () => {
+    it('denies and audits replay of an unknown delivery', async () => {
       deliveryRepo.findOne.mockResolvedValue(null);
       await expect(
         service.replayToSubscriber(userId, 'd-missing', 'wh-1'),
       ).rejects.toThrow(NotFoundException);
+      expect(replayAuditRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'denied' }),
+      );
     });
 
-    it('throws NotFoundException for unknown subscriber webhook', async () => {
+    it("denies and audits replay of another user's delivery", async () => {
       deliveryRepo.findOne.mockResolvedValue({
-        id: 'd-1',
-        payload: {},
-        eventType: 'signal.created',
-        eventId: 'e1',
+        ...delivery,
+        webhook: { id: 'wh-other', userId: 'other-user' },
       });
+
+      await expect(
+        service.replayToSubscriber(userId, 'd-1', 'wh-1'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(webhookSender.deliverWebhook).not.toHaveBeenCalled();
+      expect(replayAuditRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: 'denied',
+          reason: 'Delivery belongs to another user',
+        }),
+      );
+    });
+
+    it('denies and audits replay to an unknown subscriber webhook', async () => {
+      deliveryRepo.findOne.mockResolvedValue(delivery);
       webhookRepo.findOne.mockResolvedValue(null);
       await expect(
         service.replayToSubscriber(userId, 'd-1', 'wh-unknown'),
       ).rejects.toThrow(NotFoundException);
+      expect(webhookSender.deliverWebhook).not.toHaveBeenCalled();
+      expect(replayAuditRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'denied' }),
+      );
+    });
+
+    it('rejects and audits a duplicate replay within the window', async () => {
+      deliveryRepo.findOne.mockResolvedValue(delivery);
+      webhookRepo.findOne.mockResolvedValue(webhook);
+      replayAuditRepo.findOne.mockResolvedValue({ id: 'audit-prev' });
+
+      await expect(
+        service.replayToSubscriber(userId, 'd-1', 'wh-1'),
+      ).rejects.toThrow(ConflictException);
+      expect(webhookSender.deliverWebhook).not.toHaveBeenCalled();
+      expect(replayAuditRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'duplicate' }),
+      );
+    });
+  });
+
+  describe('getReplayAudits', () => {
+    it('returns replay audits with the replayed delivery outcome', async () => {
+      webhookRepo.findOne.mockResolvedValue({ id: 'wh-1', userId });
+      replayAuditRepo.findAndCount.mockResolvedValue([
+        [
+          { id: 'a-1', outcome: 'queued', replayDeliveryId: 'rd-1' },
+          { id: 'a-2', outcome: 'duplicate' },
+        ],
+        2,
+      ]);
+      deliveryRepo.find.mockResolvedValue([{ id: 'rd-1', status: 'success' }]);
+
+      const result = await service.getReplayAudits(userId, 'wh-1');
+
+      expect(result.total).toBe(2);
+      expect(result.replays).toEqual([
+        expect.objectContaining({ id: 'a-1', deliveryStatus: 'success' }),
+        expect.objectContaining({ id: 'a-2', deliveryStatus: null }),
+      ]);
+    });
+
+    it("rejects querying another user's webhook", async () => {
+      webhookRepo.findOne.mockResolvedValue({ id: 'wh-1', userId: 'other' });
+      await expect(service.getReplayAudits(userId, 'wh-1')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 });

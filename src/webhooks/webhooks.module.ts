@@ -6,6 +6,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { Webhook } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { WebhookDeadLetter } from './entities/webhook-dead-letter.entity';
+import { WebhookReplayAudit } from './entities/webhook-replay-audit.entity';
 import { WebhooksService } from './webhooks.service';
 import { WebhooksController } from './webhooks.controller';
 import { SignatureGeneratorService } from './services/signature-generator.service';
@@ -20,7 +21,12 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Webhook, WebhookDelivery, WebhookDeadLetter]),
+    TypeOrmModule.forFeature([
+      Webhook,
+      WebhookDelivery,
+      WebhookDeadLetter,
+      WebhookReplayAudit,
+    ]),
     ScheduleModule.forRoot(),
     BullModule.registerQueue(
       { name: WEBHOOK_DELIVERY_QUEUE },

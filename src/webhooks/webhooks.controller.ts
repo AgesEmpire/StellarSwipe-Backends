@@ -94,6 +94,16 @@ export class WebhooksController {
     return this.webhooksService.replayToSubscriber(req.user.id, deliveryId, webhookId);
   }
 
+  @Get(':id/replays')
+  getReplays(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+  ) {
+    return this.webhooksService.getReplayAudits(req.user.id, id, limit, offset);
+  }
+
   @Post(':id/secret-rotation/initiate')
   @HttpCode(HttpStatus.OK)
   initiateSecretRotation(

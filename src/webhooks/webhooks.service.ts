@@ -3,13 +3,21 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { Webhook, SUPPORTED_WEBHOOK_EVENTS } from './entities/webhook.entity';
-import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import {
+  DeliveryStatus,
+  WebhookDelivery,
+} from './entities/webhook-delivery.entity';
+import {
+  WebhookReplayAudit,
+  WebhookReplayOutcome,
+} from './entities/webhook-replay-audit.entity';
 import {
   RegisterWebhookDto,
   UpdateWebhookDto,
@@ -22,6 +30,13 @@ import { SsrfValidationPipe } from './pipes/ssrf-validation.pipe';
 const DEFAULT_MAX_DELIVERY_ATTEMPTS = 5;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60000;
+
+/** Identical replays (same delivery to the same webhook) are rejected within this window. */
+export const WEBHOOK_REPLAY_DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
+
+export interface WebhookReplayRecord extends WebhookReplayAudit {
+  deliveryStatus: DeliveryStatus | null;
+}
 
 export interface DeadLetterEntry {
   deliveryId: string;
@@ -57,6 +72,8 @@ export class WebhooksService {
     private readonly webhookRepo: Repository<Webhook>,
     @InjectRepository(WebhookDelivery)
     private readonly deliveryRepo: Repository<WebhookDelivery>,
+    @InjectRepository(WebhookReplayAudit)
+    private readonly replayAuditRepo: Repository<WebhookReplayAudit>,
     private readonly signatureGenerator: SignatureGeneratorService,
     private readonly webhookSender: WebhookSenderService,
   ) {}
@@ -155,18 +172,66 @@ export class WebhooksService {
     await this.webhookSender.retryDelivery(deliveryId);
   }
 
+  /**
+   * Replays a past delivery to one of the caller's webhooks. Every attempt,
+   * including denied and duplicate ones, is recorded in an immutable audit log.
+   */
   async replayToSubscriber(
     userId: string,
     deliveryId: string,
     subscriberWebhookId: string,
-  ): Promise<void> {
+  ): Promise<WebhookReplayAudit> {
+    const audit = (
+      outcome: WebhookReplayOutcome,
+      reason?: string,
+      replayDeliveryId?: string,
+    ) =>
+      this.recordReplayAudit({
+        requestedBy: userId,
+        originalDeliveryId: deliveryId,
+        targetWebhookId: subscriberWebhookId,
+        outcome,
+        reason,
+        replayDeliveryId,
+      });
+
     const delivery = await this.deliveryRepo.findOne({
       where: { id: deliveryId },
+      relations: ['webhook'],
     });
-    if (!delivery)
+    if (!delivery) {
+      await audit('denied', 'Delivery not found');
       throw new NotFoundException(`Delivery not found: ${deliveryId}`);
+    }
+    if (delivery.webhook?.userId !== userId) {
+      await audit('denied', 'Delivery belongs to another user');
+      throw new ForbiddenException();
+    }
 
-    const webhook = await this.findOne(userId, subscriberWebhookId);
+    let webhook: Webhook;
+    try {
+      webhook = await this.findOne(userId, subscriberWebhookId);
+    } catch (err) {
+      await audit('denied', (err as Error).message);
+      throw err;
+    }
+
+    const recentReplay = await this.replayAuditRepo.findOne({
+      where: {
+        originalDeliveryId: deliveryId,
+        targetWebhookId: subscriberWebhookId,
+        outcome: 'queued',
+        createdAt: MoreThan(
+          new Date(Date.now() - WEBHOOK_REPLAY_DUPLICATE_WINDOW_MS),
+        ),
+      },
+    });
+    if (recentReplay) {
+      await audit('duplicate', `Already replayed by ${recentReplay.id}`);
+      throw new ConflictException(
+        `Delivery ${deliveryId} was already replayed to webhook ${subscriberWebhookId}`,
+      );
+    }
 
     const replayPayload = {
       ...(delivery.payload as any),
@@ -175,7 +240,56 @@ export class WebhooksService {
       originalDeliveryId: deliveryId,
     };
 
-    await this.webhookSender.deliverWebhook(webhook, replayPayload);
+    const replayDelivery = await this.webhookSender.deliverWebhook(
+      webhook,
+      replayPayload,
+    );
+    return audit('queued', undefined, replayDelivery.id);
+  }
+
+  async getReplayAudits(
+    userId: string,
+    webhookId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<{ replays: WebhookReplayRecord[]; total: number }> {
+    await this.findOne(userId, webhookId);
+
+    const [audits, total] = await this.replayAuditRepo.findAndCount({
+      where: { targetWebhookId: webhookId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    const deliveryIds = audits
+      .map((a) => a.replayDeliveryId)
+      .filter((id): id is string => !!id);
+    const deliveries = deliveryIds.length
+      ? await this.deliveryRepo.find({ where: { id: In(deliveryIds) } })
+      : [];
+    const statusById = new Map(deliveries.map((d) => [d.id, d.status]));
+
+    const replays = audits.map((a) => ({
+      ...a,
+      deliveryStatus: a.replayDeliveryId
+        ? (statusById.get(a.replayDeliveryId) ?? null)
+        : null,
+    }));
+
+    return { replays, total };
+  }
+
+  private async recordReplayAudit(
+    entry: Omit<WebhookReplayAudit, 'id' | 'createdAt'>,
+  ): Promise<WebhookReplayAudit> {
+    const audit = await this.replayAuditRepo.save(
+      this.replayAuditRepo.create(entry),
+    );
+    this.logger.log(
+      `Webhook replay ${audit.outcome}: delivery=${entry.originalDeliveryId} target=${entry.targetWebhookId} requestedBy=${entry.requestedBy}`,
+    );
+    return audit;
   }
 
   async dispatchEvent(
