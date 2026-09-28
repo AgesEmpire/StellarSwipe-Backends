@@ -5,6 +5,8 @@ import {
   OnApplicationBootstrap,
   Logger,
   UseGuards,
+  BeforeApplicationShutdown,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   HealthCheck,
@@ -31,8 +33,12 @@ import { AuditExempt } from '../audit-log/decorators/audit-exempt.decorator';
 @Controller('health')
 @UseGuards(HealthMetricsAuthGuard)
 @AuditExempt()
-export class HealthController implements OnApplicationBootstrap {
+export class HealthController
+  implements OnApplicationBootstrap, BeforeApplicationShutdown
+{
   private readonly logger = new Logger(HealthController.name);
+  /** Set once shutdown begins so readiness fails and traffic drains first. */
+  private shuttingDown = false;
 
   constructor(
     private health: HealthCheckService,
@@ -78,6 +84,43 @@ export class HealthController implements OnApplicationBootstrap {
         }
       }
     }
+  }
+
+  beforeApplicationShutdown(): void {
+    this.shuttingDown = true;
+  }
+
+  get isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  /** Required dependencies — readiness fails if any of these is unavailable. */
+  private readinessChecks() {
+    return [
+      () => this.databaseHealth.isHealthy('database'),
+      () => this.redisHealth.isHealthy('cache'),
+      () => this.queueHealth.isHealthy('queue'),
+    ];
+  }
+
+  private async runReadiness(): Promise<HealthCheckResult> {
+    if (this.shuttingDown) {
+      throw new ServiceUnavailableException({
+        status: 'error',
+        error: { shutdown: { status: 'down', message: 'Instance is draining' } },
+      });
+    }
+    return this.health.check(this.readinessChecks());
+  }
+
+  /** Liveness never touches dependencies — only reports that the process is responsive. */
+  private liveResult(): HealthCheckResult {
+    return {
+      status: 'ok',
+      info: { process: { status: 'up', uptimeSeconds: Math.round(process.uptime()) } },
+      error: {},
+      details: { process: { status: 'up', uptimeSeconds: Math.round(process.uptime()) } },
+    };
   }
 
   @Get()
@@ -140,9 +183,8 @@ export class HealthController implements OnApplicationBootstrap {
    * Kubernetes uses this to decide whether to RESTART the pod.
    */
   @Get('liveness')
-  @HealthCheck()
-  async liveness(): Promise<HealthCheckResult> {
-    return this.health.check([]);
+  liveness(): HealthCheckResult {
+    return this.liveResult();
   }
 
   /**
@@ -152,9 +194,8 @@ export class HealthController implements OnApplicationBootstrap {
    * triggers a pod restart.
    */
   @Get('live')
-  @HealthCheck()
-  async live(): Promise<HealthCheckResult> {
-    return this.health.check([]);
+  live(): HealthCheckResult {
+    return this.liveResult();
   }
 
   /**
@@ -169,6 +210,8 @@ export class HealthController implements OnApplicationBootstrap {
    */
   @Get('readiness')
   @HealthCheck()
+  async readiness(): Promise<HealthCheckResult> {
+    return this.runReadiness();
   @HttpCode(200)
   async readiness(): Promise<HealthCheckResult & { ready: boolean; reason?: string }> {
     if (!this.readiness.isReady()) {
@@ -206,24 +249,18 @@ export class HealthController implements OnApplicationBootstrap {
    * /healthz — alias for liveness (Kubernetes convention).
    */
   @Get('healthz')
-  @HealthCheck()
-  async healthz(): Promise<HealthCheckResult> {
-    return this.health.check([]);
+  healthz(): HealthCheckResult {
+    return this.liveResult();
   }
 
   /**
-   * /ready — alias for readiness (Kubernetes convention).
+   * /ready — alias for readiness (Kubernetes convention). Uses the same required
+   * dependency set; blockchain services are optional and reported via /health.
    */
   @Get('ready')
   @HealthCheck()
   async ready(): Promise<HealthCheckResult> {
-    return this.health.check([
-      () => this.databaseHealth.isHealthy('database'),
-      () => this.redisHealth.isHealthy('cache'),
-      () => this.queueHealth.isHealthy('queue'),
-      () => this.sorobanHealth.isHealthy('soroban'),
-      () => this.stellarHealth.isHealthy('stellar'),
-    ]);
+    return this.runReadiness();
   }
 
   @Get('summary')
