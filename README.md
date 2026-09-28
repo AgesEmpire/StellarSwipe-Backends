@@ -366,6 +366,17 @@ POST /api/v1/admin/dead-letter/:id/retry
 DELETE /api/v1/admin/dead-letter/:id
 ```
 
+### Payload Versioning
+
+Jobs can outlive a deployment, so priority-queue payloads carry a `schemaVersion` (see `PRIORITY_JOB_SCHEMA` in `src/queue/priority-queue.service.ts`). Processors read job data through `PriorityQueueService.readJobData(job)`, which migrates older payloads one version at a time to the current schema before the handler sees them. Payloads enqueued before versioning have no `schemaVersion` and are treated as version 1.
+
+Changing the payload shape:
+
+1. Bump the schema's current version and add a migration from the previous version (`migrations[n]` upgrades version `n` to `n + 1`).
+2. Keep existing migrations so jobs from every earlier supported version still upgrade.
+
+**Unknown versions** (newer than the running build, malformed, or with no migration path) fail with `UnsupportedPayloadVersionError`. `readJobData` discards the job from further retries, so it fails after a single attempt with that error as its failure reason. Because the error is a `PermanentError`, `JobErrorHandler` treats it as fatal and moves the job to the DLQ with an alert. The starvation sweep leaves such jobs in place instead of promoting them. After deploying a build that supports the version, retry the job from the DLQ.
+
 ### Job Scheduler Dashboard
 
 ```bash

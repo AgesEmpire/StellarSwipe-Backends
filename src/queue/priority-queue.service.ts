@@ -4,6 +4,10 @@ import { ConfigService } from '@nestjs/config';
 import { Queue, Job, JobOptions } from 'bull';
 import { v4 as uuidv4 } from 'uuid';
 import { CorrelationIdStore } from '../common/correlation/correlation-id.store';
+import {
+  UnsupportedPayloadVersionError,
+  VersionedPayloadSchema,
+} from './payload-versioning';
 
 export const PRIORITY_QUEUE = 'priority-queue';
 export const CRITICAL_QUEUE = 'critical-queue';
@@ -26,6 +30,8 @@ export enum JobPriority {
 }
 
 export interface PriorityJobData {
+  /** Payload schema version, see `PRIORITY_JOB_SCHEMA`. */
+  schemaVersion: number;
   type: string;
   payload: unknown;
   priority: JobPriority;
@@ -33,6 +39,26 @@ export interface PriorityJobData {
   /** Correlation ID propagated from the originating HTTP request or generated for scheduled work. */
   correlationId: string;
 }
+
+/**
+ * Versions of the `PriorityJobData` envelope:
+ *  - v1: no `schemaVersion`; `correlationId` may be missing (jobs enqueued
+ *    before correlation IDs were propagated).
+ *  - v2: `schemaVersion` stamped and `correlationId` always present.
+ */
+export const PRIORITY_JOB_SCHEMA = new VersionedPayloadSchema<PriorityJobData>(
+  'priority-job',
+  2,
+  {
+    1: (payload) => ({
+      ...payload,
+      correlationId:
+        typeof payload.correlationId === 'string' && payload.correlationId
+          ? payload.correlationId
+          : uuidv4(),
+    }),
+  },
+);
 
 /**
  * #386 — Priority queue service for worker jobs.
@@ -89,6 +115,7 @@ export class PriorityQueueService {
       this.correlationIdStore.getCorrelationId() ?? uuidv4();
 
     const jobData: PriorityJobData = {
+      schemaVersion: PRIORITY_JOB_SCHEMA.currentVersion,
       type,
       payload,
       priority,
@@ -122,6 +149,27 @@ export class PriorityQueueService {
       `Adding ${type} job priority=${priority} correlationId=${correlationId} queue=${(targetQueue as any).name ?? 'priority-queue'}`,
     );
     return targetQueue.add(type, jobData, jobOptions);
+  }
+
+  /**
+   * Returns a job's data in the current `PriorityJobData` schema, migrating
+   * payloads written by older app versions. Processors should read job data
+   * through this method rather than `job.data`.
+   *
+   * An unsupported version throws `UnsupportedPayloadVersionError` (a
+   * `PermanentError`) and the job is discarded from further retries, so it
+   * fails once and `JobErrorHandler` dead-letters it as a fatal failure.
+   */
+  readJobData(job: Job<PriorityJobData>): PriorityJobData {
+    try {
+      return PRIORITY_JOB_SCHEMA.upgrade(job.data);
+    } catch (error) {
+      if (error instanceof UnsupportedPayloadVersionError) {
+        void job.discard();
+        this.logger.error(`Job ${job.id} rejected: ${error.message}`);
+      }
+      throw error;
+    }
   }
 
   /**
