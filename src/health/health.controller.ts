@@ -162,6 +162,10 @@ export class HealthController implements OnApplicationBootstrap {
    * all critical dependencies are healthy. Returns 503 during startup, shutdown,
    * or dependency failure — distinguishing these from process death (liveness).
    * Issue #1038.
+   *
+   * Issue #1233: pending database migrations surface as a distinct readiness
+   * failure (reason: 'pending_migrations') so schema incompatibility is
+   * distinguishable from a generic database outage. Liveness is unaffected.
    */
   @Get('readiness')
   @HealthCheck()
@@ -171,13 +175,31 @@ export class HealthController implements OnApplicationBootstrap {
       const reason = this.readiness.getNotReadyReason() ?? 'not_ready';
       return { status: 'error', details: {}, error: {}, info: {}, ready: false, reason } as any;
     }
-    const result = await this.health.check([
-      () => this.databaseHealth.isHealthy('database'),
-      () => this.databasePoolHealth.isHealthy('database_pool'),
-      () => this.redisHealth.isHealthy('cache'),
-      () => this.queueHealth.isHealthy('queue'),
-    ]);
-    return { ...result, ready: result.status === 'ok' };
+    try {
+      const result = await this.health.check([
+        () => this.databaseHealth.isHealthy('database'),
+        () => this.databasePoolHealth.isHealthy('database_pool'),
+        () => this.redisHealth.isHealthy('cache'),
+        () => this.queueHealth.isHealthy('queue'),
+      ]);
+      return { ...result, ready: result.status === 'ok' };
+    } catch (err) {
+      const message = (err as Error).message ?? '';
+      // Distinguish pending migrations from a generic database outage without
+      // leaking connection details or credentials.
+      const reason = /migration/i.test(message)
+        ? 'pending_migrations'
+        : 'dependency_unavailable';
+      this.logger.warn(`Readiness check failed (${reason})`);
+      return {
+        status: 'error',
+        details: {},
+        error: {},
+        info: {},
+        ready: false,
+        reason,
+      } as any;
+    }
   }
 
   /**
