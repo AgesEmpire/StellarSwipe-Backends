@@ -10,7 +10,8 @@ This document describes the expected behavior of each health endpoint when indiv
 | `GET /api/v1/health/ready` | Readiness (can traffic be served?) | DB, Redis, queue, Stellar, Soroban |
 | `GET /api/v1/health/liveness` | Alias for `/healthz` | None |
 | `GET /api/v1/health/readiness` | Alias for `/ready` (DB, Redis, queue only) | DB, Redis, queue |
-| `GET /api/v1/health` | Full aggregate check | DB, Redis, Stellar, Soroban, queue |
+| `GET /api/v1/health` | Full aggregate check | DB, Redis, Stellar, Soroban, queue, message broker |
+| `GET /api/v1/health/broker` | Message broker (Kafka) check | Message broker only |
 | `GET /api/v1/health/summary` | Detailed status report | All services with latency |
 
 ---
@@ -96,6 +97,31 @@ This document describes the expected behavior of each health endpoint when indiv
 **Note:** Because Bull is backed by Redis, a Redis outage typically causes both `cache` and `queue` checks to fail simultaneously.
 
 **Recovery:** Restore Redis connectivity. Bull automatically reconnects and resumes processing.
+
+---
+
+### 3b. Message broker (Kafka) unhealthy
+
+**Trigger:** The broker fails to deliver a round-trip probe message (`KafkaHealthIndicator`, `src/health/indicators/kafka.health.ts`).
+
+**Affected endpoints:** `/healthz` ✅ (still 200), `/broker` ❌ (503), aggregate `/health` ❌ (503)
+
+**Response (503):**
+```json
+{
+  "status": "error",
+  "error": {
+    "broker": {
+      "status": "disconnected",
+      "error": "Broker did not deliver the probe message"
+    }
+  }
+}
+```
+
+**Note:** `KafkaService` (`src/streaming/kafka/kafka.service.ts`) is not yet wired into request-handling code paths, so the broker is intentionally excluded from `/ready` and `/readiness` — it does not currently gate traffic. It is included in the full `/health` check and `/health/summary` so operators still get visibility into it.
+
+**Recovery:** Restart the broker connection / underlying pod. Once a real Kafka client replaces the in-process stub, update this indicator to verify actual broker connectivity (e.g. `admin.describeCluster()`).
 
 ---
 
@@ -186,4 +212,18 @@ During the startup window (up to 90s governed by `startupProbe`), the app retrie
 | Stellar down | 200 ✅ | 200 ✅ | 503 ❌ | Remove from rotation |
 | Soroban down | 200 ✅ | 200 ✅ | 503 ❌ | Remove from rotation |
 | Process hung | 503 ❌ | — | — | Restart pod |
+| Broker down | 200 ✅ | 200 ✅ | 200 ✅ | No action — not on the request path |
 | All healthy | 200 ✅ | 200 ✅ | 200 ✅ | Serve traffic |
+
+---
+
+## How These Endpoints Are Consumed
+
+**Kubernetes (`k8s/base/deployment.yaml`):**
+- `startupProbe` and `livenessProbe` both point at `/api/v1/health/live` — process-alive only, so a dependency outage never triggers a pod restart.
+- `readinessProbe` points at `/api/v1/health/ready` — DB, Redis, queue, and blockchain services must all be healthy for the pod to receive traffic.
+
+**Monitoring:**
+- `infrastructure/monitoring/alerts.yml` defines one Prometheus alert per dependency (`DatabaseDown`, `RedisDown`, `StellarHorizonDown`, `SorobanRpcDown`, `MessageBrokerDown`, ...), each firing when its `/api/v1/health/<dependency>` route returns 5xx for a sustained window — this is what pages on-call.
+- Every indicator also reports to the `service_health_status` Prometheus gauge (`recordHealthCheck` in `src/monitoring/metrics/custom-metrics.ts`), scraped independently of the HTTP routes — available for a Grafana panel alongside the request-rate/latency panels already in `infrastructure/monitoring/grafana/dashboards/system-health.json`.
+- `GET /api/v1/health/summary` is the human-readable endpoint operators hit during an incident — it returns latency and structured error detail per dependency in one call, avoiding the need to poll each `/health/<dependency>` route individually.

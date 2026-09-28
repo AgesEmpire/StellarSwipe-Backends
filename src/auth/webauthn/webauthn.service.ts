@@ -1,15 +1,12 @@
 import {
   Injectable,
   Logger,
-  Inject,
   BadRequestException,
   UnauthorizedException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import {
   generateRegistrationOptions,
@@ -31,21 +28,9 @@ import { VerifyWebauthnLoginDto } from './dto/verify-login.dto';
 import { UsersService } from '../../users/users.service';
 import { SessionManagerService } from '../session/session-manager.service';
 import { User } from '../../users/entities/user.entity';
+import { ChallengeStoreService, ChallengeType } from '../challenge/challenge-store.service';
 
-const REGISTRATION_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const LOGIN_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CREDENTIALS_PER_USER = 10;
-
-interface StoredRegistrationChallenge {
-  userId: string;
-  challenge: string;
-}
-
-interface StoredLoginChallenge {
-  challenge: string;
-  /** Populated when the login was scoped to a known username; undefined for discoverable logins. */
-  userId?: string;
-}
 
 @Injectable()
 export class WebauthnService {
@@ -53,6 +38,8 @@ export class WebauthnService {
   private readonly rpName: string;
   private readonly rpID: string;
   private readonly origin: string | string[];
+  private readonly registrationChallengeTtlMs: number;
+  private readonly loginChallengeTtlMs: number;
 
   constructor(
     @InjectRepository(WebauthnCredential)
@@ -60,12 +47,20 @@ export class WebauthnService {
     private readonly usersService: UsersService,
     private readonly sessionManager: SessionManagerService,
     private readonly configService: ConfigService,
-    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly challengeStore: ChallengeStoreService,
   ) {
     this.rpName = this.configService.get<string>('WEBAUTHN_RP_NAME', 'StellarSwipe');
     this.rpID = this.configService.get<string>('WEBAUTHN_RP_ID', 'localhost');
     const origin = this.configService.get<string>('WEBAUTHN_ORIGIN', `http://localhost:3000`);
     this.origin = origin.includes(',') ? origin.split(',').map((o) => o.trim()) : origin;
+    this.registrationChallengeTtlMs = this.configService.get<number>(
+      'WEBAUTHN_REGISTRATION_CHALLENGE_TTL_MS',
+      5 * 60 * 1000,
+    );
+    this.loginChallengeTtlMs = this.configService.get<number>(
+      'WEBAUTHN_LOGIN_CHALLENGE_TTL_MS',
+      5 * 60 * 1000,
+    );
   }
 
   // ── Registration ─────────────────────────────────────────────────────────
@@ -103,11 +98,13 @@ export class WebauthnService {
       },
     });
 
-    await this.cacheManager.set(
-      `webauthn_reg_challenge:${userId}`,
-      JSON.stringify({ userId, challenge: options.challenge } as StoredRegistrationChallenge),
-      REGISTRATION_CHALLENGE_TTL_MS,
-    );
+    await this.challengeStore.issue({
+      type: ChallengeType.WEBAUTHN_REGISTRATION,
+      key: userId,
+      challenge: options.challenge,
+      ttlMs: this.registrationChallengeTtlMs,
+      userId,
+    });
 
     return options;
   }
@@ -120,12 +117,14 @@ export class WebauthnService {
     userId: string,
     dto: VerifyRegistrationDto,
   ): Promise<{ id: string; deviceName?: string; createdAt: Date }> {
-    const stored = await this.cacheManager.get<string>(`webauthn_reg_challenge:${userId}`);
-    if (!stored) {
-      throw new UnauthorizedException('Registration challenge expired or not found. Please start again.');
-    }
-
-    const { challenge } = JSON.parse(stored) as StoredRegistrationChallenge;
+    // Atomically consumes the challenge: single-use, TTL-bound, and scoped
+    // to this user, so a captured/replayed challenge cannot be redeemed
+    // twice even under concurrent verification attempts.
+    const { challenge } = await this.challengeStore.consume({
+      type: ChallengeType.WEBAUTHN_REGISTRATION,
+      key: userId,
+      userId,
+    });
 
     let verification;
     try {
@@ -136,13 +135,10 @@ export class WebauthnService {
         expectedRPID: this.rpID,
       });
     } catch (error) {
-      await this.cacheManager.del(`webauthn_reg_challenge:${userId}`);
       throw new UnauthorizedException(
         `Passkey registration verification failed: ${(error as Error).message}`,
       );
     }
-
-    await this.cacheManager.del(`webauthn_reg_challenge:${userId}`);
 
     if (!verification.verified || !verification.registrationInfo) {
       throw new UnauthorizedException('Passkey registration could not be verified.');
@@ -207,11 +203,13 @@ export class WebauthnService {
 
     // Key the challenge by the challenge value itself so discoverable
     // (userless) logins can still be resolved on verification.
-    await this.cacheManager.set(
-      `webauthn_login_challenge:${options.challenge}`,
-      JSON.stringify({ challenge: options.challenge, userId: user?.id } as StoredLoginChallenge),
-      LOGIN_CHALLENGE_TTL_MS,
-    );
+    await this.challengeStore.issue({
+      type: ChallengeType.WEBAUTHN_LOGIN,
+      key: options.challenge,
+      challenge: options.challenge,
+      ttlMs: this.loginChallengeTtlMs,
+      userId: user?.id,
+    });
 
     return options;
   }
@@ -237,19 +235,28 @@ export class WebauthnService {
     }
 
     const clientDataChallenge = this.extractChallenge(assertionResponse);
-    const cacheKey = `webauthn_login_challenge:${clientDataChallenge}`;
-    const stored = await this.cacheManager.get<string>(cacheKey);
-    if (!stored) {
-      throw new UnauthorizedException('Login challenge expired or not found. Please request a new challenge.');
-    }
 
-    const { challenge } = JSON.parse(stored) as StoredLoginChallenge;
+    // Atomically consumes the challenge: single-use and TTL-bound, so a
+    // captured assertion cannot be replayed and concurrent verification
+    // attempts for the same challenge cannot both succeed.
+    const { userId: boundUserId } = await this.challengeStore.consume({
+      type: ChallengeType.WEBAUTHN_LOGIN,
+      key: clientDataChallenge,
+      challenge: clientDataChallenge,
+    });
+
+    // Defense in depth: if the login was scoped to a known username at
+    // begin-time, the credential that ultimately signs the assertion must
+    // belong to that same user.
+    if (boundUserId && boundUserId !== credential.userId) {
+      throw new UnauthorizedException('Passkey does not belong to the requested account.');
+    }
 
     let verification;
     try {
       verification = await verifyAuthenticationResponse({
         response: assertionResponse,
-        expectedChallenge: challenge,
+        expectedChallenge: clientDataChallenge,
         expectedOrigin: this.origin,
         expectedRPID: this.rpID,
         credential: {
@@ -260,13 +267,10 @@ export class WebauthnService {
         },
       });
     } catch (error) {
-      await this.cacheManager.del(cacheKey);
       throw new UnauthorizedException(
         `Passkey login verification failed: ${(error as Error).message}`,
       );
     }
-
-    await this.cacheManager.del(cacheKey);
 
     if (!verification.verified) {
       throw new UnauthorizedException('Passkey login could not be verified.');

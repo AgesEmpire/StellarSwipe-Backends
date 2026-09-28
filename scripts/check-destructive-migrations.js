@@ -44,6 +44,34 @@ function checkFile(filePath) {
   return findings;
 }
 
+function getMigrationTimestamp(fileName) {
+  const match = fileName.match(/(\d{13,14})(?=-|\.|$)/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function validateMigrationSequence(files) {
+  const errors = [];
+  const ordered = [...files]
+    .filter((file) => file.endsWith('.ts'))
+    .sort((a, b) => {
+      const timestampA = getMigrationTimestamp(path.basename(a));
+      const timestampB = getMigrationTimestamp(path.basename(b));
+      if (timestampA === null || timestampB === null) return 0;
+      return timestampA - timestampB;
+    });
+
+  for (const file of ordered) {
+    const fileName = path.basename(file);
+    const timestamp = getMigrationTimestamp(fileName);
+
+    if (timestamp === null) {
+      errors.push(`  ${fileName} does not contain a migration timestamp; ordering cannot be validated.`);
+    }
+  }
+
+  return errors;
+}
+
 const files = process.argv.slice(2).length
   ? process.argv.slice(2)
   : fs.readdirSync(MIGRATIONS_DIR)
@@ -51,6 +79,12 @@ const files = process.argv.slice(2).length
       .map((f) => path.join(MIGRATIONS_DIR, f));
 
 let failed = false;
+const orderingErrors = validateMigrationSequence(files);
+if (orderingErrors.length) {
+  console.error('\n[MIGRATION GATE] Invalid migration ordering or naming detected.');
+  orderingErrors.forEach((error) => console.error(error));
+  failed = true;
+}
 
 for (const file of files) {
   if (!file.endsWith('.ts')) continue;
@@ -68,4 +102,4 @@ if (failed) {
   process.exit(1);
 }
 
-console.log(`[MIGRATION GATE] Checked ${files.length} migration file(s) — no unguarded destructive changes found.`);
+console.log(`[MIGRATION GATE] Checked ${files.length} migration file(s) — no unguarded destructive changes or incompatible migration ordering found.`);

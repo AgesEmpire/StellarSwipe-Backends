@@ -5,15 +5,16 @@ import { APP_FILTER } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { join } from 'path';
-import { fieldExtensionsEstimator, simpleEstimator, getComplexity } from 'graphql-query-complexity';
+import {
+  fieldExtensionsEstimator,
+  simpleEstimator,
+  getComplexity,
+} from 'graphql-query-complexity';
 import { GraphQLSchema } from 'graphql';
 import { Reflector } from '@nestjs/core';
 import { PubSub } from 'graphql-subscriptions';
 
 // ─── Subscription (WS) authentication ────────────────────────────────────────
-// Enforces auth at graphql-ws handshake time (see `subscriptions` config
-// below) instead of only at the HTTP `context` factory, which never runs for
-// WS connections.
 import { createGraphqlWsAuthHandlers } from './ws-subscription-auth';
 import { AuthModule } from '../auth/auth.module';
 import { SessionManagerService } from '../auth/session/session-manager.service';
@@ -24,6 +25,7 @@ import { DateTimeScalar } from './scalars/datetime.scalar';
 import { JsonScalar } from './scalars/json.scalar';
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
+// GqlOwnershipGuard is provided/exported by AuthorizationModule (already imported below).
 import { GqlAuthGuard } from './guards/gql-auth.guard';
 
 // ─── Filters ──────────────────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ import { GqlLoggingPlugin } from './plugins/gql-logging.plugin';
 import { GqlDepthLimitPlugin } from './plugins/gql-depth-limit.plugin';
 import { FieldAuthorizationPlugin } from './plugins/field-auth.plugin';
 import { SlowFieldLoggingPlugin } from './plugins/slow-field-logging.plugin';
+import { GqlCompressionPlugin } from './plugins/gql-compression.plugin';
+import { PersistedQueryPlugin } from './plugins/persisted-query.plugin';
 
 // ─── Resolvers ────────────────────────────────────────────────────────────────
 import { SignalResolver } from './resolvers/signal.resolver';
@@ -42,6 +46,7 @@ import { PortfolioResolver } from './resolvers/portfolio.resolver';
 import { ProviderResolver } from './resolvers/provider.resolver';
 import { UserResolver } from './resolvers/user.resolver';
 import { SignalSubscriptionResolver } from './signal-subscription.resolver';
+import { ApiVersionResolver } from './resolvers/api-version.resolver';
 
 // ─── Domain modules ───────────────────────────────────────────────────────────
 import { SignalsModule } from '../signals/signals.module';
@@ -51,12 +56,15 @@ import { ProvidersModule } from '../providers/providers.module';
 import { UsersModule } from '../users/users.module';
 import { AssetsModule } from '../assets/assets.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { VersioningModule } from '../versioning/versioning.module';
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 import { createDataLoader, createGroupedDataLoader } from './utils/dataloader-factory';
 import {
   simpleComplexityEstimator,
   getComplexityLimit,
+  resolveUserRole,
+  resolveClientClass,
 } from './utils/complexity-calculator';
 import { ProvidersService } from '../providers/providers.service';
 import { SignalsService } from '../signals/signals.service';
@@ -72,12 +80,12 @@ import { AssetsService } from '../assets/assets.service';
     AssetsModule,
     UsersModule,
     AuthorizationModule,
+    VersioningModule,
 
     // AuthModule → SessionManagerService (session-revocation check reused by
     // the subscription handshake authenticator below).
     AuthModule,
-    // Own JwtModule registration (same `jwt.secret` config key AuthModule's
-    // JwtStrategy/JwtModule use) so `JwtService` can verify the token sent
+    // Own JwtModule registration so `JwtService` can verify the token sent
     // via `connectionParams` on a `graphql-ws` `connection_init` message.
     JwtModule.registerAsync({
       inject: [ConfigService],
@@ -113,9 +121,17 @@ import { AssetsService } from '../assets/assets.service';
         autoSchemaFile: join(process.cwd(), 'src/graphql/schema.gql'),
         sortSchema: true,
 
-        /** Attach DataLoaders to every request context to solve N+1 at resolver level. */
-        context: ({ req }: { req: Request }) => ({
+        /**
+         * Attach DataLoaders to every request context to solve N+1 at resolver level.
+         *
+         * `res` is threaded through alongside `req` so guards that need to write
+         * response headers from a GraphQL execution context (e.g. RateLimitGuard's
+         * X-RateLimit-*/Retry-After headers) have somewhere to write them — without
+         * it, header-emitting guards silently no-op for every GraphQL request.
+         */
+        context: ({ req, res }: { req: Request; res: any }) => ({
           req,
+          res,
           loaders: {
             providerById: createDataLoader(
               (ids) => providersService.findByIds(ids as string[]),
@@ -125,7 +141,6 @@ import { AssetsService } from '../assets/assets.service';
               (providerIds) => signalsService.findByProviderIds(providerIds as string[]),
               (s) => s.providerId,
             ),
-            // Asset metadata loader (per-request) — batches asset lookups by code
             assetByCode: createDataLoader(
               async (codes) => assetsService.findByCodes(codes as string[]),
               (a) => a.code || a.id,
@@ -133,11 +148,23 @@ import { AssetsService } from '../assets/assets.service';
           },
         }),
 
-        /** Query complexity limits to protect against deeply-nested DoS queries. */
+        /** Apollo plugins registered here (complexity is a validation rule, not a plugin). */
         plugins: [],
 
-        /** Validation rule for complexity — runs before execution */
-        validationRules: (schema: GraphQLSchema, document: unknown, variables: unknown) => [
+        /**
+         * Per-request query complexity enforcement.
+         *
+         * The validation rule runs *before* execution so over-complex queries
+         * are rejected with a GraphQL-level error rather than consuming server
+         * resources. The limit is raised for `admin` and `pro` roles so power
+         * users can run richer queries while anonymous / default users are
+         * protected with a tighter cap.
+         *
+         * Limit resolution order:
+         *   1. `GRAPHQL_COMPLEXITY_LIMIT_<ROLE>` env var (upper-cased role)
+         *   2. Hard-coded defaults in `utils/complexity-calculator.ts`
+         */
+        validationRules: (schema: GraphQLSchema, document: unknown, variables: unknown, context: unknown) => [
           () => {
             const complexity = getComplexity({
               schema,
@@ -145,17 +172,27 @@ import { AssetsService } from '../assets/assets.service';
               variables: variables as Record<string, unknown>,
               estimators: [
                 fieldExtensionsEstimator(),
+                simpleComplexityEstimator(),
                 simpleEstimator({ defaultComplexity: 1 }),
               ],
             });
-            const limit = getComplexityLimit();
+
+            // Resolve the per-client-class limit from the request context.
+            // Issue #1035: anonymous / user / trusted budgets.
+            const user = (context as any)?.req?.user ?? (context as any)?.user;
+            const clientClass = resolveClientClass(user);
+            const limit = getComplexityLimit(clientClass);
+
             if (complexity > limit) {
               throw new Error(
-                `Query complexity ${complexity} exceeds limit of ${limit}. Simplify your query.`,
+                `Query complexity ${complexity} exceeds the limit of ${limit} for client class "${clientClass}". ` +
+                  `Reduce nesting depth, request fewer list items, or remove expensive fields.`,
               );
             }
+
             if (configService.get<string>('NODE_ENV') !== 'production') {
-              console.debug(`[GraphQL] complexity: ${complexity}/${limit}`);
+              // eslint-disable-next-line no-console
+              console.debug(`[GraphQL] complexity: ${complexity}/${limit} (client: ${clientClass})`);
             }
           },
         ],
@@ -165,16 +202,6 @@ import { AssetsService } from '../assets/assets.service';
 
         /**
          * Subscriptions over WS.
-         *
-         * `onConnect` runs once per WS connection at `connection_init`
-         * (handshake) time — it validates the bearer token the client sends
-         * via `connectionParams` and *throws* to refuse the connection
-         * before any subscription can be created if it's missing/invalid.
-         * `context` runs once per subscription operation on an already
-         * accepted connection and merges the authenticated user resolved
-         * during the handshake into `context.user`, so `@Subscription()`
-         * resolvers and `GqlAuthGuard` can read it (there is no HTTP `req`
-         * for WS connections, unlike the `context` factory above).
          */
         subscriptions: {
           'graphql-ws': createGraphqlWsAuthHandlers({
@@ -221,6 +248,8 @@ import { AssetsService } from '../assets/assets.service';
     GqlDepthLimitPlugin,
     FieldAuthorizationPlugin,
     SlowFieldLoggingPlugin,
+    GqlCompressionPlugin,
+    PersistedQueryPlugin,
 
     // PubSub for subscriptions
     { provide: PubSub, useValue: new PubSub() },
@@ -232,6 +261,7 @@ import { AssetsService } from '../assets/assets.service';
     ProviderResolver,
     UserResolver,
     SignalSubscriptionResolver,
+    ApiVersionResolver,
   ],
 
   exports: [GqlAuthGuard],

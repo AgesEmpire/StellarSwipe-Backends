@@ -4,9 +4,10 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Trade, TradeStatus, TradeSide } from './entities/trade.entity';
+import { OutboxService } from '../events/outbox/outbox.service';
 import {
   ExecuteTradeDto,
   CloseTradeDto,
@@ -25,12 +26,18 @@ import {
 } from './services/risk-manager.service';
 import { TradeExecutorService } from './services/trade-executor.service';
 import { RiskManagerService as VelocityRiskManager } from '../risk/risk-manager.service';
+import {
+  softDeleteOrThrow,
+  restoreOrThrow,
+} from '../common/services/soft-delete.helper';
 import { ComplianceRuleEngineService } from '../compliance/rule-engine/compliance-rule-engine.service';
 import {
   TradeLatencyService,
   TradeStage,
 } from './services/trade-latency.service';
 import { SlippageGuardService } from './services/slippage-guard.service';
+import { AtomicTransactionHelper } from '../common/database/atomic-transaction.helper';
+import { updateWithVersionCheck } from '../common/utils/optimistic-update.util';
 
 interface SignalData {
   id: string;
@@ -50,12 +57,16 @@ export class TradesService {
   constructor(
     @InjectRepository(Trade)
     private readonly tradeRepository: Repository<Trade>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly riskManager: RiskManagerService,
     private readonly tradeExecutor: TradeExecutorService,
     private readonly velocityRiskManager: VelocityRiskManager,
+    private readonly outboxService: OutboxService,
     private readonly complianceRuleEngine: ComplianceRuleEngineService,
     private readonly tradeLatency: TradeLatencyService,
     private readonly slippageGuard: SlippageGuardService,
+    private readonly atomicTx: AtomicTransactionHelper,
   ) {}
 
   async executeTrade(dto: ExecuteTradeDto): Promise<TradeResultDto> {
@@ -119,19 +130,24 @@ export class TradesService {
           );
 
           // Slippage Guard Check
-          const sellingAsset = dto.side === TradeSide.BUY ? signal.counterAsset : signal.baseAsset;
-          const buyingAsset = dto.side === TradeSide.BUY ? signal.baseAsset : signal.counterAsset;
-          
+          const sellingAsset =
+            dto.side === TradeSide.BUY ? signal.counterAsset : signal.baseAsset;
+          const buyingAsset =
+            dto.side === TradeSide.BUY ? signal.baseAsset : signal.counterAsset;
+
           let referencePrice = parseFloat(signal.entryPrice);
           if (dto.side === TradeSide.SELL) {
             // Orderbook price for SELL is base / counter, so we invert the entry price (which is counter / base)
             referencePrice = 1 / referencePrice;
           }
-          
+
           // Slippage tolerance from DTO is in percentage, guard expects basis points
           // e.g., 0.5% * 100 = 50 bps. So we multiply by 100 if provided.
-          const overrideBps = dto.slippageTolerance !== undefined ? dto.slippageTolerance * 100 : undefined;
-          
+          const overrideBps =
+            dto.slippageTolerance !== undefined
+              ? dto.slippageTolerance * 100
+              : undefined;
+
           await this.slippageGuard.verifySlippage(
             sellingAsset,
             buyingAsset,
@@ -167,9 +183,21 @@ export class TradesService {
               dto.takeProfitPrice?.toString() || signalData_.targetPrice,
             status: TradeStatus.PENDING,
           });
-          await this.tradeRepository.save(newTrade);
-          newTrade.status = TradeStatus.EXECUTING;
-          await this.tradeRepository.save(newTrade);
+          await this.dataSource.transaction(async (manager) => {
+            await manager.save(Trade, newTrade);
+            newTrade.status = TradeStatus.EXECUTING;
+            await manager.save(Trade, newTrade);
+            await this.outboxService.record(
+              manager,
+              'trade.order.created',
+              {
+                tradeId: newTrade.id,
+                userId: newTrade.userId,
+                signalId: newTrade.signalId,
+              },
+              `trade.order.created:${newTrade.id}`,
+            );
+          });
           return newTrade;
         },
       );
@@ -181,62 +209,22 @@ export class TradesService {
         () => this.tradeExecutor.executeTrade(trade, dto.walletAddress),
       );
 
-      if (executionResult.success) {
-        // ── Stage: CONFIRMATION ──────────────────────────────────────────────
-        await this.tradeLatency.measureStage(
-          trade.id,
-          TradeStage.CONFIRMATION,
-          async () => {
-            trade.status = TradeStatus.COMPLETED;
-            trade.transactionHash = executionResult.transactionHash;
-            trade.sorobanContractId = executionResult.contractId;
-            trade.feeAmount = executionResult.feeAmount || '0';
-            trade.executedAt = new Date();
-
-            if (executionResult.executedPrice) {
-              trade.entryPrice = executionResult.executedPrice;
-              trade.totalValue = (
-                parseFloat(trade.amount) *
-                parseFloat(executionResult.executedPrice)
-              ).toFixed(8);
-            }
-
-            await this.tradeRepository.save(trade);
-
-            await this.velocityRiskManager.recordTradeExecution({
-              userId: trade.userId,
-              asset: `${trade.baseAsset}/${trade.counterAsset}`,
-              amount: parseFloat(trade.amount),
-              entryPrice: parseFloat(trade.entryPrice),
-            });
-          },
-        );
-
-        this.tradeLatency.endFlow(trade.id, 'success');
-        this.logger.log(
-          `Trade ${trade.id} executed successfully. Hash: ${trade.transactionHash}`,
-        );
-
-        return {
-          id: trade.id,
-          userId: trade.userId,
-          signalId: trade.signalId,
-          status: trade.status,
-          side: trade.side,
-          baseAsset: trade.baseAsset,
-          counterAsset: trade.counterAsset,
-          entryPrice: trade.entryPrice,
-          amount: trade.amount,
-          totalValue: trade.totalValue,
-          feeAmount: trade.feeAmount,
-          transactionHash: trade.transactionHash,
-          executedAt: trade.executedAt,
-          message: 'Trade executed successfully',
-        };
-      } else {
+      if (!executionResult.success) {
         trade.status = TradeStatus.FAILED;
         trade.errorMessage = executionResult.error;
-        await this.tradeRepository.save(trade);
+        await this.dataSource.transaction(async (manager) => {
+          await manager.save(Trade, trade);
+          await this.outboxService.record(
+            manager,
+            'trade.execution.failed',
+            {
+              tradeId: trade.id,
+              userId: trade.userId,
+              error: trade.errorMessage,
+            },
+            `trade.execution.failed:${trade.id}`,
+          );
+        });
 
         this.tradeLatency.endFlow(trade.id, 'failure');
         this.logger.error(`Trade ${trade.id} failed: ${executionResult.error}`);
@@ -247,6 +235,74 @@ export class TradesService {
           tradeId: trade.id,
         });
       }
+
+      // ── Stage: CONFIRMATION ──────────────────────────────────────────────
+      await this.tradeLatency.measureStage(
+        trade.id,
+        TradeStage.CONFIRMATION,
+        async () => {
+          trade.status = TradeStatus.COMPLETED;
+          trade.transactionHash = executionResult.transactionHash;
+          trade.sorobanContractId = executionResult.contractId;
+          trade.feeAmount = executionResult.feeAmount || '0';
+          trade.executedAt = new Date();
+
+          if (executionResult.executedPrice) {
+            trade.entryPrice = executionResult.executedPrice;
+            trade.totalValue = (
+              parseFloat(trade.amount) *
+              parseFloat(executionResult.executedPrice)
+            ).toFixed(8);
+          }
+        },
+      );
+
+      // Persist the completed trade and its integration event atomically
+      await this.dataSource.transaction(async (manager) => {
+        await manager.save(Trade, trade);
+        await this.outboxService.record(
+          manager,
+          'trade.completed',
+          {
+            tradeId: trade.id,
+            userId: trade.userId,
+            signalId: trade.signalId,
+            transactionHash: trade.transactionHash,
+            totalValue: trade.totalValue,
+          },
+          `trade.completed:${trade.id}`,
+        );
+      });
+
+      // Record trade execution for velocity tracking
+      await this.velocityRiskManager.recordTradeExecution({
+        userId: trade.userId,
+        asset: `${trade.baseAsset}/${trade.counterAsset}`,
+        amount: parseFloat(trade.amount),
+        entryPrice: parseFloat(trade.entryPrice),
+      });
+
+      this.tradeLatency.endFlow(trade.id, 'success');
+      this.logger.log(
+        `Trade ${trade.id} executed successfully. Hash: ${trade.transactionHash}`,
+      );
+
+      return {
+        id: trade.id,
+        userId: trade.userId,
+        signalId: trade.signalId,
+        status: trade.status,
+        side: trade.side,
+        baseAsset: trade.baseAsset,
+        counterAsset: trade.counterAsset,
+        entryPrice: trade.entryPrice,
+        amount: trade.amount,
+        totalValue: trade.totalValue,
+        feeAmount: trade.feeAmount,
+        transactionHash: trade.transactionHash,
+        executedAt: trade.executedAt,
+        message: 'Trade executed successfully',
+      };
     } catch (error) {
       // Ensure the flow is always finalised even on unexpected errors
       this.tradeLatency.endFlow(tempFlowId, 'failure');
@@ -269,6 +325,26 @@ export class TradesService {
       );
     }
 
+    // #1067 — Optimistic concurrency: if the caller supplied a version token,
+    // verify it matches before proceeding. A mismatch means another request
+    // already mutated the trade; return 409 so the client can refetch.
+    if (dto.version !== undefined) {
+      await updateWithVersionCheck(
+        this.tradeRepository,
+        'Trade',
+        trade.id,
+        dto.version,
+        // No field changes yet — we just want the version guard to fire.
+        // The real update happens inside the atomic block below.
+        {} as any,
+      );
+      // Re-fetch so trade.version reflects the incremented value.
+      const refreshed = await this.tradeRepository.findOne({
+        where: { id: trade.id },
+      });
+      if (refreshed) Object.assign(trade, refreshed);
+    }
+
     // Get current market price or use provided exit price
     const exitPrice =
       dto.exitPrice?.toString() ||
@@ -277,59 +353,72 @@ export class TradesService {
     // Execute close on Soroban
     const closeResult = await this.tradeExecutor.closeTrade(trade, exitPrice);
 
-    if (closeResult.success) {
-      const { profitLoss, profitLossPercentage } =
-        this.riskManager.calculateProfitLoss(
-          trade.entryPrice,
-          exitPrice,
-          trade.amount,
-          trade.side === TradeSide.BUY ? 'buy' : 'sell',
-        );
-
-      trade.exitPrice = exitPrice;
-      trade.profitLoss = profitLoss;
-      trade.profitLossPercentage = profitLossPercentage;
-      trade.closedAt = new Date();
-
-      await this.tradeRepository.save(trade);
-
-      // Handle large loss for velocity tracking
-      if (parseFloat(profitLoss) < -1000) {
-        // Loss threshold
-        await this.velocityRiskManager.handleTradeLoss(
-          trade.userId,
-          Math.abs(parseFloat(profitLoss)),
-        );
-      }
-
-      this.logger.log(
-        `Trade ${trade.id} closed. P&L: ${profitLoss} (${profitLossPercentage}%)`,
-      );
-
-      return {
-        id: trade.id,
-        status: trade.status,
-        exitPrice,
-        profitLoss,
-        profitLossPercentage,
-        transactionHash: closeResult.transactionHash,
-        closedAt: trade.closedAt,
-        message: 'Trade closed successfully',
-      };
-    } else {
+    if (!closeResult.success) {
       throw new BadRequestException({
         message: 'Failed to close trade',
         error: closeResult.error,
       });
     }
+
+    const { profitLoss, profitLossPercentage } =
+      this.riskManager.calculateProfitLoss(
+        trade.entryPrice,
+        exitPrice,
+        trade.amount,
+        trade.side === TradeSide.BUY ? 'buy' : 'sell',
+      );
+
+    trade.exitPrice = exitPrice;
+    trade.profitLoss = profitLoss;
+    trade.profitLossPercentage = profitLossPercentage;
+    trade.closedAt = new Date();
+
+    // #1065 — Atomic transaction boundary: persist the closed trade and the
+    // outbox event together. If either write fails the whole block rolls back,
+    // so callers never see a "closed" trade without the corresponding event.
+    await this.atomicTx.run(async (qr) => {
+      await qr.manager.save(Trade, trade);
+      await this.outboxService.record(
+        qr.manager,
+        'trade.position.closed',
+        { tradeId: trade.id, userId: trade.userId, profitLoss },
+        `trade.position.closed:${trade.id}`,
+      );
+    });
+
+    // Handle large loss for velocity tracking (outside the DB transaction —
+    // this is a best-effort side effect, not a critical write).
+    if (parseFloat(profitLoss) < -1000) {
+      await this.velocityRiskManager.handleTradeLoss(
+        trade.userId,
+        Math.abs(parseFloat(profitLoss)),
+      );
+    }
+
+    this.logger.log(
+      `Trade ${trade.id} closed. P&L: ${profitLoss} (${profitLossPercentage}%)`,
+    );
+
+    return {
+      id: trade.id,
+      status: trade.status,
+      exitPrice,
+      profitLoss,
+      profitLossPercentage,
+      transactionHash: closeResult.transactionHash,
+      closedAt: trade.closedAt,
+      message: 'Trade closed successfully',
+    };
   }
 
   async getTradeById(
     tradeId: string,
     userId: string,
+    includeDeleted = false,
   ): Promise<TradeDetailsDto> {
     const trade = await this.tradeRepository.findOne({
       where: { id: tradeId, userId },
+      withDeleted: includeDeleted,
     });
 
     if (!trade) {
@@ -339,11 +428,17 @@ export class TradesService {
     return this.mapToTradeDetails(trade);
   }
 
-  async getUserTrades(dto: GetUserTradesDto): Promise<TradeDetailsDto[]> {
+  async getUserTrades(
+    dto: GetUserTradesDto & { includeDeleted?: boolean },
+  ): Promise<TradeDetailsDto[]> {
     const query = this.tradeRepository
       .createQueryBuilder('trade')
       .where('trade.user_id = :userId', { userId: dto.userId })
       .orderBy('trade.created_at', 'DESC');
+
+    if (dto.includeDeleted) {
+      query.withDeleted();
+    }
 
     if (dto.status && dto.status !== 'all') {
       query.andWhere('trade.status = :status', { status: dto.status });
@@ -359,6 +454,38 @@ export class TradesService {
 
     const trades = await query.getMany();
     return trades.map((trade) => this.mapToTradeDetails(trade));
+  }
+
+  /**
+   * Soft-delete a trade, e.g. to remove it from a user's history without losing
+   * the record for auditing/recovery.
+   */
+  async softDeleteTrade(tradeId: string, userId: string): Promise<void> {
+    const trade = await this.tradeRepository.findOne({
+      where: { id: tradeId, userId },
+    });
+    if (!trade) {
+      throw new NotFoundException('Trade not found');
+    }
+    await softDeleteOrThrow(this.tradeRepository, tradeId, 'Trade not found');
+  }
+
+  /**
+   * Restore a previously soft-deleted trade.
+   */
+  async restoreTrade(
+    tradeId: string,
+    userId: string,
+  ): Promise<TradeDetailsDto> {
+    const trade = await this.tradeRepository.findOne({
+      where: { id: tradeId, userId },
+      withDeleted: true,
+    });
+    if (!trade) {
+      throw new NotFoundException('Trade not found');
+    }
+    await restoreOrThrow(this.tradeRepository, tradeId, 'Trade not found');
+    return this.getTradeById(tradeId, userId);
   }
 
   async getUserTradesSummary(userId: string): Promise<UserTradesSummaryDto> {

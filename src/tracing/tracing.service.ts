@@ -1,10 +1,18 @@
 import { Injectable, Logger, NestMiddleware } from '@nestjs/common';
 import { ConfigService as NestConfigService } from '@nestjs/config';
 import { Request, Response, NextFunction } from 'express';
+import { AsyncLocalStorage } from 'async_hooks';
 import { randomUUID } from 'crypto';
 import { CORRELATION_ID_HEADER } from '../common/correlation/correlation-id.store';
 
 export const TRACE_ID_HEADER = 'x-trace-id';
+
+export interface TraceContext {
+  traceId: string;
+  spanId?: string;
+  parentSpanId?: string;
+  correlationId?: string;
+}
 
 /**
  * Helpers for reading and propagating trace IDs inside service/controller code.
@@ -12,6 +20,7 @@ export const TRACE_ID_HEADER = 'x-trace-id';
 @Injectable()
 export class TracingService {
   private readonly logger = new Logger(TracingService.name);
+  private static readonly storage = new AsyncLocalStorage<TraceContext>();
   private sampleRate: number;
 
   constructor(private readonly config: NestConfigService) {
@@ -40,9 +49,33 @@ export class TracingService {
     return { sampleRate: this.sampleRate };
   }
 
+  /** Validate and sanitize an incoming trace ID, safely falling back to a fresh UUID if missing or malformed. */
+  sanitizeTraceId(traceId?: unknown): string {
+    if (typeof traceId === 'string' && /^[a-zA-Z0-9_-]{8,128}$/.test(traceId.trim())) {
+      return traceId.trim();
+    }
+    return randomUUID();
+  }
+
+  /** Run async work within an isolated trace context. */
+  runWithContext<T>(context: TraceContext, callback: () => T): T {
+    return TracingService.storage.run(context, callback);
+  }
+
+  /** Retrieve the active trace context if present. */
+  getTraceContext(): TraceContext | undefined {
+    return TracingService.storage.getStore();
+  }
+
+  /** Retrieve the current active trace ID. */
+  getTraceId(): string | undefined {
+    return this.getTraceContext()?.traceId;
+  }
+
   /** Extract the trace ID from an Express request. */
   fromRequest(req: Request): string | undefined {
-    return req.headers[TRACE_ID_HEADER] as string | undefined;
+    const raw = req.headers[TRACE_ID_HEADER] as string | undefined;
+    return raw ? this.sanitizeTraceId(raw) : undefined;
   }
 
   getCorrelationAttributes(correlationId?: string): Record<string, string> {
@@ -53,10 +86,14 @@ export class TracingService {
    * Headers to merge into outbound HTTP client calls so downstream services
    * receive the same trace and correlation IDs.
    */
-  outboundHeaders(traceId: string, correlationId?: string): Record<string, string> {
+  outboundHeaders(traceId?: string, correlationId?: string): Record<string, string> {
+    const effectiveTraceId = traceId || this.getTraceId() || randomUUID();
+    const effectiveCorrelationId = correlationId || this.getTraceContext()?.correlationId;
     return {
-      [TRACE_ID_HEADER]: traceId,
-      ...(correlationId ? { [CORRELATION_ID_HEADER]: correlationId, baggage: `x-correlation-id=${correlationId}` } : {}),
+      [TRACE_ID_HEADER]: effectiveTraceId,
+      ...(effectiveCorrelationId
+        ? { [CORRELATION_ID_HEADER]: effectiveCorrelationId, baggage: `x-correlation-id=${effectiveCorrelationId}` }
+        : {}),
       'x-service-name': this.serviceName,
     };
   }
@@ -84,8 +121,8 @@ export class TracingMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
     if (!this.tracingService.isEnabled) return next();
 
-    const traceId =
-      (req.headers[TRACE_ID_HEADER] as string | undefined) ?? randomUUID();
+    const rawTraceId = req.headers[TRACE_ID_HEADER];
+    const traceId = this.tracingService.sanitizeTraceId(rawTraceId);
     const correlationId = req.headers[CORRELATION_ID_HEADER] as string | undefined;
 
     req.headers[TRACE_ID_HEADER] = traceId;
@@ -97,6 +134,9 @@ export class TracingMiddleware implements NestMiddleware {
     res.setHeader(TRACE_ID_HEADER, traceId);
 
     this.tracingService.log(traceId, `${req.method} ${req.path}`, correlationId);
-    next();
+
+    this.tracingService.runWithContext({ traceId, correlationId }, () => {
+      next();
+    });
   }
 }

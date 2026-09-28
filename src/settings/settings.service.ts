@@ -12,6 +12,7 @@ import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { SettingsResponseDto } from './dto/settings-response.dto';
 import { AuditService } from '../audit-log/audit.service';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
+import { updateWithVersionCheck } from '../common/utils/optimistic-update.util';
 
 @Injectable()
 export class SettingsService {
@@ -73,12 +74,19 @@ export class SettingsService {
       userId: userSettings.userId,
       settings: userSettings.settings,
       updatedAt: userSettings.updatedAt,
+      version: userSettings.version,
     };
 
     await this.cacheManager.set(cacheKey, response, this.CACHE_TTL);
     return response;
   }
 
+  /**
+   * Updates a user's settings using an atomic compare-and-swap on
+   * `version`, so a concurrent update (e.g. two open tabs editing
+   * different settings sections) is detected instead of one silently
+   * clobbering the other's change.
+   */
   async updateSettings(
     userId: string,
     updateDto: UpdateSettingsDto,
@@ -90,6 +98,8 @@ export class SettingsService {
     if (!userSettings) {
       userSettings = await this.createDefaultSettings(userId);
     }
+
+    const expectedVersion = updateDto.expectedVersion ?? userSettings.version;
 
     // Merge updates with existing settings
     const updatedSettings: UserSettingsData = {
@@ -111,8 +121,17 @@ export class SettingsService {
       },
     };
 
-    userSettings.settings = updatedSettings;
-    const saved = await this.userSettingsRepository.save(userSettings);
+    await updateWithVersionCheck(
+      this.userSettingsRepository,
+      'UserSettings',
+      userSettings.id,
+      expectedVersion,
+      { settings: updatedSettings },
+    );
+
+    const saved = await this.userSettingsRepository.findOneOrFail({
+      where: { userId },
+    });
 
     // Invalidate cache
     const cacheKey = `settings:${userId}`;
@@ -132,6 +151,7 @@ export class SettingsService {
       userId: saved.userId,
       settings: saved.settings,
       updatedAt: saved.updatedAt,
+      version: saved.version,
     };
   }
 
@@ -165,6 +185,7 @@ export class SettingsService {
       userId: saved.userId,
       settings: saved.settings,
       updatedAt: saved.updatedAt,
+      version: saved.version,
     };
   }
 

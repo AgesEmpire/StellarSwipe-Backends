@@ -112,11 +112,21 @@ export class LoggerService implements NestLoggerService {
 
   /**
    * Base fields attached to every log line: logger context plus the
-   * request-scoped correlation ID, when one is available.
+   * request-scoped correlation ID, service, and environment.
    */
   private baseMeta(): Record<string, any> {
     const correlationId = this.correlationIdStore.getCorrelationId();
+    const service =
+      this.configService.get('app.name') ??
+      process.env.SERVICE_NAME ??
+      'stellarswipe-backend';
+    const environment =
+      this.configService.get('app.nodeEnv') ??
+      process.env.NODE_ENV ??
+      'development';
     return {
+      service,
+      environment,
       context: this.context,
       ...(correlationId ? { correlationId } : {}),
     };
@@ -174,19 +184,22 @@ export class LoggerService implements NestLoggerService {
     const sanitizedContext = this.sanitize(context);
 
     if (errorOrTrace instanceof Error) {
+      const sanitizedError = this.sanitize({
+        name: errorOrTrace.name,
+        message: errorOrTrace.message,
+        stack: errorOrTrace.stack,
+      });
       this.logger.error(message, {
         ...this.baseMeta(),
-        error: {
-          name: errorOrTrace.name,
-          message: errorOrTrace.message,
-          stack: errorOrTrace.stack,
-        },
+        error: sanitizedError,
         ...sanitizedContext,
       });
     } else {
+      const sanitizedTrace =
+        typeof errorOrTrace === 'string' ? errorOrTrace : this.sanitize(errorOrTrace);
       this.logger.error(message, {
         ...this.baseMeta(),
-        trace: errorOrTrace,
+        trace: sanitizedTrace,
         ...sanitizedContext,
       });
     }

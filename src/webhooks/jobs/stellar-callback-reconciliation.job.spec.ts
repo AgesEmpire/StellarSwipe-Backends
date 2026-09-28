@@ -8,6 +8,7 @@ import {
 } from './stellar-callback-reconciliation.job';
 import { WebhookDelivery } from '../entities/webhook-delivery.entity';
 import { WebhookSenderService } from '../services/webhook-sender.service';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 
 const makeDelivery = (
   overrides: Partial<WebhookDelivery> = {},
@@ -30,6 +31,7 @@ describe('StellarCallbackReconciliationJob', () => {
   let job: StellarCallbackReconciliationJob;
   let deliveryRepo: jest.Mocked<any>;
   let senderService: jest.Mocked<WebhookSenderService>;
+  let lockService: jest.Mocked<Pick<DistributedLockService, 'withLock'>>;
 
   beforeEach(async () => {
     deliveryRepo = {
@@ -42,11 +44,21 @@ describe('StellarCallbackReconciliationJob', () => {
       retryInPlace: jest.fn(),
     } as any;
 
+    // Default: lock is always free, so `fn` runs immediately — matches the
+    // pre-locking test behaviour for every existing assertion below.
+    lockService = {
+      withLock: jest.fn(async (_key: string, _ttl: number, fn: () => Promise<any>) => ({
+        ran: true,
+        result: await fn(),
+      })),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StellarCallbackReconciliationJob,
         { provide: getRepositoryToken(WebhookDelivery), useValue: deliveryRepo },
         { provide: WebhookSenderService, useValue: senderService },
+        { provide: DistributedLockService, useValue: lockService },
       ],
     }).compile();
 
@@ -161,5 +173,40 @@ describe('StellarCallbackReconciliationJob', () => {
     await job.reconcile();
 
     expect(senderService.retryInPlace).toHaveBeenCalledWith(stalePending);
+  });
+
+  describe('distributed locking', () => {
+    it('acquires the reconciliation lock with the expected key and TTL', async () => {
+      mockQueryBuilder([]);
+
+      await job.reconcile();
+
+      expect(lockService.withLock).toHaveBeenCalledWith(
+        'webhooks:stellar-callback-reconciliation',
+        expect.any(Number),
+        expect.any(Function),
+      );
+    });
+
+    it('skips the run entirely when another instance already holds the lock (contention)', async () => {
+      lockService.withLock.mockResolvedValue({ ran: false });
+
+      await job.reconcile();
+
+      expect(deliveryRepo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(senderService.retryInPlace).not.toHaveBeenCalled();
+      expect((job as any).logger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('lock held by another instance'),
+      );
+    });
+
+    it('propagates failures from the reconciliation body through the lock wrapper (failure recovery)', async () => {
+      deliveryRepo.createQueryBuilder.mockImplementation(() => {
+        throw new Error('query builder unavailable');
+      });
+
+      await expect(job.reconcile()).rejects.toThrow('query builder unavailable');
+      expect(lockService.withLock).toHaveBeenCalledTimes(1);
+    });
   });
 });

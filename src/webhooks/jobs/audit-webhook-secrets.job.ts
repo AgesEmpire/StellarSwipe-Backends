@@ -5,6 +5,11 @@ import { Repository } from 'typeorm';
 import { Webhook } from '../entities/webhook.entity';
 import { NotificationService } from '../../notifications/notification.service';
 import { evaluateSecretStrength, hashSecret, MIN_ENTROPY_BITS_PER_CHAR, MIN_SECRET_LENGTH } from '../utils/secret-entropy.util';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
+
+/** This job only runs once a day, so a generous TTL is safe and covers slow scans. */
+const AUDIT_LOCK_KEY = 'webhooks:audit-webhook-secrets';
+const AUDIT_LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 @Injectable()
 export class AuditWebhookSecretsJob {
@@ -14,10 +19,26 @@ export class AuditWebhookSecretsJob {
     @InjectRepository(Webhook)
     private readonly webhookRepository: Repository<Webhook>,
     private readonly notificationService: NotificationService,
+    private readonly lock: DistributedLockService,
   ) {}
 
+  /**
+   * Runs daily across every replica. Locked so a horizontally scaled
+   * deployment doesn't send duplicate "rotate your secret" notifications
+   * to the same webhook owners.
+   */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async audit(): Promise<void> {
+    const { ran } = await this.lock.withLock(AUDIT_LOCK_KEY, AUDIT_LOCK_TTL_MS, () =>
+      this.runAudit(),
+    );
+
+    if (!ran) {
+      this.logger.debug('Skipping secret audit run — lock held by another instance');
+    }
+  }
+
+  private async runAudit(): Promise<void> {
     this.logger.log('Starting webhook secret strength audit…');
 
     const webhooks = await this.webhookRepository.find();

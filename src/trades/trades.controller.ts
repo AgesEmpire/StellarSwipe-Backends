@@ -2,12 +2,15 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Param,
   Query,
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  ParseBoolPipe,
+  DefaultValuePipe,
   UseGuards,
   UseInterceptors,
   Request,
@@ -17,6 +20,7 @@ import {
 import { ApiResponse } from '@nestjs/swagger';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { buildPaginationLinks } from '../common/pagination/pagination-links.util';
+import { CursorPaginationQueryDto } from '../common/pagination/cursor-pagination-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OwnershipGuard } from '../common/guards/ownership.guard';
 import { MaxCallDepthGuard } from '../common/guards/max-call-depth.guard';
@@ -53,6 +57,7 @@ import {
   CloseTradeResultDto,
 } from './dto/trade-result.dto';
 import { PaginatedTradeHistoryDto } from './trade-history.service';
+import { Deprecated } from '../versioning/decorators/deprecated.decorator';
 
 @Controller('trades')
 @UseInterceptors(IdempotencyInterceptor)
@@ -150,9 +155,38 @@ export class TradesController {
   @RequireScopes(ApiKeyScope.TRADES_READ)
   async getTradeById(
     @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+    @Query('includeDeleted', new DefaultValuePipe(false), ParseBoolPipe) includeDeleted: boolean,
+  ): Promise<TradeDetailsDto> {
+    return this.tradesService.getTradeById(tradeId, userId, includeDeleted);
     @Request() req: any,
   ): Promise<TradeDetailsDto> {
     return this.queryBus.execute(new GetTradeStatusQuery(tradeId, req.user.id));
+  }
+
+  /**
+   * Cursor-based trade history — stable under concurrent inserts.
+   * GET /trades/user/:userId/history/cursor?after=<cursor>&limit=20
+   *
+   * Issue #1066 — cursor pagination for collection APIs
+   */
+  @Get('user/:userId/history/cursor')
+  @RequireScopes(ApiKeyScope.TRADES_READ)
+  async getUserTradeHistoryCursor(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Query() query: CursorPaginationQueryDto,
+    @Query('status') status?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.tradeHistoryService.getUserTradeHistoryCursor({
+      userId,
+      status,
+      startDate,
+      endDate,
+      after: query.after,
+      limit: query.limit,
+    });
   }
 
   /**
@@ -207,21 +241,55 @@ export class TradesController {
    */
   @Get('user/:userId')
   @RequireScopes(ApiKeyScope.TRADES_READ)
+  @Deprecated({
+    sunsetDate: '2025-12-31',
+    successorVersion: '2',
+    reason: 'Use GET /trades/user/:userId/history instead, which supports richer filtering and pagination.',
+  })
   async getUserTrades(
     @Param('userId', ParseUUIDPipe) userId: string,
     @Query('status') status?: string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
+    @Query('includeDeleted', new DefaultValuePipe(false), ParseBoolPipe) includeDeleted?: boolean,
   ): Promise<TradeDetailsDto[]> {
     return this.tradesService.getUserTrades({
       userId,
       status,
       limit,
       offset,
+      includeDeleted,
     });
   }
 
   /**
+   * Soft-delete a trade (recoverable)
+   * DELETE /trades/:tradeId
+   */
+  @Delete(':tradeId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async softDeleteTrade(
+    @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+  ): Promise<void> {
+    return this.tradesService.softDeleteTrade(tradeId, userId);
+  }
+
+  /**
+   * Restore a soft-deleted trade
+   * POST /trades/:tradeId/restore
+   */
+  @Post(':tradeId/restore')
+  @HttpCode(HttpStatus.OK)
+  async restoreTrade(
+    @Param('tradeId', ParseUUIDPipe) tradeId: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+  ): Promise<TradeDetailsDto> {
+    return this.tradesService.restoreTrade(tradeId, userId);
+  }
+
+  /**
+   * Get user's trading summary/statistics
    * Get user's trading summary/statistics (DB-aggregated)
    * GET /trades/user/:userId/summary
    */

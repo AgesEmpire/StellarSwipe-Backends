@@ -21,6 +21,8 @@ export enum AuditAction {
   ROLE_CREATED = 'role_created',
   ROLE_UPDATED = 'role_updated',
   ROLE_DELETED = 'role_deleted',
+  WORKFLOW_APPROVED = 'workflow_approved',
+  WORKFLOW_REJECTED = 'workflow_rejected',
 }
 
 @Entity('permission_audit_logs')

@@ -1,6 +1,9 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as crypto from 'crypto';
+import { verifyRotatingHmacSignature } from '../../integrations/webhooks/utils/signature-validator';
+
+/** Clock-skew tolerance for Persona's timestamped webhook signatures, in seconds. */
+const WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 300;
 
 export interface PersonaInquirySession {
   inquiryId: string;
@@ -26,7 +29,9 @@ export interface PersonaVerificationResult {
  * Required env vars:
  *   PERSONA_API_KEY     - your Persona API key
  *   PERSONA_TEMPLATE_ID - inquiry template ID from Persona dashboard
- *   PERSONA_WEBHOOK_SECRET - webhook signing secret
+ *   PERSONA_WEBHOOK_SECRET - webhook signing secret(s). Comma-separate to
+ *     support zero-downtime rotation, e.g. "newSecret,oldSecret" — both are
+ *     accepted until the old one is removed.
  *   PERSONA_BASE_URL    - defaults to https://withpersona.com/api/v1
  */
 @Injectable()
@@ -35,14 +40,16 @@ export class PersonaProvider {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly templateId: string;
-  private readonly webhookSecret: string;
+  private readonly webhookSecrets: string[];
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.getOrThrow<string>('PERSONA_API_KEY');
     this.templateId = this.config.getOrThrow<string>('PERSONA_TEMPLATE_ID');
-    this.webhookSecret = this.config.getOrThrow<string>(
-      'PERSONA_WEBHOOK_SECRET',
-    );
+    this.webhookSecrets = this.config
+      .getOrThrow<string>('PERSONA_WEBHOOK_SECRET')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     this.baseUrl = this.config.get<string>(
       'PERSONA_BASE_URL',
       'https://withpersona.com/api/v1',
@@ -124,40 +131,38 @@ export class PersonaProvider {
    * Persona sends the signature in the `Persona-Signature` header.
    *
    * Format: "t=<timestamp>,v1=<hex_signature>"
+   *
+   * Tries every secret in `PERSONA_WEBHOOK_SECRET` (rotation support) and
+   * enforces a clock-skew window in both directions — a timestamp that's
+   * too old *or* implausibly far in the future is rejected as a possible
+   * replay/forgery rather than only checking staleness.
    */
   verifyWebhookSignature(rawBody: string, signatureHeader: string): boolean {
     try {
-      const parts = Object.fromEntries(
-        signatureHeader.split(',').map((part) => {
-          const [k, v] = part.split('=');
-          return [k, v];
-        }),
+      const result = verifyRotatingHmacSignature(
+        rawBody,
+        signatureHeader,
+        this.webhookSecrets,
+        'sha256',
       );
 
-      const timestamp = parts['t'];
-      const receivedSig = parts['v1'];
+      if (result.timestamp === undefined) return false;
 
-      if (!timestamp || !receivedSig) return false;
-
-      // Replay attack prevention — reject webhooks older than 5 minutes
-      const webhookAge = Date.now() / 1000 - parseInt(timestamp, 10);
-      if (webhookAge > 300) {
+      const skewSeconds = Math.abs(Date.now() / 1000 - result.timestamp);
+      if (skewSeconds > WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS) {
         this.logger.warn(
-          'Persona webhook timestamp too old — possible replay attack',
+          `Persona webhook timestamp outside ${WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS}s tolerance (skew=${Math.round(skewSeconds)}s) — possible replay or clock issue`,
         );
         return false;
       }
 
-      const signedPayload = `${timestamp}.${rawBody}`;
-      const expected = crypto
-        .createHmac('sha256', this.webhookSecret)
-        .update(signedPayload)
-        .digest('hex');
+      if (result.valid && result.matchedSecretIndex > 0) {
+        this.logger.warn(
+          'Persona webhook verified against a rotated-out secret — confirm Persona has switched to the current secret.',
+        );
+      }
 
-      return crypto.timingSafeEqual(
-        Buffer.from(expected, 'hex'),
-        Buffer.from(receivedSig, 'hex'),
-      );
+      return result.valid;
     } catch {
       return false;
     }

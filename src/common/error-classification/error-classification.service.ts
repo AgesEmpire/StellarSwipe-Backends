@@ -77,6 +77,17 @@ export class ErrorClassificationService {
       };
     }
 
+    if (this.isDatabaseTimeout(error, message, stack)) {
+      return {
+        classification: ErrorClassification.SYSTEM,
+        code: ErrorCode.DATABASE_ERROR,
+        message: 'Database request timed out. Please retry the operation.',
+        httpStatus: HttpStatus.SERVICE_UNAVAILABLE,
+        isRetryable: true,
+        originalError: error,
+      };
+    }
+
     if (this.isStellarHorizonError(message, stack)) {
       return {
         classification: ErrorClassification.EXTERNAL_SERVICE,
@@ -230,6 +241,14 @@ export class ErrorClassificationService {
       message.includes('network') ||
       stack.includes('stellar-sdk') ||
       stack.includes('@stellar')
+    );
+  }
+
+  private isDatabaseTimeout(error: Error, message: string, stack: string): boolean {
+    return (
+      (message.includes('timeout') || message.includes('57014') || message.includes('statement canceled')) &&
+      (message.includes('database') || stack.includes('typeorm') || stack.includes('postgres') ||
+        (error as { code?: string }).code === '57014')
     );
   }
 

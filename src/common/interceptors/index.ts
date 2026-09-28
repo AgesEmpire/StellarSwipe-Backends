@@ -8,3 +8,6 @@ export { ETagInterceptor } from './etag.interceptor';
 export { ConditionalCompressionInterceptor, ConditionalCompressionOptions } from './conditional-compression.interceptor';
 export { TransactionalInterceptor } from './transactional.interceptor';
 export { RetryAfterInterceptor } from './retry-after.interceptor';
+export { CorrelationIdInterceptor } from './correlation-id.interceptor';
+export { StellarMemoInterceptor } from './stellar-memo.interceptor';
+export { StripInternalFieldsInterceptor } from './strip-internal-fields.interceptor';

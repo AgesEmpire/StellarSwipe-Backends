@@ -36,7 +36,7 @@ export const connectionPoolConfig = registerAs(
     // Enable PTIME (statement execution time) logging
     // Log queries that take longer than 100ms
     statement_timeout: parseInt(
-      process.env.DATABASE_STATEMENT_TIMEOUT || '100000',
+      process.env.DATABASE_STATEMENT_TIMEOUT || process.env.DATABASE_WRITE_TIMEOUT_MS || '10000',
       10,
     ), // 100 seconds max
 

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
 import { ZapierService } from './zapier.service';
 import { MakeService } from './make.service';
@@ -6,11 +7,20 @@ import { AutomationController } from './automation.controller';
 import { SignalsModule } from '../../signals/signals.module';
 import { TradesModule } from '../../trades/trades.module';
 import { PortfolioModule } from '../../portfolio/portfolio.module';
+import { WebhookVerifierService } from '../webhooks/webhook-verifier.service';
+import { defaultHttpModuleOptions } from '../../http/http-client-defaults';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 
 @Module({
-  imports: [HttpModule, SignalsModule, TradesModule, PortfolioModule],
+  imports: [
+    ConfigModule,
+    HttpModule.register(defaultHttpModuleOptions()),
+    SignalsModule,
+    TradesModule,
+    PortfolioModule,
+  ],
   controllers: [AutomationController],
-  providers: [ZapierService, MakeService],
+  providers: [ZapierService, MakeService, WebhookVerifierService, DistributedLockService],
   exports: [ZapierService, MakeService],
 })
 export class AutomationModule {}

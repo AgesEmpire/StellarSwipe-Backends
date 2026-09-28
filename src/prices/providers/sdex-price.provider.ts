@@ -1,14 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'stellar-sdk';
 import { PriceSourceResult } from '../dto/price-data.dto';
+import { CircuitBreakerService } from '../../http/circuit-breaker.service';
+
+const REQUEST_TIMEOUT_MS = 5000;
 import { PriceOracleProvider } from '../interfaces/price-oracle-provider.interface';
 
 @Injectable()
 export class SdexPriceProvider implements PriceOracleProvider {
   private readonly logger = new Logger(SdexPriceProvider.name);
   private readonly server: Server;
+  private static readonly CIRCUIT_NAME = 'sdex-price';
 
-  constructor() {
+  constructor(private readonly circuitBreaker: CircuitBreakerService) {
     this.server = new Server('https://horizon.stellar.org');
   }
 
@@ -16,10 +20,11 @@ export class SdexPriceProvider implements PriceOracleProvider {
     try {
       const [base, counter] = this.parseAssetPair(assetPair);
 
-      const orderbook = await this.server
-        .orderbook(base, counter)
-        .limit(10)
-        .call();
+      const orderbook = await this.circuitBreaker.execute(
+        SdexPriceProvider.CIRCUIT_NAME,
+        () => this.withTimeout(this.server.orderbook(base, counter).limit(10).call()),
+        { failureThreshold: 5, recoveryTimeMs: 30_000 },
+      );
 
       if (!orderbook.bids.length || !orderbook.asks.length) {
         throw new Error('No liquidity on SDEX');
@@ -55,5 +60,14 @@ export class SdexPriceProvider implements PriceOracleProvider {
     }
     const [code, issuer] = assetStr.split(':');
     return { getCode: () => code, getIssuer: () => issuer };
+  }
+
+  private withTimeout<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`SDEX request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS),
+      ),
+    ]);
   }
 }

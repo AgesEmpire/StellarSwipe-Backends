@@ -1,6 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { BullShutdownCoordinator } from '../../../common/bull/bull-shutdown.coordinator';
 import {
   SETTLEMENT_QUEUES,
   SettlementFlowData,
@@ -9,6 +10,14 @@ import {
 @Processor(SETTLEMENT_QUEUES.STEPS)
 export class RecordPnlProcessor extends WorkerHost {
   private readonly logger = new Logger(RecordPnlProcessor.name);
+
+  constructor(private readonly shutdown: BullShutdownCoordinator) {
+    super();
+  }
+
+  onModuleInit(): void {
+    this.shutdown.register(RecordPnlProcessor.name, () => this.worker);
+  }
 
   async process(
     job: Job<SettlementFlowData>,

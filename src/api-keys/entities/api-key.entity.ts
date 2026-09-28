@@ -29,6 +29,15 @@ export class ApiKey {
   @Column({ length: 60 })
   keyHash!: string;
 
+  @Column({ length: 60, nullable: true })
+  previousKeyHash?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  overlapUntil?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  revokedAt?: Date | null;
+
   @Column('simple-array')
   scopes!: ApiKeyScope[];
 

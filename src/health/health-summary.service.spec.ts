@@ -18,12 +18,16 @@ const makeService = (overrides: {
   cacheHealthy?: boolean;
   stellarHealthy?: boolean;
   sorobanHealthy?: boolean;
+  queueHealthy?: boolean;
+  brokerHealthy?: boolean;
 } = {}) => {
   const {
     dbHealthy = true,
     cacheHealthy = true,
     stellarHealthy = true,
     sorobanHealthy = true,
+    queueHealthy = true,
+    brokerHealthy = true,
   } = overrides;
 
   const up = (key: string) => Promise.resolve({ [key]: { status: 'up' } });
@@ -34,6 +38,8 @@ const makeService = (overrides: {
   const redisHealth = { isHealthy: jest.fn(() => (cacheHealthy ? up('cache') : down('cache', 'redis error'))) };
   const stellarHealth = { isHealthy: jest.fn(() => (stellarHealthy ? up('stellar') : down('stellar', 'stellar error'))) };
   const sorobanHealth = { isHealthy: jest.fn(() => (sorobanHealthy ? up('soroban') : down('soroban', 'soroban error'))) };
+  const queueHealth = { isHealthy: jest.fn(() => (queueHealthy ? up('queue') : down('queue', 'queue error'))) };
+  const kafkaHealth = { isHealthy: jest.fn(() => (brokerHealthy ? up('broker') : down('broker', 'broker error'))) };
 
   const service = new HealthSummaryService(
     {} as any, // HealthCheckService not used by getHealthSummary
@@ -41,11 +47,13 @@ const makeService = (overrides: {
     sorobanHealth as any,
     databaseHealth as any,
     redisHealth as any,
+    queueHealth as any,
+    kafkaHealth as any,
     {} as any, // PrometheusService — recordHealthCheck is mocked at module level
     { get: jest.fn() } as any, // ConfigService
   );
 
-  return { service, databaseHealth, redisHealth, stellarHealth, sorobanHealth };
+  return { service, databaseHealth, redisHealth, stellarHealth, sorobanHealth, queueHealth, kafkaHealth };
 };
 
 describe('HealthSummaryService', () => {
@@ -64,13 +72,15 @@ describe('HealthSummaryService', () => {
       expect(summary.overall).toBe('down');
     });
 
-    it('includes all four services in the response', async () => {
+    it('includes all six services in the response', async () => {
       const { service } = makeService();
       const summary = await service.getHealthSummary();
       expect(summary.services).toHaveProperty('database');
       expect(summary.services).toHaveProperty('cache');
       expect(summary.services).toHaveProperty('stellar');
       expect(summary.services).toHaveProperty('soroban');
+      expect(summary.services).toHaveProperty('queue');
+      expect(summary.services).toHaveProperty('broker');
     });
 
     it('marks a failed service as "down"', async () => {
@@ -100,6 +110,8 @@ describe('HealthSummaryService', () => {
       expect(mockRecordHealthCheck).toHaveBeenCalledWith(expect.anything(), 'cache', true);
       expect(mockRecordHealthCheck).toHaveBeenCalledWith(expect.anything(), 'stellar', true);
       expect(mockRecordHealthCheck).toHaveBeenCalledWith(expect.anything(), 'soroban', true);
+      expect(mockRecordHealthCheck).toHaveBeenCalledWith(expect.anything(), 'queue', true);
+      expect(mockRecordHealthCheck).toHaveBeenCalledWith(expect.anything(), 'broker', true);
     });
 
     it('records health gauge as down (false) for a failing service', async () => {
@@ -120,6 +132,20 @@ describe('HealthSummaryService', () => {
       const { service } = makeService({ stellarHealthy: false, sorobanHealthy: false });
       const summary = await service.getHealthSummary();
       expect(summary.overall).toBe('down');
+    });
+
+    it('returns overall "down" when queue is unhealthy', async () => {
+      const { service } = makeService({ queueHealthy: false });
+      const summary = await service.getHealthSummary();
+      expect(summary.overall).toBe('down');
+      expect(summary.services.queue.status).toBe('down');
+    });
+
+    it('returns overall "down" when broker is unhealthy', async () => {
+      const { service } = makeService({ brokerHealthy: false });
+      const summary = await service.getHealthSummary();
+      expect(summary.overall).toBe('down');
+      expect(summary.services.broker.status).toBe('down');
     });
   });
 });

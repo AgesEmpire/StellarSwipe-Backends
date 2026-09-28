@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan, LessThanOrEqual, IsNull, Or } from 'typeorm';
 import { WebhookDelivery } from '../entities/webhook-delivery.entity';
 import { WebhookSenderService } from '../services/webhook-sender.service';
+import { DistributedLockService } from '../../common/services/distributed-lock.service';
 
 /** Maximum total delivery attempts before a record is abandoned by the reconciler. */
 export const MAX_RECONCILE_ATTEMPTS = 10;
@@ -14,6 +15,14 @@ const STALE_PENDING_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 /** Upper bound on records processed per reconciliation run to prevent runaway batches. */
 const BATCH_SIZE = 100;
 
+/**
+ * Distributed lock key/TTL for this job. TTL is comfortably longer than a
+ * single run (bounded by BATCH_SIZE) should ever take, so a crashed holder
+ * releases automatically well before the next 5-minute tick.
+ */
+const RECONCILE_LOCK_KEY = 'webhooks:stellar-callback-reconciliation';
+const RECONCILE_LOCK_TTL_MS = 4 * 60 * 1000; // 4 minutes
+
 @Injectable()
 export class StellarCallbackReconciliationJob {
   private readonly logger = new Logger(StellarCallbackReconciliationJob.name);
@@ -22,10 +31,31 @@ export class StellarCallbackReconciliationJob {
     @InjectRepository(WebhookDelivery)
     private readonly deliveryRepo: Repository<WebhookDelivery>,
     private readonly senderService: WebhookSenderService,
+    private readonly lock: DistributedLockService,
   ) {}
 
+  /**
+   * Runs every 5 minutes across every replica. Without a distributed lock,
+   * horizontally scaled instances would race to reconcile the same stale
+   * deliveries and could double-fire callbacks to Stellar/webhook
+   * consumers. `withLock` ensures only one replica executes a given tick.
+   */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcile(): Promise<void> {
+    const { ran } = await this.lock.withLock(
+      RECONCILE_LOCK_KEY,
+      RECONCILE_LOCK_TTL_MS,
+      () => this.runReconciliation(),
+    );
+
+    if (!ran) {
+      this.logger.debug(
+        'Skipping reconciliation run — lock held by another instance',
+      );
+    }
+  }
+
+  private async runReconciliation(): Promise<void> {
     this.logger.log('Starting Stellar callback reconciliation run');
     const now = new Date();
 

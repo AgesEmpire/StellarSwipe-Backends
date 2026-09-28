@@ -13,6 +13,7 @@ import { CreateWorkflowDto, UpdateWorkflowDto } from './dto/workflow-config.dto'
 import { CreateAccessRequestDto, ApproveRequestDto, RejectRequestDto } from './dto/access-request.dto';
 import { IPermissionContext } from './interfaces/permission.interface';
 import { PermissionAuditService, AuditAction, diffObjects } from '../auth/permission-audit.service';
+import { PermissionMatrixService } from './permission-matrix.service';
 
 @Injectable()
 export class RbacService {
@@ -33,7 +34,26 @@ export class RbacService {
     private policyEvaluator: PolicyEvaluator,
     private dataSource: DataSource,
     private permissionAuditService: PermissionAuditService,
+    private permissionMatrixService: PermissionMatrixService,
   ) {}
+
+  /**
+   * Guards role/permission writes against `PERMISSION_MATRIX`
+   * (docs/PERMISSION_MATRIX.md) for admin/support/service_account roles.
+   */
+  private enforcePermissionMatrix(roleName: string, permissions: Permission[]): void {
+    const violations = this.permissionMatrixService.findViolations(roleName, permissions);
+    if (violations.length > 0) {
+      throw new BadRequestException(
+        `Permission matrix violation for role "${roleName}": ${violations
+          .map(
+            (v) =>
+              `${v.permissionName} (${v.category}) requires "${v.requiredLevel}" but the matrix caps this archetype at "${v.maxAllowedLevel ?? 'none'}"`,
+          )
+          .join('; ')}`,
+      );
+    }
+  }
 
   // Role Management
   async createRole(dto: CreateRoleDto, createdBy: string): Promise<Role> {
@@ -44,6 +64,9 @@ export class RbacService {
 
     if (dto.permissionIds?.length) {
       const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
+      if (dto.name) {
+        this.enforcePermissionMatrix(dto.name, permissions);
+      }
       role.permissions = permissions;
     }
 
@@ -82,6 +105,7 @@ export class RbacService {
 
     if (dto.permissionIds) {
       const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
+      this.enforcePermissionMatrix(role.name, permissions);
       role.permissions = permissions;
     }
 
@@ -191,6 +215,7 @@ export class RbacService {
     const previousPermissionIds = role.permissions?.map((p) => p.id) ?? [];
 
     const permissions = await this.permissionRepository.findByIds(dto.permissionIds);
+    this.enforcePermissionMatrix(role.name, permissions);
     role.permissions = permissions;
 
     const saved = await this.roleRepository.save(role);
@@ -316,6 +341,23 @@ export class RbacService {
       relations: ['role'],
       order: { createdAt: 'DESC' },
     });
+  }
+
+  /**
+   * Query the privileged-action audit trail — role changes, permission
+   * grants, and workflow approvals/rejections. Backs the
+   * `GET /authorization/audit-log` endpoint (see docs/AUDIT_TRAIL.md).
+   */
+  async queryPermissionAuditLog(query: {
+    actorId?: string;
+    targetUserId?: string;
+    action?: AuditAction;
+    from?: Date;
+    to?: Date;
+    limit?: number;
+    offset?: number;
+  }): ReturnType<PermissionAuditService['query']> {
+    return this.permissionAuditService.query(query);
   }
 
   // Permission Checking
@@ -499,7 +541,22 @@ export class RbacService {
       request.approvedAt = new Date();
     }
 
-    return this.requestRepository.save(request);
+    const saved = await this.requestRepository.save(request);
+
+    await this.permissionAuditService.log({
+      actorId: approverId,
+      targetUserId: request.requesterId,
+      action: AuditAction.WORKFLOW_APPROVED,
+      resourceName: request.title,
+      metadata: {
+        requestId,
+        workflowId: request.workflowId,
+        reason: dto.comments,
+        fullyApproved: decision.approved,
+      },
+    });
+
+    return saved;
   }
 
   async rejectRequest(
@@ -535,7 +592,22 @@ export class RbacService {
     request.status = 'rejected' as any;
     request.rejectionReason = dto.reason;
 
-    return this.requestRepository.save(request);
+    const saved = await this.requestRepository.save(request);
+
+    await this.permissionAuditService.log({
+      actorId: approverId,
+      targetUserId: request.requesterId,
+      action: AuditAction.WORKFLOW_REJECTED,
+      resourceName: request.title,
+      metadata: {
+        requestId,
+        workflowId: request.workflowId,
+        reason: dto.reason,
+        comments: dto.comments,
+      },
+    });
+
+    return saved;
   }
 
   async checkRequiresWorkflowApproval(

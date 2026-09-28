@@ -5,17 +5,22 @@
  * execution when clients retry after a timeout. Callers opt in by sending an
  * `Idempotency-Key` header:
  *
- *   • The first request for a given (user, key, route) triple executes
- *     normally and its response is cached for a configurable TTL.
- *   • Subsequent requests with the same (user, key, route) and an identical
- *     body return the cached response without re-running the handler.
+ *   • The first request for a given (tenant, user, key, route) tuple
+ *     executes normally and its response is cached for a configurable TTL
+ *     (default 24h — see DEFAULT_TTL_MS).
+ *   • Subsequent requests with the same tuple and an identical body return
+ *     the cached response without re-running the handler.
  *   • A request that reuses the same key with a different body is rejected
- *     with HTTP 422 to prevent silent mismatches.
+ *     with HTTP 409 Conflict to prevent silent mismatches.
  *   • Concurrent requests with the same cache key are serialised so only one
  *     execution happens; the others await and share its result.
+ *   • The tenant ID (from the async-local tenant context — see
+ *     ../../tenancy/tenant-context) is part of the cache key so the same
+ *     Idempotency-Key value used by two different tenants never collides,
+ *     even if both also happen to resolve to the same user ID.
  *
- * The cache is in-memory and per-instance. Swap the store for a shared cache
- * (e.g. Redis) for multi-instance deployments.
+ * Completed responses and request fingerprints are persisted in the configured
+ * shared cache; the local map remains a fallback for direct/unit construction.
  */
 import {
   BadRequestException,
@@ -23,10 +28,15 @@ import {
   ConflictException,
   ExecutionContext,
   Injectable,
+  Inject,
+  Optional,
   NestInterceptor,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { Observable, firstValueFrom, from } from 'rxjs';
 import { createHash } from 'crypto';
+import { getCurrentTenantIdOrNull } from '../../tenancy/tenant-context';
 
 interface CacheEntry {
   response: unknown;
@@ -48,8 +58,13 @@ function hashBody(body: unknown): string {
 export class IdempotencyInterceptor implements NestInterceptor {
   private readonly store = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly cache?: Cache;
+  private readonly ttlMs: number;
 
-  constructor(private readonly ttlMs: number = DEFAULT_TTL_MS) {}
+  constructor(@Optional() @Inject(CACHE_MANAGER) cacheOrTtl?: Cache | number) {
+    this.cache = typeof cacheOrTtl === 'object' ? cacheOrTtl : undefined;
+    this.ttlMs = typeof cacheOrTtl === 'number' ? cacheOrTtl : DEFAULT_TTL_MS;
+  }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest();
@@ -77,7 +92,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const route = request?.originalUrl ?? request?.url ?? '';
     const userId: string =
       request?.user?.id ?? request?.user?.walletAddress ?? 'anonymous';
-    const cacheKey = `${method}:${route}:${userId}:${key}`;
+    const tenantId = request?.user?.tenantId ?? getCurrentTenantIdOrNull() ?? 'no-tenant';
+    const cacheKey = `${tenantId}:${method}:${route}:${userId}:${key}`;
     const bodyHash = hashBody(request?.body);
 
     return from(this.resolve(cacheKey, bodyHash, next));
@@ -88,10 +104,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
     bodyHash: string,
     next: CallHandler,
   ): Promise<unknown> {
-    const cached = this.store.get(cacheKey);
+    const cached = this.cache
+      ? await this.cache.get<CacheEntry>(cacheKey)
+      : this.store.get(cacheKey);
     if (cached) {
       if (cached.expiresAt <= Date.now()) {
-        this.store.delete(cacheKey);
+        this.cache
+          ? await this.cache.del(cacheKey)
+          : this.store.delete(cacheKey);
       } else {
         if (cached.bodyHash !== bodyHash) {
           throw new ConflictException(
@@ -116,6 +136,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
         bodyHash,
         expiresAt: Date.now() + this.ttlMs,
       });
+      if (this.cache) {
+        await this.cache.set(cacheKey, this.store.get(cacheKey), this.ttlMs);
+      }
       return response;
     })();
 

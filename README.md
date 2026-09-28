@@ -542,3 +542,22 @@ docker-compose --profile cache-only up -d
 
 MIT
 
+## Handsoff notes
+
+<!-- handsoff-issue-1092 -->
+- #1092: Implement structured request ID correlation logging
+
+<!-- handsoff-issue-1069 -->
+- #1069: NestJS: Centralize authorization policies in guards
+
+<!-- handsoff-issue-1147 -->
+- #1147: Define transaction boundaries for multi-step service commands
+
+<!-- handsoff-issue-1149 -->
+- #1149: Introduce DataLoader batching for GraphQL resolvers
+
+<!-- handsoff-issue-1160 -->
+- #1160: Enforce resource authorization with reusable NestJS guards
+
+<!-- handsoff-issue-1162 -->
+- #1162: Add dead-letter handling for failed background jobs

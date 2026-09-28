@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { WebhookIdempotencyService } from '../../../common/services/webhook-idempotency.service';
 import { PaymentAuditService } from '../../payment-audit.service';
 
 // Stripe types (install with: npm install stripe)
@@ -26,6 +27,7 @@ export class StripePaymentService {
 
   constructor(
     private configService: ConfigService,
+    private readonly idempotency: WebhookIdempotencyService,
     private readonly paymentAuditService: PaymentAuditService,
   ) {
     this.apiKey = this.configService.get<string>('stripe.apiKey');
@@ -137,6 +139,11 @@ export class StripePaymentService {
       );
 
       this.logger.log(`Webhook received: ${event.type}`);
+
+      const isFirstDelivery = await this.idempotency.markProcessed('stripe', event.id);
+      if (!isFirstDelivery) {
+        return event;
+      }
 
       switch (event.type) {
         case 'payment_intent.succeeded':

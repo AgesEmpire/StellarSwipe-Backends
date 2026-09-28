@@ -50,6 +50,15 @@ import {
 } from './services/notification-preferences-client.service';
 import { CanaryRoutingModule } from './canary/canary-routing.module';
 import { SlippageGuardService } from './services/slippage-guard.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { TradeDlqProcessor } from './jobs/trade-dlq.processor';
+import { TradeDlqService } from './services/trade-dlq.service';
+import { TradeDlqController } from './trade-dlq.controller';
+import { TradeDlqMetricsService } from './services/trade-dlq-metrics.service';
+import { TradeDlqCleanupService } from './services/trade-dlq-cleanup.service';
+import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.service';
+import { AtomicTransactionHelper } from '../common/database/atomic-transaction.helper';
+import { DataLoaderModule } from '../common/dataloader/dataloader.module';
 
 @Module({
   imports: [
@@ -60,10 +69,13 @@ import { SlippageGuardService } from './services/slippage-guard.service';
     SdexModule,
     SorobanModule,
     BullModule.registerQueue({ name: 'transactions' }),
+    BullModule.registerQueue({ name: DEAD_LETTER_QUEUE }),
+    ScheduleModule.forRoot(),
     WebsocketModule,
     AuditModule,
     NotificationsModule,
     CanaryRoutingModule,
+    DataLoaderModule,
     ClientsModule.registerAsync([
       {
         name: NOTIFICATION_TCP_CLIENT,
@@ -78,7 +90,7 @@ import { SlippageGuardService } from './services/slippage-guard.service';
       },
     ]),
   ],
-  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController, TradeRetryController],
+  controllers: [TradesController, AdvancedOrdersController, LimitOrderController, SwipeController, MarketOrderController, TradeRetryController, TradeDlqController],
   providers: [
     TradesService,
     MarketOrderService,
@@ -102,6 +114,12 @@ import { SlippageGuardService } from './services/slippage-guard.service';
     TradeSagaService,
     NotificationPreferencesClientService,
     SlippageGuardService,
+    TradeDlqProcessor,
+    TradeDlqService,
+    TradeDlqMetricsService,
+    TradeDlqCleanupService,
+    DeadLetterService,
+    AtomicTransactionHelper,
     ...TRADE_CQRS_HANDLERS,
   ],
   exports: [

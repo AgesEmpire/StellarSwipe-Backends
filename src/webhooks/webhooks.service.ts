@@ -19,11 +19,38 @@ import { SignatureGeneratorService } from './services/signature-generator.servic
 import { WebhookSenderService } from './services/webhook-sender.service';
 import { SsrfValidationPipe } from './pipes/ssrf-validation.pipe';
 
+const DEFAULT_MAX_DELIVERY_ATTEMPTS = 5;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+const DEFAULT_RETRY_MAX_DELAY_MS = 60000;
+
+export interface DeadLetterEntry {
+  deliveryId: string;
+  webhookId: string;
+  event: string;
+  attempts: number;
+  lastError: string;
+  deadLetteredAt: string;
+  payload: WebhookPayload;
+}
+
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
 
   private readonly ssrfPipe = new SsrfValidationPipe();
+
+  private readonly maxDeliveryAttempts =
+    Number(process.env.WEBHOOK_MAX_ATTEMPTS) || DEFAULT_MAX_DELIVERY_ATTEMPTS;
+
+  private readonly retryBaseDelayMs =
+    Number(process.env.WEBHOOK_RETRY_BASE_DELAY_MS) ||
+    DEFAULT_RETRY_BASE_DELAY_MS;
+
+  private readonly retryMaxDelayMs =
+    Number(process.env.WEBHOOK_RETRY_MAX_DELAY_MS) ||
+    DEFAULT_RETRY_MAX_DELAY_MS;
+
+  private readonly deadLetterQueue: DeadLetterEntry[] = [];
 
   constructor(
     @InjectRepository(Webhook)
@@ -178,12 +205,83 @@ export class WebhooksService {
 
     await Promise.allSettled(
       webhooks.map((webhook) =>
-        this.webhookSender.deliverWebhook(webhook, {
+        this.deliverWithRetry(webhook, {
           ...payload,
           deliveryId: uuidv4(),
         }),
       ),
     );
+  }
+
+  /**
+   * Delivers a webhook with exponential backoff retries. When all attempts are
+   * exhausted the delivery is moved to the dead-letter queue so downstream
+   * integrations can be inspected and replayed.
+   */
+  async deliverWithRetry(
+    webhook: Webhook,
+    payload: WebhookPayload,
+  ): Promise<void> {
+    let lastError = 'Unknown delivery error';
+
+    for (let attempt = 1; attempt <= this.maxDeliveryAttempts; attempt++) {
+      try {
+        await this.webhookSender.deliverWebhook(webhook, payload);
+        if (attempt > 1) {
+          this.logger.log(
+            `Webhook ${webhook.id} delivery ${payload.deliveryId} succeeded on attempt ${attempt}`,
+          );
+        }
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+
+        if (attempt >= this.maxDeliveryAttempts) break;
+
+        const delay = this.computeBackoffDelay(attempt);
+        this.logger.warn(
+          `Webhook ${webhook.id} delivery ${payload.deliveryId} failed on attempt ${attempt}/${this.maxDeliveryAttempts}: ${lastError}. Retrying in ${delay}ms`,
+        );
+        await this.sleep(delay);
+      }
+    }
+
+    this.moveToDeadLetter(webhook, payload, lastError);
+  }
+
+  getDeadLetterQueue(): DeadLetterEntry[] {
+    return [...this.deadLetterQueue];
+  }
+
+  private moveToDeadLetter(
+    webhook: Webhook,
+    payload: WebhookPayload,
+    lastError: string,
+  ): void {
+    const entry: DeadLetterEntry = {
+      deliveryId: payload.deliveryId,
+      webhookId: webhook.id,
+      event: payload.event,
+      attempts: this.maxDeliveryAttempts,
+      lastError,
+      deadLetteredAt: new Date().toISOString(),
+      payload,
+    };
+
+    this.deadLetterQueue.push(entry);
+
+    this.logger.error(
+      `Webhook ${webhook.id} delivery ${payload.deliveryId} exhausted ${this.maxDeliveryAttempts} attempt(s) and was moved to the dead-letter queue: ${lastError}`,
+    );
+  }
+
+  private computeBackoffDelay(attempt: number): number {
+    const exponential = this.retryBaseDelayMs * Math.pow(2, attempt - 1);
+    return Math.min(exponential, this.retryMaxDelayMs);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async initiateSecretRotation(

@@ -67,6 +67,28 @@ export class RbacController {
     return this.rbacService.getRoles({ teamId, organizationId });
   }
 
+  @Get('audit-log')
+  @RequirePermissions('audit:read')
+  async getPermissionAuditLog(
+    @Query('actorId') actorId?: string,
+    @Query('targetUserId') targetUserId?: string,
+    @Query('action') action?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.rbacService.queryPermissionAuditLog({
+      actorId,
+      targetUserId,
+      action: action as any,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+  }
+
   // Permission Management Endpoints
   @Post('permissions/assign')
   @RequirePermissions('permissions:assign')

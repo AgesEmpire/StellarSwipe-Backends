@@ -1,11 +1,20 @@
-import { Injectable, Logger, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, LessThan } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Signal, SignalStatus, SignalType } from './entities/signal.entity';
 import { CacheService, CachePrefix } from '../cache/cache.service';
 import { SignalQuotaService } from './quota/signal-quota.service';
-import { CreateSignalDto } from './dto';
+import {
+  CreateSignalDto,
+  PaginatedSignalsQueryDto,
+  PaginatedSignalsResponseDto,
+} from './dto';
 
 export interface PaginatedSignalsDto {
   data: Signal[];
@@ -20,7 +29,6 @@ export interface PaginatedSignalsDto {
 
 @Injectable()
 export class SignalsService {
-
   private static readonly FEED_KEY = `${CachePrefix.SIGNAL}feed`;
   private readonly logger = new Logger(SignalsService.name);
 
@@ -33,8 +41,14 @@ export class SignalsService {
   ) {}
 
   async create(createSignalDto: CreateSignalDto): Promise<Signal> {
-    if (!createSignalDto.providerId || !createSignalDto.baseAsset || !createSignalDto.counterAsset) {
-      throw new BadRequestException('providerId, baseAsset, and counterAsset are required');
+    if (
+      !createSignalDto.providerId ||
+      !createSignalDto.baseAsset ||
+      !createSignalDto.counterAsset
+    ) {
+      throw new BadRequestException(
+        'providerId, baseAsset, and counterAsset are required',
+      );
     }
 
     // Enforce quota — throws ForbiddenException when exceeded
@@ -58,7 +72,9 @@ export class SignalsService {
       closePrice: null,
       copiersCount: 0,
       totalCopiedVolume: '0',
-      expiresAt: createSignalDto.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      expiresAt:
+        createSignalDto.expiresAt ||
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       gracePeriodEndsAt: null,
       closedAt: null,
       rationale: createSignalDto.rationale || null,
@@ -83,12 +99,78 @@ export class SignalsService {
     );
   }
 
-  async findAll(): Promise<Signal[]> {
-    return this.cacheService.getOrSetWithLock(
-      SignalsService.FEED_KEY,
-      () => this.signalRepository.find({ order: { createdAt: 'DESC' }, take: 100 }),
-      'signal',
-    );
+  /**
+   * Encode a cursor from a signal's ID and creation timestamp.
+   * Format: base64("id:timestamp")
+   */
+  private encodeCursor(signal: Signal): string {
+    const timestamp = signal.createdAt.getTime().toString();
+    const cursorData = `${signal.id}:${timestamp}`;
+    return Buffer.from(cursorData).toString('base64');
+  }
+
+  /**
+   * Decode a cursor back into ID and timestamp components.
+   * Throws BadRequestException if cursor is invalid.
+   */
+  private decodeCursor(cursor: string): { id: string; timestamp: number } {
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      const [id, timestamp] = decoded.split(':');
+      if (!id || !timestamp) {
+        throw new Error('Invalid cursor format');
+      }
+      return { id, timestamp: parseInt(timestamp, 10) };
+    } catch {
+      throw new BadRequestException('Invalid cursor format');
+    }
+  }
+
+  /**
+   * Cursor-based paginated signals feed endpoint.
+   * Returns the most recent signals with cursor for pagination.
+   *
+   * Cursor-based pagination is preferred over offset pagination for feeds
+   * because it remains stable when new records are inserted between pages.
+   *
+   * @param query - Contains optional cursor and limit (default 20, max 50)
+   * @returns Paginated response with data, nextCursor, and hasMore flag
+   */
+  async findAll(
+    query?: PaginatedSignalsQueryDto,
+  ): Promise<PaginatedSignalsResponseDto> {
+    const limit = Math.min(Math.max(query?.limit ?? 20, 1), 50);
+    let filters: any = {};
+
+    // If a cursor is provided, decode it and filter for signals created before it
+    if (query?.cursor) {
+      const { timestamp } = this.decodeCursor(query.cursor);
+      filters.createdAt = LessThan(new Date(timestamp));
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    const signals = await this.signalRepository.find({
+      where: filters,
+      relations: ['provider'],
+      order: { createdAt: 'DESC' },
+      take: limit + 1,
+    });
+
+    const hasMore = signals.length > limit;
+    const data = hasMore ? signals.slice(0, limit) : signals;
+
+    // Generate next cursor from the last signal if there are more results
+    const nextCursor =
+      hasMore && data.length > 0
+        ? this.encodeCursor(data[data.length - 1])
+        : undefined;
+
+    return {
+      data,
+      nextCursor,
+      hasMore,
+      limit,
+    };
   }
 
   /**
@@ -112,10 +194,15 @@ export class SignalsService {
       .orderBy(`signal.${sortBy}`, 'DESC');
 
     if (asset) {
-      qb.where('signal.base_asset = :asset OR signal.counter_asset = :asset', { asset });
+      qb.where('signal.base_asset = :asset OR signal.counter_asset = :asset', {
+        asset,
+      });
     }
 
-    const [data, total] = await qb.skip(offset).take(safeLimit).getManyAndCount();
+    const [data, total] = await qb
+      .skip(offset)
+      .take(safeLimit)
+      .getManyAndCount();
     const totalPages = Math.ceil(total / safeLimit);
 
     return {
@@ -143,14 +230,20 @@ export class SignalsService {
       .getMany();
   }
 
-  async updateSignalStatus(id: string, status: SignalStatus, currentVersion?: number): Promise<Signal | null> {
+  async updateSignalStatus(
+    id: string,
+    status: SignalStatus,
+    currentVersion?: number,
+  ): Promise<Signal | null> {
     if (currentVersion !== undefined) {
       const result = await this.signalRepository.update(
         { id, version: currentVersion },
         { status, version: currentVersion + 1 },
       );
       if (result.affected === 0) {
-        throw new ConflictException('Signal was updated by another request. Please retry with the latest version.');
+        throw new ConflictException(
+          'Signal was updated by another request. Please retry with the latest version.',
+        );
       }
     } else {
       await this.signalRepository.update(id, { status });
@@ -172,7 +265,10 @@ export class SignalsService {
     try {
       this.eventEmitter.emit(event, payload);
     } catch (error) {
-      this.logger.warn(`Failed to emit '${event}' event`, (error as Error).message);
+      this.logger.warn(
+        `Failed to emit '${event}' event`,
+        (error as Error).message,
+      );
     }
   }
 }

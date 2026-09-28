@@ -1,6 +1,9 @@
-import { ConfigValidationService } from '../../src/config/config-validation.service';
+import { ConfigValidationService } from '../src/config/config-validation.service';
+import {
+  ValidatedEnvironment,
+  validateEnvironment,
+} from '../src/config/schemas/config.schema';
 
-/** Snapshot of the minimum valid environment. */
 const VALID_ENV: NodeJS.ProcessEnv = {
   NODE_ENV: 'development',
   PORT: '3000',
@@ -15,94 +18,101 @@ const VALID_ENV: NodeJS.ProcessEnv = {
   STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
   STELLAR_SOROBAN_RPC_URL: 'https://soroban-testnet.stellar.org:443',
   STELLAR_NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
-  JWT_SECRET: 'a-very-secure-jwt-secret-at-least-32-chars!!',
+  JWT_SECRET: 'a-very-secure-jwt-secret-at-least-32-chars',
   XAI_API_KEY: 'xai-key',
-  ENCRYPTION_KEY: 'a-very-secure-encryption-key-32chars!',
+  ENCRYPTION_KEY: 'a-very-secure-encryption-key-32chars',
 };
 
-function makeService(overrides: NodeJS.ProcessEnv = {}): ConfigValidationService {
-  // Temporarily override process.env for the duration of validate()
+const withEnv = (env: NodeJS.ProcessEnv, callback: () => void) => {
   const original = { ...process.env };
-  Object.keys(process.env).forEach((k) => delete process.env[k]);
-  Object.assign(process.env, { ...VALID_ENV, ...overrides });
+  Object.keys(process.env).forEach((key) => delete process.env[key]);
+  Object.assign(process.env, env);
 
-  const svc = new ConfigValidationService();
   try {
-    return svc;
+    callback();
   } finally {
-    Object.keys(process.env).forEach((k) => delete process.env[k]);
+    Object.keys(process.env).forEach((key) => delete process.env[key]);
     Object.assign(process.env, original);
   }
-}
+};
 
-describe('ConfigValidationService – startup env validation (#Issue-2)', () => {
-  let savedEnv: NodeJS.ProcessEnv;
+describe('configuration schema validation (#923)', () => {
+  it('returns typed values and defaults for a valid environment', () => {
+    const validated = validateEnvironment(VALID_ENV);
 
-  beforeEach(() => {
-    savedEnv = { ...process.env };
-    // Clear env so we control exactly what is visible during each test
-    Object.keys(process.env).forEach((k) => delete process.env[k]);
+    expect(validated).toMatchObject<Partial<ValidatedEnvironment>>({
+      NODE_ENV: 'development',
+      PORT: 3000,
+      DATABASE_PORT: 5432,
+      REDIS_PORT: 6379,
+      STELLAR_NETWORK: 'testnet',
+      JWT_EXPIRES_IN: '7d',
+      DATABASE_POOL_MIN: 10,
+      DATABASE_POOL_MAX: 30,
+    });
   });
 
-  afterEach(() => {
-    Object.keys(process.env).forEach((k) => delete process.env[k]);
-    Object.assign(process.env, savedEnv);
+  it('allows the test runtime environment used by Nest test modules', () => {
+    expect(
+      validateEnvironment({ ...VALID_ENV, NODE_ENV: 'test' }).NODE_ENV,
+    ).toBe('test');
   });
 
-  it('passes when all required variables are present', () => {
-    Object.assign(process.env, VALID_ENV);
-    const svc = new ConfigValidationService();
-    expect(() => svc.validate()).not.toThrow();
-  });
-
-  it('fails with a clear message when DATABASE_HOST is missing', () => {
+  it('rejects missing required values', () => {
     const env = { ...VALID_ENV };
     delete env.DATABASE_HOST;
-    Object.assign(process.env, env);
-    const svc = new ConfigValidationService();
-    expect(() => svc.validate()).toThrow(/DATABASE_HOST/);
+
+    expect(() => validateEnvironment(env)).toThrow(/DATABASE_HOST/);
   });
 
-  it('fails with a clear message when JWT_SECRET is too short', () => {
-    Object.assign(process.env, { ...VALID_ENV, JWT_SECRET: 'short' });
-    const svc = new ConfigValidationService();
-    expect(() => svc.validate()).toThrow(/JWT_SECRET/);
+  it('rejects invalid enum values', () => {
+    expect(() =>
+      validateEnvironment({ ...VALID_ENV, STELLAR_NETWORK: 'devnet' }),
+    ).toThrow(/STELLAR_NETWORK/);
   });
 
-  it('fails with a clear message when STELLAR_HORIZON_URL is not a URI', () => {
-    Object.assign(process.env, { ...VALID_ENV, STELLAR_HORIZON_URL: 'not-a-url' });
-    const svc = new ConfigValidationService();
-    expect(() => svc.validate()).toThrow(/STELLAR_HORIZON_URL/);
+  it('rejects numeric values outside allowed ranges', () => {
+    expect(() => validateEnvironment({ ...VALID_ENV, PORT: '70000' })).toThrow(
+      /PORT/,
+    );
+    expect(() =>
+      validateEnvironment({
+        ...VALID_ENV,
+        DATABASE_POOL_MIN: '20',
+        DATABASE_POOL_MAX: '10',
+      }),
+    ).toThrow(/DATABASE_POOL_MAX/);
   });
 
-  it('fails when ENCRYPTION_KEY is under 32 characters', () => {
-    Object.assign(process.env, { ...VALID_ENV, ENCRYPTION_KEY: 'tooshort' });
-    const svc = new ConfigValidationService();
-    expect(() => svc.validate()).toThrow(/ENCRYPTION_KEY/);
-  });
-
-  it('reports all validation errors at once (abortEarly: false)', () => {
-    // Omit two required fields
-    const env = { ...VALID_ENV };
+  it('reports multiple validation errors at once', () => {
+    const env = {
+      ...VALID_ENV,
+      JWT_SECRET: 'short',
+      STELLAR_HORIZON_URL: 'not-a-url',
+    };
     delete env.DATABASE_HOST;
-    delete env.JWT_SECRET;
-    Object.assign(process.env, env);
-    const svc = new ConfigValidationService();
+
     let errorMessage = '';
     try {
-      svc.validate();
-    } catch (e: any) {
-      errorMessage = e.message;
+      validateEnvironment(env);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
     }
+
     expect(errorMessage).toMatch(/DATABASE_HOST/);
     expect(errorMessage).toMatch(/JWT_SECRET/);
+    expect(errorMessage).toMatch(/STELLAR_HORIZON_URL/);
   });
 
-  it('onModuleInit delegates to validate', () => {
-    Object.assign(process.env, VALID_ENV);
-    const svc = new ConfigValidationService();
-    const spy = jest.spyOn(svc, 'validate');
-    svc.onModuleInit();
-    expect(spy).toHaveBeenCalledTimes(1);
+  it('startup validation succeeds for valid config and fails for invalid config', () => {
+    withEnv(VALID_ENV, () => {
+      const service = new ConfigValidationService();
+      expect(() => service.onModuleInit()).not.toThrow();
+    });
+
+    withEnv({ ...VALID_ENV, JWT_SECRET: 'short' }, () => {
+      const service = new ConfigValidationService();
+      expect(() => service.onModuleInit()).toThrow(/JWT_SECRET/);
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as crypto from 'crypto';
+import { verifyRotatingHmacSignature } from '../../integrations/webhooks/utils/signature-validator';
 
 export interface OnfidoApplicantSession {
   applicantId: string;
@@ -27,7 +27,9 @@ export interface OnfidoVerificationResult {
  * Required env vars:
  *   ONFIDO_API_TOKEN       - Onfido API token
  *   ONFIDO_WORKFLOW_ID     - Workflow ID from Onfido Studio
- *   ONFIDO_WEBHOOK_TOKEN   - Webhook token for signature verification
+ *   ONFIDO_WEBHOOK_TOKEN   - Webhook token(s) for signature verification.
+ *     Comma-separate to support zero-downtime rotation, e.g.
+ *     "newToken,oldToken" — both are accepted until the old one is removed.
  *   ONFIDO_REGION          - 'EU', 'US', or 'CA' (defaults to 'EU')
  */
 @Injectable()
@@ -35,13 +37,17 @@ export class OnfidoProvider {
   private readonly logger = new Logger(OnfidoProvider.name);
   private readonly apiToken: string;
   private readonly workflowId: string;
-  private readonly webhookToken: string;
+  private readonly webhookTokens: string[];
   private readonly baseUrl: string;
 
   constructor(private readonly config: ConfigService) {
     this.apiToken = this.config.getOrThrow<string>('ONFIDO_API_TOKEN');
     this.workflowId = this.config.getOrThrow<string>('ONFIDO_WORKFLOW_ID');
-    this.webhookToken = this.config.getOrThrow<string>('ONFIDO_WEBHOOK_TOKEN');
+    this.webhookTokens = this.config
+      .getOrThrow<string>('ONFIDO_WEBHOOK_TOKEN')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const region = this.config.get<string>('ONFIDO_REGION', 'EU').toUpperCase();
     const regionUrls: Record<string, string> = {
@@ -111,15 +117,20 @@ export class OnfidoProvider {
    */
   verifyWebhookSignature(rawBody: string, signatureHeader: string): boolean {
     try {
-      const expected = crypto
-        .createHmac('sha256', this.webhookToken)
-        .update(rawBody)
-        .digest('hex');
-
-      return crypto.timingSafeEqual(
-        Buffer.from(expected, 'hex'),
-        Buffer.from(signatureHeader, 'hex'),
+      const result = verifyRotatingHmacSignature(
+        rawBody,
+        signatureHeader,
+        this.webhookTokens,
+        'sha256',
       );
+
+      if (result.valid && result.matchedSecretIndex > 0) {
+        this.logger.warn(
+          'Onfido webhook verified against a rotated-out token — confirm Onfido has switched to the current token.',
+        );
+      }
+
+      return result.valid;
     } catch {
       return false;
     }

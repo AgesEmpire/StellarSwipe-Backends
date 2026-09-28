@@ -12,15 +12,20 @@ import { WebhookDelivery } from '../entities/webhook-delivery.entity';
 import { WebhookPayload } from '../dto/webhook-event.dto';
 import { SignatureGeneratorService } from './signature-generator.service';
 import {
+  WEBHOOK_CONNECT_TIMEOUT_MS,
   WEBHOOK_DELIVERY_JOB,
   WEBHOOK_DELIVERY_JOB_OPTIONS,
   WEBHOOK_DELIVERY_QUEUE,
   WEBHOOK_FAILURE_DISABLE_THRESHOLD,
   WEBHOOK_MAX_ATTEMPTS,
+  WEBHOOK_MAX_RESPONSE_BYTES,
   WEBHOOK_PERMANENTLY_FAILED_EVENT,
   WEBHOOK_REQUEST_TIMEOUT_MS,
+  WEBHOOK_RESPONSE_BODY_MAX_CHARS,
   WebhookDeliveryJobData,
+  WebhookFailureKind,
   calculateWebhookBackoffDelay,
+  classifyWebhookFailure,
 } from '../jobs/webhook-delivery.constants';
 
 @Injectable()
@@ -86,9 +91,14 @@ export class WebhookSenderService {
     const delivery = await this.getDeliveryForAttempt(deliveryId);
     const webhook = delivery.webhook;
     const payload = delivery.payload as unknown as WebhookPayload;
+
+    // Issue #1030: during a rotation window, sign with nextSecret so the
+    // consumer adopts the new key. Falls back to the current secret when no
+    // rotation is in progress.
+    const signingSecret = this.resolveSigningSecret(webhook);
     const signature = this.signatureGenerator.generateSignature(
       payload,
-      webhook.secret,
+      signingSecret,
     );
 
     delivery.attempts = attempt;
@@ -97,6 +107,9 @@ export class WebhookSenderService {
       const response = await axios.post(webhook.url, payload, {
         headers: this.buildHeaders(payload, signature),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        transitional: { clarifyTimeoutError: true },
+        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
+        maxBodyLength: Infinity,
       });
 
       await this.recordDeliverySuccess(
@@ -132,9 +145,10 @@ export class WebhookSenderService {
     }
 
     const payload = delivery.payload as unknown as WebhookPayload;
+    const signingSecret = this.resolveSigningSecret(webhook);
     const signature = this.signatureGenerator.generateSignature(
       payload,
-      webhook.secret,
+      signingSecret,
     );
 
     delivery.attempts += 1;
@@ -143,6 +157,9 @@ export class WebhookSenderService {
       const response = await axios.post(webhook.url, payload, {
         headers: this.buildHeaders(payload, signature),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        transitional: { clarifyTimeoutError: true },
+        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
+        maxBodyLength: Infinity,
       });
 
       await this.recordDeliverySuccess(
@@ -229,12 +246,13 @@ export class WebhookSenderService {
     attempt: number,
     isFinalAttempt: boolean,
   ): Promise<void> {
+    const kind: WebhookFailureKind = classifyWebhookFailure(error);
     delivery.attempts = attempt;
     delivery.responseStatus = error.response?.status;
     delivery.responseBody = error.response
       ? this.serializeResponseBody(error.response.data)
       : undefined;
-    delivery.errorMessage = error.message;
+    delivery.errorMessage = `[${kind}] ${error.message}`;
 
     if (isFinalAttempt) {
       delivery.status = 'permanently_failed';
@@ -250,7 +268,7 @@ export class WebhookSenderService {
     await this.deliveryRepo.save(delivery);
 
     this.logger.warn(
-      `Webhook delivery attempt ${attempt}/${WEBHOOK_MAX_ATTEMPTS} failed: webhook=${delivery.webhook.id} event=${delivery.eventType} error=${error.message} nextRetry=${delivery.nextRetryAt.toISOString()}`,
+      `Webhook delivery attempt ${attempt}/${WEBHOOK_MAX_ATTEMPTS} failed [${kind}]: webhook=${delivery.webhook.id} event=${delivery.eventType} error=${error.message} nextRetry=${delivery.nextRetryAt.toISOString()}`,
     );
   }
 
@@ -359,9 +377,9 @@ export class WebhookSenderService {
     if (data === undefined) return undefined;
 
     try {
-      return JSON.stringify(data).slice(0, 1000);
+      return JSON.stringify(data).slice(0, WEBHOOK_RESPONSE_BODY_MAX_CHARS);
     } catch {
-      return String(data).slice(0, 1000);
+      return String(data).slice(0, WEBHOOK_RESPONSE_BODY_MAX_CHARS);
     }
   }
 }

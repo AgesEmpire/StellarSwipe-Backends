@@ -13,7 +13,9 @@ import { PolicyEvaluator } from './utils/policy-evaluator';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
+import { GqlOwnershipGuard } from './guards/gql-ownership.guard';
 import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-audit.service';
+import { PermissionMatrixService } from './permission-matrix.service';
 
 @Module({
   imports: [
@@ -35,7 +37,9 @@ import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-a
     PermissionsGuard,
     RolesGuard,
     WorkflowApprovalGuard,
+    GqlOwnershipGuard,
     PermissionAuditService,
+    PermissionMatrixService,
   ],
   exports: [
     RbacService,
@@ -44,7 +48,9 @@ import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-a
     PermissionsGuard,
     RolesGuard,
     WorkflowApprovalGuard,
+    GqlOwnershipGuard,
     PermissionAuditService,
+    PermissionMatrixService,
     TypeOrmModule,
   ],
 })

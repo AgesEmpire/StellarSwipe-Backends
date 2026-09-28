@@ -58,6 +58,8 @@ class UpdateTierConfigDto {
   performanceBonusUsdc?: string;
   monthlyRetentionBonusUsdc?: string;
   isActive?: boolean;
+  /** Version last read by the caller; a mismatch returns a 409 conflict. */
+  expectedVersion?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,7 +103,8 @@ export class ProvidersController {
     @Param('tierLevel') tierLevel: ProviderTierLevel,
     @Body() dto: UpdateTierConfigDto,
   ) {
-    return this.tierManagerService.updateTierConfig(tierLevel, dto);
+    const { expectedVersion, ...updates } = dto;
+    return this.tierManagerService.updateTierConfig(tierLevel, updates, expectedVersion);
   }
 
   // ── Provider tier status ──────────────────────────────────────────────────

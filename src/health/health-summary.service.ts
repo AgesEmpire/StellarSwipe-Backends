@@ -11,6 +11,7 @@ import {
   DatabaseHealthIndicator,
   RedisHealthIndicator,
   QueueHealthIndicator,
+  KafkaHealthIndicator,
 } from './indicators';
 import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 import { recordHealthCheck } from '../monitoring/metrics/custom-metrics';
@@ -24,6 +25,7 @@ export interface ServiceHealthSummary {
     stellar: HealthStatus;
     soroban: HealthStatus;
     queue: HealthStatus;
+    broker: HealthStatus;
   };
   uptime: number;
   version: string;
@@ -56,6 +58,7 @@ export class HealthSummaryService {
     private databaseHealth: DatabaseHealthIndicator,
     private redisHealth: RedisHealthIndicator,
     private queueHealth: QueueHealthIndicator,
+    private kafkaHealth: KafkaHealthIndicator,
     private prometheus: PrometheusService,
     private configService: ConfigService,
   ) {}
@@ -67,6 +70,7 @@ export class HealthSummaryService {
       this.checkStellar(),
       this.checkSoroban(),
       this.checkQueue(),
+      this.checkBroker(),
     ]);
 
     const services: ServiceHealthSummary['services'] = {
@@ -75,6 +79,7 @@ export class HealthSummaryService {
       stellar: this.extractHealthStatus(results[2]),
       soroban: this.extractHealthStatus(results[3]),
       queue: this.extractHealthStatus(results[4]),
+      broker: this.extractHealthStatus(results[5]),
     };
 
     const overall = this.determineOverallStatus(services);
@@ -158,6 +163,21 @@ export class HealthSummaryService {
       recordHealthCheck(this.prometheus, 'queue', false);
       return {
         queue: { status: 'down', error: (error as Error).message },
+        responseTime: Date.now() - start,
+      };
+    }
+  }
+
+  private async checkBroker(): Promise<HealthIndicatorResultWithResponseTime> {
+    const start = Date.now();
+    try {
+      const result = await this.kafkaHealth.isHealthy('broker');
+      recordHealthCheck(this.prometheus, 'broker', true);
+      return { ...result, responseTime: Date.now() - start };
+    } catch (error) {
+      recordHealthCheck(this.prometheus, 'broker', false);
+      return {
+        broker: { status: 'down', error: (error as Error).message },
         responseTime: Date.now() - start,
       };
     }

@@ -9,6 +9,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Docker repository names must be lowercase; GitHub repository names may not be.
+  IMAGE_REF: stellarswipe-backends:scan
 
 jobs:
   scan:
@@ -21,12 +23,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image for scanning
-        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
+        run: docker build -t "${IMAGE_REF}" .
 
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.IMAGE_NAME }}:scan
+          image-ref: ${{ env.IMAGE_REF }}
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH

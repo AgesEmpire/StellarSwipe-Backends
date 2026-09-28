@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  VersionColumn,
   Index,
 } from 'typeorm';
 
@@ -56,4 +57,8 @@ export class UserSettings {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  /** Optimistic concurrency token — bumped on every update. */
+  @VersionColumn()
+  version: number;
 }

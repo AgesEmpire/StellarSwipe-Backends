@@ -27,6 +27,7 @@ function buildContext(
   const response = { setHeader: jest.fn() };
   return {
     getHandler: jest.fn(),
+    getType: () => 'http',
     switchToHttp: () => ({
       getRequest: () => ({
         user,
@@ -35,6 +36,35 @@ function buildContext(
         body,
       }),
       getResponse: () => response,
+    }),
+  } as unknown as ExecutionContext;
+}
+
+/**
+ * Builds an ExecutionContext shaped like a GraphQL resolver invocation
+ * (context type `'graphql'`) so RateLimitGuard is exercised through the
+ * GqlExecutionContext branch of getRequest()/getResponse() rather than
+ * switchToHttp() — this is the path issue #4 (rate-limit metadata parity
+ * between REST and GraphQL) exercises.
+ */
+function buildGraphQLContext(
+  user?: { id: string },
+  ip = '127.0.0.1',
+): ExecutionContext {
+  const response = { setHeader: jest.fn() };
+  const req = {
+    user,
+    headers: {},
+    socket: { remoteAddress: ip },
+    body: {},
+  };
+  return {
+    getHandler: jest.fn(),
+    getType: () => 'graphql',
+    getArgs: () => [{}, {}, { req, res: response }, {}],
+    switchToHttp: () => ({
+      getRequest: () => undefined,
+      getResponse: () => undefined,
     }),
   } as unknown as ExecutionContext;
 }
@@ -136,6 +166,42 @@ describe('RateLimitGuard (issue #482)', () => {
 
     const response = ctx.switchToHttp().getResponse() as { setHeader: jest.Mock };
     expect(response.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(Number));
+  });
+
+  describe('GraphQL transport parity (issue: rate-limit metadata for GraphQL)', () => {
+    it('sets X-RateLimit-* headers on an allowed GraphQL request', async () => {
+      mockReflector.get.mockReturnValue({ tier: RateLimitTier.AUTHENTICATED, limit: 100 });
+      mockCacheManager.get.mockResolvedValue({ count: 10, resetTime: Date.now() + 60_000 });
+      mockCacheManager.set.mockResolvedValue(undefined);
+
+      const ctx = buildGraphQLContext({ id: 'gql-user' });
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+
+      const { GqlExecutionContext } = await import('@nestjs/graphql');
+      const response = GqlExecutionContext.create(ctx).getContext().res as { setHeader: jest.Mock };
+      expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', expect.any(Number));
+      expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', expect.any(Number));
+      expect(response.setHeader).toHaveBeenCalledWith('X-RateLimit-Reset', expect.any(Number));
+    });
+
+    it('sets Retry-After and 429 metadata on a blocked GraphQL request', async () => {
+      mockReflector.get.mockReturnValue({ tier: RateLimitTier.TRADE });
+      mockCacheManager.get.mockResolvedValue({ count: 10, resetTime: Date.now() + 30_000 });
+      mockCacheManager.set.mockResolvedValue(undefined);
+
+      const ctx = buildGraphQLContext({ id: 'gql-user-blocked' });
+
+      await expect(guard.canActivate(ctx)).rejects.toMatchObject({
+        response: {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          retryAfter: expect.any(Number),
+        },
+      });
+
+      const { GqlExecutionContext } = await import('@nestjs/graphql');
+      const response = GqlExecutionContext.create(ctx).getContext().res as { setHeader: jest.Mock };
+      expect(response.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(Number));
+    });
   });
 });
 

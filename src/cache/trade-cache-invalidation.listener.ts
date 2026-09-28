@@ -95,6 +95,40 @@ export class TradeCacheInvalidationListener {
     }
   }
 
+  @OnEvent('transfer.completed', { async: true })
+  async handleTransferCompleted(payload: {
+    transferId: string;
+    userId: string;
+    assetPair?: string;
+    tenantId?: string;
+  }): Promise<void> {
+    await this.cacheInvalidationService.invalidatePortfolioState(
+      payload.userId,
+      payload.assetPair,
+      payload.transferId,
+      payload.tenantId,
+    );
+  }
+
+  @OnEvent('portfolio.adjusted', { async: true })
+  async handlePortfolioAdjusted(payload: {
+    adjustmentId: string;
+    userId: string;
+    changedAssets?: string[];
+    tenantId?: string;
+  }): Promise<void> {
+    await Promise.all(
+      (payload.changedAssets ?? [undefined]).map((assetPair) =>
+        this.cacheInvalidationService.invalidatePortfolioState(
+          payload.userId,
+          assetPair,
+          payload.adjustmentId,
+          payload.tenantId,
+        ),
+      ),
+    );
+  }
+
   /**
    * Listen for user performance metric updates.
    */

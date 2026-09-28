@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   Body,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -41,16 +42,16 @@ export class ConditionalOrderController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new conditional order' })
   @ApiOkResponse({ description: 'Conditional order created', type: ConditionalOrder })
-  async create(@Body() dto: CreateConditionalOrderDto): Promise<ConditionalOrder> {
-    return this.conditionalOrderService.create(dto);
+  async create(@Body() dto: CreateConditionalOrderDto, @Req() req: any): Promise<ConditionalOrder> {
+    return this.conditionalOrderService.create(dto, req.user);
   }
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get conditional order by ID' })
   @ApiParam({ name: 'id', description: 'Conditional order UUID' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<ConditionalOrder> {
-    return this.conditionalOrderService.findById(id);
+  async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: any): Promise<ConditionalOrder> {
+    return this.conditionalOrderService.findById(id, req.user);
   }
 
   @Get()
@@ -59,8 +60,9 @@ export class ConditionalOrderController {
   async findByUser(
     @Query('userId') userId: string,
     @Query('status') status?: ConditionalOrderStatus,
+    @Req() req: any,
   ): Promise<ConditionalOrder[]> {
-    return this.conditionalOrderService.findByUser(userId, status);
+    return this.conditionalOrderService.findByUser(userId || req.user.id, status, req.user);
   }
 
   @Patch(':id')
@@ -69,15 +71,16 @@ export class ConditionalOrderController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateConditionalOrderDto,
+    @Req() req: any,
   ): Promise<ConditionalOrder> {
-    return this.conditionalOrderService.update(id, dto);
+    return this.conditionalOrderService.update(id, dto, req.user);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel a conditional order' })
-  async cancel(@Param('id', ParseUUIDPipe) id: string): Promise<ConditionalOrder> {
-    return this.conditionalOrderService.cancel(id);
+  async cancel(@Param('id', ParseUUIDPipe) id: string, @Req() req: any): Promise<ConditionalOrder> {
+    return this.conditionalOrderService.cancel(id, req.user);
   }
 
   @Post(':id/execute')
@@ -86,7 +89,8 @@ export class ConditionalOrderController {
   async execute(
     @Param('id', ParseUUIDPipe) id: string,
     @Body('tradeId') tradeId?: string,
+    @Req() req: any,
   ): Promise<ConditionalOrder> {
-    return this.conditionalOrderService.executeTriggeredOrder(id, tradeId);
+    return this.conditionalOrderService.executeTriggeredOrder(id, tradeId, req.user);
   }
 }

@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import { Queue, Job, JobOptions } from 'bull';
+import { v4 as uuidv4 } from 'uuid';
+import { CorrelationIdStore } from '../common/correlation/correlation-id.store';
 
 export const PRIORITY_QUEUE = 'priority-queue';
 export const CRITICAL_QUEUE = 'critical-queue';
@@ -28,6 +30,8 @@ export interface PriorityJobData {
   payload: unknown;
   priority: JobPriority;
   createdAt: Date;
+  /** Correlation ID propagated from the originating HTTP request or generated for scheduled work. */
+  correlationId: string;
 }
 
 /**
@@ -48,6 +52,7 @@ export class PriorityQueueService {
     @InjectQueue(LOW_PRIORITY_QUEUE)
     private readonly lowPriorityQueue: Queue<PriorityJobData>,
     private readonly configService: ConfigService,
+    private readonly correlationIdStore: CorrelationIdStore,
   ) {}
 
   /**
@@ -78,11 +83,17 @@ export class PriorityQueueService {
     priority: JobPriority = JobPriority.NORMAL,
     options: Partial<JobOptions> = {},
   ): Promise<Job<PriorityJobData>> {
+    // Propagate correlation ID from the active HTTP context, or mint a fresh one
+    // for scheduled/background work so every job has a traceable ID.
+    const correlationId =
+      this.correlationIdStore.getCorrelationId() ?? uuidv4();
+
     const jobData: PriorityJobData = {
       type,
       payload,
       priority,
       createdAt: new Date(),
+      correlationId,
     };
 
     const defaultAttempts =
@@ -107,35 +118,49 @@ export class PriorityQueueService {
     };
 
     const targetQueue = this.getQueueForPriority(priority);
-    this.logger.log(`Adding ${type} job with priority ${priority} to queue ${(targetQueue as any).name || 'priority-queue'}`);
+    this.logger.log(
+      `Adding ${type} job priority=${priority} correlationId=${correlationId} queue=${(targetQueue as any).name ?? 'priority-queue'}`,
+    );
     return targetQueue.add(type, jobData, jobOptions);
   }
 
   /**
    * Add a critical job (highest priority).
    */
-  async addCriticalJob(type: string, payload: unknown): Promise<Job<PriorityJobData>> {
+  async addCriticalJob(
+    type: string,
+    payload: unknown,
+  ): Promise<Job<PriorityJobData>> {
     return this.addJob(type, payload, JobPriority.CRITICAL);
   }
 
   /**
    * Add a high priority job.
    */
-  async addHighPriorityJob(type: string, payload: unknown): Promise<Job<PriorityJobData>> {
+  async addHighPriorityJob(
+    type: string,
+    payload: unknown,
+  ): Promise<Job<PriorityJobData>> {
     return this.addJob(type, payload, JobPriority.HIGH);
   }
 
   /**
    * Add a normal priority job.
    */
-  async addNormalPriorityJob(type: string, payload: unknown): Promise<Job<PriorityJobData>> {
+  async addNormalPriorityJob(
+    type: string,
+    payload: unknown,
+  ): Promise<Job<PriorityJobData>> {
     return this.addJob(type, payload, JobPriority.NORMAL);
   }
 
   /**
    * Add a low priority job.
    */
-  async addLowPriorityJob(type: string, payload: unknown): Promise<Job<PriorityJobData>> {
+  async addLowPriorityJob(
+    type: string,
+    payload: unknown,
+  ): Promise<Job<PriorityJobData>> {
     return this.addJob(type, payload, JobPriority.LOW);
   }
 
@@ -163,9 +188,27 @@ export class PriorityQueueService {
    * Get aggregated queue stats across all priority tiers.
    */
   async getAllQueueStats(): Promise<{
-    critical: { waiting: number; active: number; completed: number; failed: number; delayed: number };
-    normal: { waiting: number; active: number; completed: number; failed: number; delayed: number };
-    low: { waiting: number; active: number; completed: number; failed: number; delayed: number };
+    critical: {
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+      delayed: number;
+    };
+    normal: {
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+      delayed: number;
+    };
+    low: {
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+      delayed: number;
+    };
   }> {
     const [criticalCounts, normalCounts, lowCounts] = await Promise.all([
       this.criticalQueue.getJobCounts(),
@@ -203,7 +246,17 @@ export class PriorityQueueService {
    * Performs a lightweight check by sampling up to 20 waiting jobs.
    */
   async getAdminQueueStats(): Promise<{
-    tiers: Record<string, { waiting: number; active: number; completed: number; failed: number; delayed: number; avgWaitTimeMs: number }>;
+    tiers: Record<
+      string,
+      {
+        waiting: number;
+        active: number;
+        completed: number;
+        failed: number;
+        delayed: number;
+        avgWaitTimeMs: number;
+      }
+    >;
     totalJobs: number;
   }> {
     const allStats = await this.getAllQueueStats();
@@ -211,13 +264,19 @@ export class PriorityQueueService {
 
     for (const [tier, stats] of Object.entries(allStats)) {
       let avgWaitTimeMs = 0;
-      const queue = tier === 'critical' ? this.criticalQueue : tier === 'low' ? this.lowPriorityQueue : this.queue;
+      const queue =
+        tier === 'critical'
+          ? this.criticalQueue
+          : tier === 'low'
+            ? this.lowPriorityQueue
+            : this.queue;
       try {
         const waitingJobs = await queue.getWaiting(0, 20);
         if (waitingJobs.length > 0) {
           const now = Date.now();
           const totalWait = waitingJobs.reduce((sum, j) => {
-            const created = j.timestamp || j.data?.createdAt?.getTime?.() || now;
+            const created =
+              j.timestamp || j.data?.createdAt?.getTime?.() || now;
             return sum + (now - created);
           }, 0);
           avgWaitTimeMs = Math.round(totalWait / waitingJobs.length);
@@ -239,9 +298,12 @@ export class PriorityQueueService {
   /**
    * Get jobs by priority level.
    */
-  async getJobsByPriority(priority: JobPriority, state: 'waiting' | 'active' | 'completed' | 'failed' = 'waiting'): Promise<Job<PriorityJobData>[]> {
+  async getJobsByPriority(
+    priority: JobPriority,
+    state: 'waiting' | 'active' | 'completed' | 'failed' = 'waiting',
+  ): Promise<Job<PriorityJobData>[]> {
     const jobs = await this.queue.getJobs([state], 0, 100);
-    return jobs.filter(job => job.data.priority === priority);
+    return jobs.filter((job) => job.data.priority === priority);
   }
 
   /**

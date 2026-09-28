@@ -1,3 +1,4 @@
+import { Injectable, NotFoundException, Inject, Logger, OnModuleInit } from '@nestjs/common';
 import {
   Injectable,
   NotFoundException,
@@ -15,6 +16,18 @@ import { createHash } from 'crypto';
 import { FeatureFlag } from './entities/feature-flag.entity';
 import { FlagAssignment } from './entities/flag-assignment.entity';
 import { CreateFlagDto, UpdateFlagDto } from './dto/create-flag.dto';
+import { FlagEvaluationContext, FlagEvaluationResult } from './dto/evaluate-flag.dto';
+
+/** High-risk workflows gated behind a flag, seeded enabled so existing behavior is preserved until an operator dials rollout back. */
+const DEFAULT_HIGH_RISK_FLAGS: Pick<CreateFlagDto, 'name' | 'description' | 'type' | 'enabled'>[] = [
+  { name: 'admin.user-suspension', description: 'Admin-triggered user suspension/unsuspension', type: 'boolean', enabled: true },
+  { name: 'payments.refunds', description: 'Payment refund processing', type: 'boolean', enabled: true },
+];
+
+@Injectable()
+export class FeatureFlagsService implements OnModuleInit {
+  private readonly logger = new Logger(FeatureFlagsService.name);
+
 import { FlagEvaluationResult } from './dto/evaluate-flag.dto';
 import { TenantConfigService } from '../config/tenant-config.service';
 
@@ -75,6 +88,16 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
     return overrides;
   }
 
+  async onModuleInit(): Promise<void> {
+    for (const defaults of DEFAULT_HIGH_RISK_FLAGS) {
+      const existing = await this.flagRepository.findOne({ where: { name: defaults.name } });
+      if (!existing) {
+        await this.flagRepository.save(this.flagRepository.create({ ...defaults, config: {} }));
+        this.logger.log(`Seeded default feature flag "${defaults.name}" (enabled=${defaults.enabled})`);
+      }
+    }
+  }
+
   async createFlag(dto: CreateFlagDto): Promise<FeatureFlag> {
     const flag = this.flagRepository.create(dto);
     await this.flagRepository.save(flag);
@@ -114,6 +137,29 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
     return this.flagRepository.find();
   }
 
+  async evaluateFlag(
+    flagName: string,
+    userId: string,
+    context: FlagEvaluationContext = {},
+  ): Promise<FlagEvaluationResult> {
+    try {
+      return await this.doEvaluateFlag(flagName, userId, context);
+    } catch (error) {
+      // Never let a misconfigured/missing flag or an infra hiccup (DB, cache)
+      // take down the calling workflow — fail safe to disabled and log why.
+      this.logger.warn(
+        `Feature flag "${flagName}" evaluation failed for user ${userId} — falling back to disabled: ${(error as Error).message}`,
+      );
+      return { enabled: false, fallback: true, reason: (error as Error).message };
+    }
+  }
+
+  private async doEvaluateFlag(
+    flagName: string,
+    userId: string,
+    context: FlagEvaluationContext,
+  ): Promise<FlagEvaluationResult> {
+    const cacheKey = `eval:${flagName}:${userId}:${context.tenantId ?? '-'}:${context.environment ?? '-'}`;
   async evaluateFlag(flagName: string, userId: string): Promise<FlagEvaluationResult> {
     // Tenant override takes highest precedence — an explicit per-tenant
     // decision (#943) should win over both the env override and the flag's
@@ -145,6 +191,23 @@ export class FeatureFlagsService implements OnApplicationBootstrap {
     if (!flag.enabled) {
       this.logger.debug(`[FeatureFlag] '${flagName}' is disabled — skipping for userId=${userId}`);
       return { enabled: false };
+    }
+
+    const environment = context.environment ?? process.env.NODE_ENV ?? 'development';
+    if (flag.environments && flag.environments.length > 0 && !flag.environments.includes(environment)) {
+      this.logger.log(
+        `Feature flag "${flagName}" disabled in environment "${environment}" (allowed: ${flag.environments.join(', ')})`,
+      );
+      return { enabled: false, reason: `not enabled for environment "${environment}"` };
+    }
+
+    if (flag.config.tenantAllowList && flag.config.tenantAllowList.length > 0) {
+      if (!context.tenantId || !flag.config.tenantAllowList.includes(context.tenantId)) {
+        this.logger.log(
+          `Feature flag "${flagName}" disabled for tenant "${context.tenantId ?? 'unknown'}" (not in allow list)`,
+        );
+        return { enabled: false, reason: 'tenant not in allow list' };
+      }
     }
 
     let result: FlagEvaluationResult;

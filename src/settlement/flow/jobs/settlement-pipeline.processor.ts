@@ -1,6 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { BullShutdownCoordinator } from '../../../common/bull/bull-shutdown.coordinator';
 import {
   SETTLEMENT_QUEUES,
   SettlementFlowData,
@@ -16,6 +17,14 @@ export interface SettlementPipelineResult {
 @Processor(SETTLEMENT_QUEUES.PIPELINE)
 export class SettlementPipelineProcessor extends WorkerHost {
   private readonly logger = new Logger(SettlementPipelineProcessor.name);
+
+  constructor(private readonly shutdown: BullShutdownCoordinator) {
+    super();
+  }
+
+  onModuleInit(): void {
+    this.shutdown.register(SettlementPipelineProcessor.name, () => this.worker);
+  }
 
   /**
    * The parent job runs only after ALL child jobs complete successfully.

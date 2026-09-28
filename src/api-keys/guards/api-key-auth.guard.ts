@@ -17,6 +17,19 @@ import { API_KEY_SCOPES_METADATA } from '../decorators/require-scopes.decorator'
  */
 export const API_KEY_SCOPES = API_KEY_SCOPES_METADATA;
 
+/**
+ * Supported sources for API key extraction, in priority order:
+ * 1. Authorization header (`Bearer sk_live_xxx`)
+ * 2. X-API-Key header
+ * 3. `api_key` query parameter
+ */
+export const API_KEY_HEADER = 'x-api-key';
+export const API_KEY_QUERY_PARAM = 'api_key';
+export const API_KEY_PREFIX = 'Bearer sk_live_';
+
+/** Metadata key for the API key auth guard */
+export const API_KEY_AUTH_METADATA = 'api_key_auth';
+
 @Injectable()
 export class ApiKeyAuthGuard implements CanActivate {
   private readonly logger = new Logger(ApiKeyAuthGuard.name);
@@ -27,14 +40,19 @@ export class ApiKeyAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const authHeader = request.headers.authorization;
+    const request =
+      context.getType<string>() === 'graphql'
+        ? context.getArgByIndex(2).req
+        : context.switchToHttp().getRequest();
+    const rawKey = this.extractApiKey(request);
 
-    if (!authHeader?.startsWith('Bearer sk_live_')) {
-      throw new UnauthorizedException('Invalid API key format');
+    if (!rawKey) {
+      throw new UnauthorizedException(
+        'API key is required. Provide it via Authorization header (Bearer sk_live_xxx), ' +
+        `X-API-Key header, or ${API_KEY_QUERY_PARAM} query parameter.`,
+      );
     }
 
-    const rawKey = authHeader.substring(7);
     const apiKey = await this.apiKeysService.verify(rawKey);
 
     const allowed = await this.apiKeysService.checkRateLimit(
@@ -47,7 +65,7 @@ export class ApiKeyAuthGuard implements CanActivate {
       throw new ForbiddenException('Rate limit exceeded');
     }
 
-    // Attach the key to the request so ApiKeyScopesGuard can read it.
+    // Attach the key to the request so ApiKeyScopesGuard and downstream can read it.
     request.apiKey = apiKey;
     request.userId = apiKey.userId;
 
@@ -57,5 +75,33 @@ export class ApiKeyAuthGuard implements CanActivate {
     this.logger.debug(`API key ${apiKey.id} authenticated for ${endpoint}`);
 
     return true;
+  }
+
+  /**
+   * Extract the raw API key from the request in priority order:
+   * 1. Authorization header (Bearer sk_live_xxx)
+   * 2. X-API-Key header
+   * 3. `api_key` query parameter
+   */
+  extractApiKey(request: any): string | null {
+    // 1. Check Authorization header
+    const authHeader = request.headers?.authorization;
+    if (authHeader?.startsWith(API_KEY_PREFIX)) {
+      return authHeader.substring(API_KEY_PREFIX.length).trim();
+    }
+
+    // 2. Check X-API-Key header
+    const apiKeyHeader = request.headers?.[API_KEY_HEADER];
+    if (apiKeyHeader && typeof apiKeyHeader === 'string' && apiKeyHeader.length > 0) {
+      return apiKeyHeader.trim();
+    }
+
+    // 3. Check `api_key` query parameter
+    const queryKey = request.query?.[API_KEY_QUERY_PARAM];
+    if (queryKey && typeof queryKey === 'string' && queryKey.length > 0) {
+      return queryKey.trim();
+    }
+
+    return null;
   }
 }
