@@ -266,4 +266,21 @@ describe('WebhooksService', () => {
       ).rejects.toThrow(NotFoundException);
     });
   });
+  describe('secret rotation logging', () => {
+    it('never writes raw secrets to logs', async () => {
+      const logSpy = jest.spyOn((service as any).logger, 'log');
+      const webhook = { id: 'wh-1', userId, secret: 'current-secret-value' };
+      webhookRepo.findOne.mockResolvedValue(webhook);
+      webhookRepo.save.mockImplementation(async (w: unknown) => w);
+      signatureGenerator.generateSecret.mockReturnValue('rotated-secret-value');
+
+      await service.initiateSecretRotation(userId, 'wh-1', 1000);
+      await service.finalizeSecretRotation(userId, 'wh-1');
+
+      const logged = JSON.stringify(logSpy.mock.calls);
+      expect(logSpy).toHaveBeenCalled();
+      expect(logged).not.toContain('current-secret-value');
+      expect(logged).not.toContain('rotated-secret-value');
+    });
+  });
 });

@@ -7,6 +7,8 @@
  *   2. Shannon entropy per character >= MIN_ENTROPY_BITS_PER_CHAR (defaults to 3.5).
  */
 
+import { createHash } from 'crypto';
+
 export const MIN_SECRET_LENGTH = 32;
 export const MIN_ENTROPY_BITS_PER_CHAR = 3.5;
 
@@ -67,10 +69,11 @@ function shannonEntropy(str: string): number {
   return entropy * len;
 }
 
+/**
+ * One-way fingerprint for identifying a secret in logs and notifications.
+ * Derived from a SHA-256 digest so no characters of the secret are exposed.
+ */
 export function hashSecret(secret: string): string {
-  const hash = Array.from(secret)
-    .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 12);
+  const hash = createHash('sha256').update(secret).digest('hex').slice(0, 12);
   return `****${hash}…`;
 }

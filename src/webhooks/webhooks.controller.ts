@@ -18,6 +18,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WebhooksService } from './webhooks.service';
 import { RegisterWebhookDto, UpdateWebhookDto, SUPPORTED_WEBHOOK_EVENTS } from './dto/register-webhook.dto';
+import { toWebhookResponse } from './dto/webhook-response.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('webhooks')
@@ -25,13 +26,15 @@ export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}
 
   @Post()
-  register(@Request() req: { user: { id: string } }, @Body() dto: RegisterWebhookDto) {
-    return this.webhooksService.register(req.user.id, dto);
+  async register(@Request() req: { user: { id: string } }, @Body() dto: RegisterWebhookDto) {
+    const webhook = await this.webhooksService.register(req.user.id, dto);
+    return toWebhookResponse(webhook, { secret: true });
   }
 
   @Get()
-  findAll(@Request() req: { user: { id: string } }) {
-    return this.webhooksService.findAllForUser(req.user.id);
+  async findAll(@Request() req: { user: { id: string } }) {
+    const webhooks = await this.webhooksService.findAllForUser(req.user.id);
+    return webhooks.map((webhook) => toWebhookResponse(webhook));
   }
 
   @Get('events')
@@ -40,20 +43,24 @@ export class WebhooksController {
   }
 
   @Get(':id')
-  findOne(
+  async findOne(
     @Request() req: { user: { id: string } },
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.webhooksService.findOne(req.user.id, id);
+    return toWebhookResponse(
+      await this.webhooksService.findOne(req.user.id, id),
+    );
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Request() req: { user: { id: string } },
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateWebhookDto,
   ) {
-    return this.webhooksService.update(req.user.id, id, dto);
+    return toWebhookResponse(
+      await this.webhooksService.update(req.user.id, id, dto),
+    );
   }
 
   @Delete(':id')
@@ -96,20 +103,27 @@ export class WebhooksController {
 
   @Post(':id/secret-rotation/initiate')
   @HttpCode(HttpStatus.OK)
-  initiateSecretRotation(
+  async initiateSecretRotation(
     @Request() req: { user: { id: string } },
     @Param('id', ParseUUIDPipe) id: string,
     @Query('rotationWindowMs', new DefaultValuePipe(3600000), ParseIntPipe) rotationWindowMs: number,
   ) {
-    return this.webhooksService.initiateSecretRotation(req.user.id, id, rotationWindowMs);
+    const webhook = await this.webhooksService.initiateSecretRotation(
+      req.user.id,
+      id,
+      rotationWindowMs,
+    );
+    return toWebhookResponse(webhook, { nextSecret: true });
   }
 
   @Post(':id/secret-rotation/finalize')
   @HttpCode(HttpStatus.OK)
-  finalizeSecretRotation(
+  async finalizeSecretRotation(
     @Request() req: { user: { id: string } },
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.webhooksService.finalizeSecretRotation(req.user.id, id);
+    return toWebhookResponse(
+      await this.webhooksService.finalizeSecretRotation(req.user.id, id),
+    );
   }
 }
