@@ -169,9 +169,20 @@ export class CacheService {
 
     /**
      * Stampede-safe getOrSet: coalesces concurrent fetches for the same key
-     * into a single DB/upstream call.
+     * into a single DB/upstream call. Loader failures are never cached.
      */
     private readonly inflightRequests = new Map<string, Promise<any>>();
+    private readonly stampedeMetrics = {
+        loads: 0,
+        coalesced: 0,
+        staleServed: 0,
+        loaderFailures: 0,
+        lockContention: 0,
+    };
+
+    getStampedeMetrics(): Readonly<typeof this.stampedeMetrics> {
+        return { ...this.stampedeMetrics };
+    }
 
     async getOrSetWithLock<T>(
         key: string,
@@ -182,18 +193,104 @@ export class CacheService {
         if (cached !== undefined && cached !== null) {
             return cached;
         }
+        return this.coalesce(key, async () => {
+            const value = await fetchFn();
+            if (value !== undefined && value !== null) {
+                await this.set(key, value, ttlType);
+            }
+            return value;
+        });
+    }
 
-        if (this.inflightRequests.has(key)) {
-            return this.inflightRequests.get(key) as Promise<T>;
+    /**
+     * Stale-while-revalidate read. Values are stored with a soft expiry
+     * (`ttlType`) and kept for an extra `staleTtlSeconds`. A stale hit is served
+     * immediately while a single background refresh runs; a failed refresh keeps
+     * the stale value rather than poisoning the cache. A short-lived distributed
+     * lock limits refreshes to one instance; if the lock holder dies the lock
+     * expires after `lockTtlMs`.
+     */
+    async getOrSetStaleWhileRevalidate<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType = 'default',
+        options: { staleTtlSeconds?: number; lockTtlMs?: number } = {},
+    ): Promise<T> {
+        const staleTtl = options.staleTtlSeconds ?? this.ttlConfig[ttlType];
+        const lockTtlMs = options.lockTtlMs ?? 5000;
+        const entry = await this.get<{ v: T; freshUntil: number }>(key);
+
+        if (entry && entry.v !== undefined && entry.v !== null) {
+            if (entry.freshUntil > Date.now()) return entry.v;
+            this.stampedeMetrics.staleServed++;
+            void this.refreshWithLock(key, fetchFn, ttlType, staleTtl, lockTtlMs).catch(() => undefined);
+            return entry.v;
         }
 
-        const promise = fetchFn().then(async (value) => {
-            await this.set(key, value, ttlType);
-            return value;
-        }).finally(() => {
-            this.inflightRequests.delete(key);
-        });
+        return this.coalesce(key, () => this.loadEnvelope(key, fetchFn, ttlType, staleTtl));
+    }
 
+    private async refreshWithLock<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType,
+        staleTtl: number,
+        lockTtlMs: number,
+    ): Promise<void> {
+        if (this.inflightRequests.has(key)) {
+            this.stampedeMetrics.coalesced++;
+            return;
+        }
+        const lockKey = `${key}:lock`;
+        const token = `${process.pid}:${Math.random().toString(36).slice(2)}`;
+        if (await this.get<string>(lockKey)) {
+            this.stampedeMetrics.lockContention++;
+            return;
+        }
+        await this.cacheManager.set(lockKey, token, lockTtlMs);
+        try {
+            await this.coalesce(key, () => this.loadEnvelope(key, fetchFn, ttlType, staleTtl));
+        } finally {
+            // Only release the lock we own; an expired lock may belong to another instance.
+            if ((await this.get<string>(lockKey)) === token) {
+                await this.cacheManager.del(lockKey);
+            }
+        }
+    }
+
+    private async loadEnvelope<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttlType: CacheTTLType,
+        staleTtl: number,
+    ): Promise<T> {
+        const value = await fetchFn();
+        if (value !== undefined && value !== null) {
+            const freshTtl = this.ttlConfig[ttlType];
+            await this.cacheManager.set(
+                key,
+                { v: value, freshUntil: Date.now() + freshTtl * 1000 },
+                (freshTtl + staleTtl) * 1000,
+            );
+        }
+        return value;
+    }
+
+    /** Ensure only one loader per key runs in this process; failures evict the in-flight entry. */
+    private coalesce<T>(key: string, loader: () => Promise<T>): Promise<T> {
+        const existing = this.inflightRequests.get(key);
+        if (existing) {
+            this.stampedeMetrics.coalesced++;
+            return existing as Promise<T>;
+        }
+        this.stampedeMetrics.loads++;
+        const promise = loader()
+            .catch((err) => {
+                this.stampedeMetrics.loaderFailures++;
+                this.logger.warn(`Cache loader failed for ${key}: ${(err as Error)?.message}`);
+                throw err;
+            })
+            .finally(() => this.inflightRequests.delete(key));
         this.inflightRequests.set(key, promise);
         return promise;
     }
