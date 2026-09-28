@@ -24,10 +24,14 @@ export class StellarExpertPriceProvider implements PriceOracleProvider {
       const { data } = await this.circuitBreaker.execute(
         StellarExpertPriceProvider.CIRCUIT_NAME,
         () =>
-          this.httpRetry.get(`${this.baseUrl}/asset/${base}/price`, {
-            params: { quote: counter },
-            timeout: REQUEST_TIMEOUT_MS,
-          }),
+          this.httpRetry.get(
+            `${this.baseUrl}/asset/${base}/price`,
+            {
+              params: { quote: counter },
+              timeout: REQUEST_TIMEOUT_MS,
+            },
+            { provider: 'stellar-expert' },
+          ),
         { failureThreshold: 5, recoveryTimeMs: 30_000 },
       );
 
