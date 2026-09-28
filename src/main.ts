@@ -160,30 +160,6 @@ async function bootstrap() {
     new I18nValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }),
-  );
+     
 
-  // Redis Adapter for WebSockets
-  const redisIoAdapter = new RedisIoAdapter(app, configService);
-  await redisIoAdapter.connectToRedis();
-  app.useWebSocketAdapter(redisIoAdapter);
-
-  // Instance Identification in Logs
-  const instanceCoordinator = app.get(InstanceCoordinatorService);
-  logger.info(`Application started on instance: ${instanceCoordinator.getInstanceId()}`);
-
-  // Global filter — single RFC 7807 Problem Details filter for every
-  // validation, domain, authentication and unexpected error (#1056).
-  const errorClassifier = app.get(ErrorClassificationService);
-  app.useGlobalFilters(
-    new ProblemDetailsFilter(logger, sentryService, errorClassifier, configService),
-  );
-
-  // Global interceptors
-  app.useGlobalInter
-
-/* … truncated 4486 chars — edit only what you need near the top … */
+/* … truncated 921 chars — edit only what you need near the top … */
