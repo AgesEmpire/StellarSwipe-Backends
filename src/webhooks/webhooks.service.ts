@@ -6,8 +6,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { createHash, randomBytes } from 'crypto';
 import { Webhook, SUPPORTED_WEBHOOK_EVENTS } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import {
@@ -18,6 +19,10 @@ import { WebhookPayload } from './dto/webhook-event.dto';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
 import { SsrfValidationPipe } from './pipes/ssrf-validation.pipe';
+import {
+  WEBHOOK_VERIFICATION_EVENT,
+  WEBHOOK_VERIFICATION_TOKEN_TTL_MS,
+} from './jobs/webhook-delivery.constants';
 
 const DEFAULT_MAX_DELIVERY_ATTEMPTS = 5;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
@@ -67,17 +72,19 @@ export class WebhooksService {
 
     const secret = this.signatureGenerator.generateSecret();
 
+    // New endpoints stay inactive until the destination proves ownership.
     const webhook = this.webhookRepo.create({
       userId,
       url: dto.url,
       events: dto.events as string[],
       secret,
-      active: true,
+      active: false,
       consecutiveFailures: 0,
       description: dto.description,
     });
 
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    return this.issueEndpointVerification(saved, dto.url);
   }
 
   async findAllForUser(userId: string): Promise<Webhook[]> {
@@ -105,10 +112,15 @@ export class WebhooksService {
       this.validateEvents(dto.events as string[]);
     }
 
-    if (dto.url !== undefined) {
-      await this.ssrfPipe.transform(dto.url);
-      webhook.url = dto.url;
+    if (dto.active && !webhook.urlVerifiedAt) {
+      throw new BadRequestException(
+        'Webhook endpoint must be verified before it can be activated',
+      );
     }
+
+    const urlChanged = dto.url !== undefined && dto.url !== webhook.url;
+    if (urlChanged) await this.ssrfPipe.transform(dto.url);
+
     if (dto.events !== undefined) webhook.events = dto.events as string[];
     if (dto.active !== undefined) {
       webhook.active = dto.active;
@@ -116,7 +128,104 @@ export class WebhooksService {
     }
     if (dto.description !== undefined) webhook.description = dto.description;
 
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    // A changed URL only replaces the current one once it has been verified.
+    return urlChanged
+      ? this.issueEndpointVerification(saved, dto.url as string)
+      : saved;
+  }
+
+  async resendEndpointVerification(
+    userId: string,
+    id: string,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, id);
+    if (!webhook.pendingUrl) {
+      throw new BadRequestException('No endpoint verification is pending');
+    }
+    return this.issueEndpointVerification(webhook, webhook.pendingUrl);
+  }
+
+  /**
+   * Confirms ownership of the pending destination using the token delivered
+   * to it. Tokens are bound to the webhook and URL, expire, and are consumed
+   * atomically so they cannot be replayed.
+   */
+  async verifyEndpoint(
+    userId: string,
+    id: string,
+    token: string,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, id);
+    if (!webhook.pendingUrl || !webhook.verificationTokenExpiresAt) {
+      throw new BadRequestException('No endpoint verification is pending');
+    }
+    if (webhook.verificationTokenExpiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Verification token has expired');
+    }
+
+    const result = await this.webhookRepo.update(
+      {
+        id: webhook.id,
+        pendingUrl: webhook.pendingUrl,
+        verificationTokenHash: this.hashVerificationToken(
+          webhook.id,
+          webhook.pendingUrl,
+          token,
+        ),
+        verificationTokenExpiresAt: MoreThan(new Date()),
+      },
+      {
+        url: webhook.pendingUrl,
+        pendingUrl: null,
+        verificationTokenHash: null,
+        verificationTokenExpiresAt: null,
+        urlVerifiedAt: new Date(),
+        active: true,
+        consecutiveFailures: 0,
+      },
+    );
+    if (!result.affected) {
+      throw new BadRequestException('Invalid verification token');
+    }
+
+    this.logger.log(`Verified endpoint for webhook ${webhook.id}`);
+    return this.findOne(userId, id);
+  }
+
+  private async issueEndpointVerification(
+    webhook: Webhook,
+    url: string,
+  ): Promise<Webhook> {
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + WEBHOOK_VERIFICATION_TOKEN_TTL_MS);
+
+    await this.webhookRepo.update(webhook.id, {
+      pendingUrl: url,
+      verificationTokenHash: this.hashVerificationToken(webhook.id, url, token),
+      verificationTokenExpiresAt: expiresAt,
+    });
+    webhook.pendingUrl = url;
+    webhook.verificationTokenExpiresAt = expiresAt;
+
+    await this.webhookSender.sendVerificationChallenge(webhook, url, {
+      event: WEBHOOK_VERIFICATION_EVENT,
+      webhookId: webhook.id,
+      token,
+      expiresAt: expiresAt.toISOString(),
+    });
+
+    return webhook;
+  }
+
+  private hashVerificationToken(
+    webhookId: string,
+    url: string,
+    token: string,
+  ): string {
+    return createHash('sha256')
+      .update(`${webhookId}:${url}:${token}`)
+      .digest('hex');
   }
 
   async remove(userId: string, id: string): Promise<void> {
