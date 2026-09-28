@@ -354,6 +354,7 @@ export class KycService {
       );
       this.eventEmitter.emit(KYC_EVENTS.REJECTED, {
         userId: verification.userId,
+        verificationId: verification.id,
         level: verification.level,
         reason: updates.rejectionReason,
       });

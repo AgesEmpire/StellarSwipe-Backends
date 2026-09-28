@@ -1,10 +1,44 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { DataSource } from 'typeorm';
 import { TradeExecutedEvent, TradeFailedEvent, TradeCancelledEvent } from '../events/trade.events';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationChannel, NotificationType } from '../notifications/entities/notification.entity';
+import { Trade, TradeStatus } from '../trades/entities/trade.entity';
+
+/** Safe, user-facing messages keyed by known failure reason codes. */
+const SAFE_FAILURE_REASONS: Record<string, string> = {
+  INSUFFICIENT_BALANCE: 'Insufficient balance to complete the trade.',
+  SLIPPAGE_EXCEEDED: 'The price moved beyond your slippage tolerance.',
+  NO_LIQUIDITY: 'Not enough market liquidity to fill the order.',
+  TIMEOUT: 'The network did not confirm the trade in time.',
+  RISK_LIMIT: 'The trade exceeds your configured risk limits.',
+};
+const DEFAULT_FAILURE_MESSAGE = 'Your trade could not be completed. Please try again later.';
+
+/** Statuses from which reserved funds can no longer be released. */
+const NON_RELEASABLE_STATUSES = new Set<TradeStatus>([
+  TradeStatus.SETTLED,
+  TradeStatus.COMPLETED,
+  TradeStatus.CONFIRMED,
+]);
+
+const MAX_DEDUPE_KEYS = 10_000;
+
+export function toSafeFailureMessage(reason?: string): string {
+  const code = (reason ?? '').trim().toUpperCase();
+  return SAFE_FAILURE_REASONS[code] ?? DEFAULT_FAILURE_MESSAGE;
+}
 
 @Injectable()
 export class TradeEventListener {
   private readonly logger = new Logger(TradeEventListener.name);
+  private readonly notifiedFailures = new Set<string>();
+
+  constructor(
+    @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly dataSource?: DataSource,
+  ) {}
 
   /**
    * Handle trade executed event
@@ -54,10 +88,10 @@ export class TradeEventListener {
    */
   @OnEvent('trade.failed', { async: true })
   async handleTradeFailed(event: TradeFailedEvent): Promise<void> {
+    // Raw reason may contain provider payloads/credentials - never log it.
     this.logger.warn(`Handling trade failed event: ${event.tradeId}`, {
       tradeId: event.tradeId,
       userId: event.userId,
-      reason: event.reason,
       correlationId: event.correlationId,
     });
 
@@ -131,10 +165,36 @@ export class TradeEventListener {
     // await this.leaderboardService.updateAfterTrade(event);
   }
 
-  private async notifyUserOfFailure(event: TradeFailedEvent): Promise<void> {
-    this.logger.debug(`Notifying user: ${event.userId} about trade failure`);
-    // TODO: Implement failure notification
-    // await this.notificationService.sendTradeFailureNotification(event);
+  async notifyUserOfFailure(event: TradeFailedEvent): Promise<void> {
+    if (!this.notificationService) return;
+    // Retries of the same failure must not produce duplicate notifications.
+    const key = `${event.tradeId}:${event.correlationId ?? ''}`;
+    if (this.notifiedFailures.has(key)) {
+      this.logger.debug(`Skipping duplicate failure notification for trade ${event.tradeId}`);
+      return;
+    }
+    this.notifiedFailures.add(key);
+    if (this.notifiedFailures.size > MAX_DEDUPE_KEYS) {
+      this.notifiedFailures.delete(this.notifiedFailures.values().next().value as string);
+    }
+
+    try {
+      await this.notificationService.send({
+        userId: event.userId,
+        type: NotificationType.TRADE_FAILED,
+        title: 'Trade failed',
+        message: toSafeFailureMessage(event.reason),
+        channel: NotificationChannel.IN_APP,
+        metadata: { tradeId: event.tradeId, correlationId: event.correlationId },
+      });
+    } catch (error) {
+      this.notifiedFailures.delete(key); // allow a later retry to deliver
+      this.logger.error(`Failure notification not sent for trade ${event.tradeId}`, {
+        correlationId: event.correlationId,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
   }
 
   private async logTradeFailure(event: TradeFailedEvent): Promise<void> {
@@ -155,9 +215,47 @@ export class TradeEventListener {
     // await this.notificationService.sendTradeCancellationNotification(event);
   }
 
-  private async releaseReservedFunds(event: TradeCancelledEvent): Promise<void> {
-    this.logger.debug(`Releasing reserved funds for trade: ${event.tradeId}`);
-    // TODO: Implement fund release logic
-    // await this.walletService.releaseReservation(event.tradeId);
+  /**
+   * Releases the reservation for a cancelled trade exactly once.
+   * Runs in a transaction with a row lock so concurrent/retried or
+   * out-of-order events cannot double-release; any error rolls back.
+   * Returns true only when funds were actually released.
+   */
+  async releaseReservedFunds(event: TradeCancelledEvent): Promise<boolean> {
+    if (!this.dataSource) return false;
+
+    return this.dataSource.transaction(async (manager) => {
+      const trade = await manager.getRepository(Trade).findOne({
+        where: { id: event.tradeId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!trade) {
+        this.logger.warn(`Cannot release funds: trade ${event.tradeId} not found`);
+        return false;
+      }
+      if (trade.metadata?.fundsReleasedAt) {
+        this.logger.debug(`Funds already released for trade ${trade.id}`);
+        return false;
+      }
+      if (NON_RELEASABLE_STATUSES.has(trade.status)) {
+        this.logger.warn(`Trade ${trade.id} is ${trade.status}; reservation not released`);
+        return false;
+      }
+
+      trade.status = TradeStatus.CANCELLED;
+      trade.metadata = {
+        ...(trade.metadata ?? {}),
+        fundsReleasedAt: new Date().toISOString(),
+        releasedAmount: trade.totalValue,
+        releaseCorrelationId: event.correlationId,
+      };
+      await manager.getRepository(Trade).save(trade);
+
+      this.logger.log(`Released reserved funds for trade ${trade.id}`, {
+        correlationId: event.correlationId,
+      });
+      return true;
+    });
   }
 }
