@@ -31,6 +31,8 @@ export interface ValidatedEnvironment {
   DATABASE_READ_TIMEOUT_MS: number;
   DATABASE_WRITE_TIMEOUT_MS: number;
   BULL_SHUTDOWN_GRACE_PERIOD_MS: number;
+  QUEUE_CONCURRENCY_LATENCY_SENSITIVE: number;
+  QUEUE_CONCURRENCY_BACKGROUND: number;
   DATABASE_STATEMENT_TIMEOUT: number;
   DATABASE_MAX_QUERY_TIME: number;
   REDIS_HOST: string;
@@ -109,6 +111,16 @@ export const configSchema = Joi.object<ValidatedEnvironment>({
     .min(100)
     .default(2000),
   BULL_SHUTDOWN_GRACE_PERIOD_MS: Joi.number().integer().min(0).max(900000).default(30000),
+  QUEUE_CONCURRENCY_LATENCY_SENSITIVE: Joi.number()
+    .integer()
+    .min(1)
+    .max(1000)
+    .default(10),
+  QUEUE_CONCURRENCY_BACKGROUND: Joi.number()
+    .integer()
+    .min(1)
+    .max(1000)
+    .default(2),
   DATABASE_STATEMENT_TIMEOUT: Joi.number().integer().min(1000).default(10000),
   DATABASE_MAX_QUERY_TIME: Joi.number().integer().min(1).default(10000),
 
