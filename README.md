@@ -561,3 +561,6 @@ MIT
 
 <!-- handsoff-issue-1162 -->
 - #1162: Add dead-letter handling for failed background jobs
+
+<!-- handsoff-issue-1167 -->
+- #1167: Add optimistic concurrency control for mutable resources
