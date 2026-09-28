@@ -63,4 +63,68 @@ export const configSchema = Joi.object({
 
   // Encryption (at-rest field encryption)
   ENCRYPTION_KEY: Joi.string().min(32).required(),
-});
+})
+  // Cross-field constraints
+  .when(Joi.object({ NODE_ENV: Joi.valid('mainnet') }).unknown(), {
+    then: Joi.object({
+      STELLAR_NETWORK: Joi.valid('public').required().messages({
+        'any.only': 'STELLAR_NETWORK must be "public" when NODE_ENV is "mainnet"',
+      }),
+      SENTRY_DSN: Joi.string().uri().required().messages({
+        'any.required': 'SENTRY_DSN is required when NODE_ENV is "mainnet"',
+        'string.empty': 'SENTRY_DSN is required when NODE_ENV is "mainnet"',
+      }),
+    }),
+  })
+  .custom((value, helpers) => {
+    if (value.JWT_SECRET && value.JWT_SECRET === value.ENCRYPTION_KEY) {
+      return helpers.message({ custom: 'ENCRYPTION_KEY must differ from JWT_SECRET' });
+    }
+    return value;
+  });
+
+export interface EnvironmentVariables {
+  NODE_ENV: 'development' | 'testnet' | 'mainnet';
+  PORT: number;
+  HOST: string;
+  API_PREFIX: string;
+  API_VERSION: string;
+  LOG_LEVEL: 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly';
+  CORS_ORIGIN: string;
+  CORS_CREDENTIALS: boolean;
+  DATABASE_HOST: string;
+  DATABASE_PORT: number;
+  DATABASE_USER: string;
+  DATABASE_PASSWORD: string;
+  DATABASE_NAME: string;
+  REDIS_HOST: string;
+  REDIS_PORT: number;
+  REDIS_DB: number;
+  STELLAR_NETWORK: 'testnet' | 'public';
+  STELLAR_HORIZON_URL: string;
+  STELLAR_SOROBAN_RPC_URL: string;
+  STELLAR_NETWORK_PASSPHRASE: string;
+  JWT_SECRET: string;
+  XAI_API_KEY: string;
+  ENCRYPTION_KEY: string;
+  [key: string]: unknown;
+}
+
+/**
+ * ConfigModule `validate` hook: returns typed, defaulted values or throws a
+ * single error listing every invalid field so deployments fail before serving traffic.
+ */
+export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {
+  const { error, value } = configSchema.validate(config, {
+    allowUnknown: true,
+    abortEarly: false,
+    convert: true,
+  });
+  if (error) {
+    const fields = error.details
+      .map((d) => `  - ${d.path.join('.') || '(root)'}: ${d.message}`)
+      .join('\n');
+    throw new Error(`Invalid runtime configuration:\n${fields}`);
+  }
+  return value as EnvironmentVariables;
+}

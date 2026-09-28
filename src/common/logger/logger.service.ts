@@ -2,6 +2,7 @@ import { Injectable, LoggerService as NestLoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
+import { getCorrelationId } from '../correlation';
 
 /**
  * Winston-based logger service with structured logging
@@ -102,6 +103,12 @@ export class LoggerService implements NestLoggerService {
 
     this.logger = winston.createLogger({
       level: logLevel,
+      // Stamp every log line with the active request's correlation ID
+      format: winston.format((info) => {
+        const correlationId = getCorrelationId();
+        if (correlationId && !info.correlationId) info.correlationId = correlationId;
+        return info;
+      })(),
       transports,
       exitOnError: false,
     });

@@ -6,6 +6,8 @@ import { I18nValidationExceptionFilter, I18nValidationPipe } from 'nestjs-i18n';
 import * as compression from 'compression';
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters";
+import { correlationIdMiddleware } from './common/correlation';
+import { IdempotencyInterceptor } from './common/idempotency';
 import {
   LoggingInterceptor,
   TransformInterceptor,
@@ -63,6 +65,9 @@ async function bootstrap() {
   // emitted on any handler decorated with it, without touching auth logic.
   app.useGlobalInterceptors(new DeprecationInterceptor(app.get(Reflector)));
 
+  // Correlation ID must run first so every downstream log/response carries it
+  app.use(correlationIdMiddleware);
+
   // Enable CORS
   app.enableCors({
     origin: corsOrigin,
@@ -113,6 +118,7 @@ async function bootstrap() {
 
   // Global interceptors
   app.useGlobalInterceptors(new DeadlockRetryInterceptor());
+  app.useGlobalInterceptors(new IdempotencyInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
   app.useGlobalInterceptors(new LoggingInterceptor(logger));
   app.useGlobalInterceptors(new TransformInterceptor());

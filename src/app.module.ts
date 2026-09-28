@@ -13,7 +13,7 @@ import { appConfig, sentryConfig } from './config/app.config';
 import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
 import configuration from './config/configuration';
-import { configSchema } from './config/schemas/config.schema';
+import { validateEnv } from './config/schemas/config.schema';
 import { StellarConfigService } from './config/stellar.service';
 
 import { LoggerModule } from './common/logger';
@@ -88,11 +88,7 @@ import { HttpRetryModule } from './http/http.module';
       ],
       envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
       cache: true,
-      validationSchema: configSchema,
-      validationOptions: {
-        allowUnknown: true,
-        abortEarly: false,
-      },
+      validate: validateEnv,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
