@@ -32,6 +32,7 @@ describe('WebhooksService', () => {
       find: jest.fn(),
       findOne: jest.fn(),
       remove: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       findAndCount: jest.fn(),
       createQueryBuilder: jest.fn(),
     };
@@ -59,6 +60,7 @@ describe('WebhooksService', () => {
     webhookSender = {
       deliverWebhook: jest.fn().mockResolvedValue({ id: 'replay-delivery-1' }),
       retryDelivery: jest.fn().mockResolvedValue(undefined),
+      sendVerificationChallenge: jest.fn().mockResolvedValue(true),
     } as any;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -351,6 +353,110 @@ describe('WebhooksService', () => {
       webhookRepo.findOne.mockResolvedValue({ id: 'wh-1', userId: 'other' });
       await expect(service.getReplayAudits(userId, 'wh-1')).rejects.toThrow(
         ForbiddenException,
+      );
+    });
+  });
+  describe('event filters', () => {
+    const queryBuilderReturning = (webhooks: unknown[]) => {
+      const qb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(webhooks),
+      };
+      webhookRepo.createQueryBuilder.mockReturnValue(qb);
+      return qb;
+    };
+
+    it('stores a de-duplicated event filter on registration', async () => {
+      webhookRepo.create.mockImplementation((w: unknown) => w);
+      webhookRepo.save.mockImplementation(async (w: unknown) => w);
+
+      const result = await service.register(userId, {
+        url: 'https://example.com/hook',
+        events: ['trade.executed', 'trade.executed', 'signal.created'],
+      } as any);
+
+      expect(result.events).toEqual(['trade.executed', 'signal.created']);
+    });
+
+    it('replaces the filter on update', async () => {
+      webhookRepo.findOne.mockResolvedValue({
+        id: 'wh-1',
+        userId,
+        events: ['trade.executed'],
+      });
+      webhookRepo.save.mockImplementation(async (w: unknown) => w);
+
+      const result = await service.update(userId, 'wh-1', {
+        events: ['payout.completed'],
+      } as any);
+
+      expect(result.events).toEqual(['payout.completed']);
+    });
+
+    it('rejects filter updates with events outside the registry', async () => {
+      webhookRepo.findOne.mockResolvedValue({
+        id: 'wh-1',
+        userId,
+        events: ['trade.executed'],
+      });
+
+      await expect(
+        service.update(userId, 'wh-1', {
+          events: ['trade.executed', 'not.an.event'],
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(webhookRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('does not queue events excluded by the filter', async () => {
+      queryBuilderReturning([
+        { id: 'wh-1', events: ['trade.executed'], active: true },
+        { id: 'wh-2', events: ['signal.created'], active: true },
+      ]);
+
+      await service.dispatchEvent('trade.executed', {});
+
+      expect(webhookSender.deliverWebhook).toHaveBeenCalledTimes(1);
+      expect(webhookSender.deliverWebhook).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'wh-1' }),
+        expect.objectContaining({ event: 'trade.executed' }),
+      );
+    });
+
+    it('delivers mandatory security events regardless of the filter', async () => {
+      const qb = queryBuilderReturning([
+        { id: 'wh-1', events: ['trade.executed'], active: true },
+      ]);
+
+      await service.dispatchEvent('webhook.secret.rotated', {});
+
+      expect(qb.andWhere).not.toHaveBeenCalled();
+      expect(webhookSender.deliverWebhook).toHaveBeenCalledTimes(1);
+    });
+
+    it('notifies the webhook of secret rotation even when filtered out', async () => {
+      const webhook = {
+        id: 'wh-1',
+        userId,
+        events: ['trade.executed'],
+        active: true,
+      };
+      webhookRepo.findOne.mockResolvedValue(webhook);
+      webhookRepo.save.mockImplementation(async (w: unknown) => w);
+
+      await service.initiateSecretRotation(userId, 'wh-1', 1000);
+      await service.finalizeSecretRotation(userId, 'wh-1');
+
+      expect(webhookSender.deliverWebhook).toHaveBeenNthCalledWith(
+        1,
+        webhook,
+        expect.objectContaining({ event: 'webhook.secret.rotation_started' }),
+      );
+      expect(webhookSender.deliverWebhook).toHaveBeenNthCalledWith(
+        2,
+        webhook,
+        expect.objectContaining({ event: 'webhook.secret.rotated' }),
       );
     });
   });

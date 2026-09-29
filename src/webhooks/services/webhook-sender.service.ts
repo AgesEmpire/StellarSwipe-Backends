@@ -22,11 +22,19 @@ import {
   WEBHOOK_PERMANENTLY_FAILED_EVENT,
   WEBHOOK_REQUEST_TIMEOUT_MS,
   WEBHOOK_RESPONSE_BODY_MAX_CHARS,
+  WEBHOOK_VERIFICATION_EVENT,
   WebhookDeliveryJobData,
   WebhookFailureKind,
   calculateWebhookBackoffDelay,
   classifyWebhookFailure,
 } from '../jobs/webhook-delivery.constants';
+
+export interface WebhookVerificationChallenge {
+  event: typeof WEBHOOK_VERIFICATION_EVENT;
+  webhookId: string;
+  token: string;
+  expiresAt: string;
+}
 
 @Injectable()
 export class WebhookSenderService {
@@ -60,6 +68,41 @@ export class WebhookSenderService {
 
     await this.enqueueDelivery(saved.id, false);
     return saved;
+  }
+
+  /**
+   * Sends an ownership-verification challenge to a destination that has not
+   * been verified yet. Returns false instead of throwing on delivery failure so
+   * the caller can let the owner request a new challenge.
+   */
+  async sendVerificationChallenge(
+    webhook: Webhook,
+    url: string,
+    challenge: WebhookVerificationChallenge,
+  ): Promise<boolean> {
+    const signature = this.signatureGenerator.signWithWebhookSecret(
+      challenge,
+      webhook,
+    );
+
+    try {
+      await axios.post(url, challenge, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-StellarSwipe-Signature': `sha256=${signature}`,
+          'X-StellarSwipe-Event': WEBHOOK_VERIFICATION_EVENT,
+        },
+        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        transitional: { clarifyTimeoutError: true },
+        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
+      });
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Webhook verification challenge failed: webhook=${webhook.id} url=${url} error=${(err as Error).message}`,
+      );
+      return false;
+    }
   }
 
   async retryDelivery(deliveryId: string): Promise<void> {

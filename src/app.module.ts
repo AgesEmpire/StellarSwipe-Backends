@@ -17,6 +17,8 @@ import { xaiConfig } from './config/xai.config';
 import { appConfig, sentryConfig } from './config/app.config';
 import { jwtConfig } from './config/jwt.config';
 import { redisCacheConfig } from './config/redis.config';
+import configuration from './config/configuration';
+import { validateEnv } from './config/schemas/config.schema';
 import { configuration } from './config/configuration';
 import { nplus1DetectionConfig } from './config/nplus1.config';
 import { queueRetryConfig } from './queue/queue-retry.config';
@@ -74,6 +76,8 @@ import { AdminAnalyticsModule } from './admin/analytics/admin-analytics.module';
 import { AdminModule } from './admin/admin.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { OutboxModule } from './outbox/outbox.module';
+import { SecurityAuditModule } from './audit-log/security/security-audit.module';
 import { DrModule } from './disaster-recovery/dr.module';
 import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module';
 import { DocumentationModule } from './documentation/documentation.module';
@@ -129,6 +133,9 @@ import { SearchModule } from './search/search.module';
         // Suspicious IP ranges: aggressive bucket keyed by IP.
         { name: 'suspicious', ttl: 60_000, limit: 10 },
       ],
+      envFilePath: [`.env.${process.env.NODE_ENV || 'development'}`, '.env'],
+      cache: true,
+      validate: validateEnv,
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -269,6 +276,8 @@ import { SearchModule } from './search/search.module';
     AdminModule,
     MonitoringModule,
     WebhooksModule,
+    OutboxModule,
+    SecurityAuditModule,
     DrModule,
     MarketIntelligenceModule,
     DocumentationModule,

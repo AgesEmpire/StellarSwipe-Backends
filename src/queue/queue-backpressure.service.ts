@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { JobPriority, PriorityQueueService } from './priority-queue.service';
+import {
+  JobPriority,
+  PRIORITY_JOB_SCHEMA,
+  PriorityQueueService,
+} from './priority-queue.service';
 
 /**
  * #issue3 — Backpressure + starvation prevention for the priority queue tiers.
@@ -87,9 +91,13 @@ export class QueueBackpressureService {
       if (age < this.starvationAgeMs) continue;
 
       try {
+        // Upgrade first so jobs from older app versions are promoted in the
+        // current schema; unsupported versions are left for the worker to
+        // dead-letter.
+        const data = PRIORITY_JOB_SCHEMA.upgrade(job.data);
         await this.priorityQueueService.addJob(
-          job.data.type,
-          job.data.payload,
+          data.type,
+          data.payload,
           JobPriority.HIGH,
         );
         await job.remove();

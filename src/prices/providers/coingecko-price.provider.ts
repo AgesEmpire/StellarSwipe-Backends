@@ -37,13 +37,17 @@ export class CoinGeckoPriceProvider implements PriceOracleProvider {
       const { data } = await this.circuitBreaker.execute(
         CoinGeckoPriceProvider.CIRCUIT_NAME,
         () =>
-          this.httpRetry.get(`${this.baseUrl}/simple/price`, {
-            params: {
-              ids: baseId,
-              vs_currencies: counterId,
+          this.httpRetry.get(
+            `${this.baseUrl}/simple/price`,
+            {
+              params: {
+                ids: baseId,
+                vs_currencies: counterId,
+              },
+              timeout: REQUEST_TIMEOUT_MS,
             },
-            timeout: REQUEST_TIMEOUT_MS,
-          }),
+            { provider: 'coingecko' },
+          ),
         { failureThreshold: 5, recoveryTimeMs: 30_000 },
       );
 
