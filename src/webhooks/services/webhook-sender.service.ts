@@ -55,7 +55,7 @@ export class WebhookSenderService {
   async deliverWebhook(
     webhook: Webhook,
     payload: WebhookPayload,
-  ): Promise<void> {
+  ): Promise<WebhookDelivery> {
     const delivery = this.deliveryRepo.create({
       webhookId: webhook.id,
       eventType: payload.event,
@@ -67,6 +67,7 @@ export class WebhookSenderService {
     const saved = await this.deliveryRepo.save(delivery);
 
     await this.enqueueDelivery(saved.id, false);
+    return saved;
   }
 
   /**
