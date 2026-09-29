@@ -332,6 +332,17 @@ Async tasks are processed via **BullMQ/Bull** backed by Redis. Three priority ti
 | `dead-letter` | — | Failed jobs after all retries exhausted |
 | `notifications` | 100 (NORMAL) | Async notification delivery |
 
+### Worker Concurrency by Category
+
+`PriorityQueueWorker` consumes the priority tiers with a separate concurrency ceiling per workload category, so saturating one category never takes worker slots from the other:
+
+| Category | Queues | Env var | Default |
+|---|---|---|---|
+| Latency-sensitive | `critical-queue`, `priority-queue` | `QUEUE_CONCURRENCY_LATENCY_SENSITIVE` | 10 |
+| Background | `low-priority-queue` | `QUEUE_CONCURRENCY_BACKGROUND` | 2 |
+
+Each ceiling is the maximum number of jobs of that category running at once per instance (shared across the category's queues). Both values must be integers between 1 and 1000 and are validated at startup. Feature modules register a handler per job type with `PriorityQueueWorker.registerHandler(type, handler)`; jobs without a handler fail permanently and go to the DLQ.
+
 ### Retry Policy
 
 All queued jobs use exponential backoff with 3 attempts by default:
@@ -355,6 +366,17 @@ POST /api/v1/admin/dead-letter/:id/retry
 DELETE /api/v1/admin/dead-letter/:id
 ```
 
+### Payload Versioning
+
+Jobs can outlive a deployment, so priority-queue payloads carry a `schemaVersion` (see `PRIORITY_JOB_SCHEMA` in `src/queue/priority-queue.service.ts`). Processors read job data through `PriorityQueueService.readJobData(job)`, which migrates older payloads one version at a time to the current schema before the handler sees them. Payloads enqueued before versioning have no `schemaVersion` and are treated as version 1.
+
+Changing the payload shape:
+
+1. Bump the schema's current version and add a migration from the previous version (`migrations[n]` upgrades version `n` to `n + 1`).
+2. Keep existing migrations so jobs from every earlier supported version still upgrade.
+
+**Unknown versions** (newer than the running build, malformed, or with no migration path) fail with `UnsupportedPayloadVersionError`. `readJobData` discards the job from further retries, so it fails after a single attempt with that error as its failure reason. Because the error is a `PermanentError`, `JobErrorHandler` treats it as fatal and moves the job to the DLQ with an alert. The starvation sweep leaves such jobs in place instead of promoting them. After deploying a build that supports the version, retry the job from the DLQ.
+
 ### Job Scheduler Dashboard
 
 ```bash
@@ -371,6 +393,8 @@ POST /api/v1/jobs/:name/trigger
 POST /api/v1/jobs/:name/pause
 POST /api/v1/jobs/:name/resume
 ```
+
+Every replica registers the same cron jobs, so each run takes a Redis lease (`stellarswipe:lock:scheduled-job:<name>`) first. Only the replica holding the lease executes the job; the others skip that tick. The lease is renewed while the job runs and released when it finishes. If a replica crashes mid-run, the lease expires after `lockTtlMs` (default 5 minutes, set per job in `JobDefinition`) and the next tick runs normally. If Redis is unreachable, the run is skipped rather than executed on every replica.
 
 ### Health Check
 
@@ -561,3 +585,12 @@ MIT
 
 <!-- handsoff-issue-1162 -->
 - #1162: Add dead-letter handling for failed background jobs
+
+<!-- handsoff-issue-1167 -->
+- #1167: Add optimistic concurrency control for mutable resources
+
+<!-- handsoff-issue-1237 -->
+- #1237: Add Redis failover behavior tests for cache-backed services
+
+<!-- handsoff-issue-1238 -->
+- #1238: Add correlation context to scheduled and queued task logs

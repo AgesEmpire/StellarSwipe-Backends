@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { firstValueFrom } from 'rxjs';
+import { BulkheadRejectedError } from '../stellar/bulkhead/bulkhead';
+import { ProviderConcurrencyService } from './provider-concurrency.service';
 
 /**
  * Options controlling retry behaviour for a single request.
@@ -47,14 +49,24 @@ export interface RetryOptions {
    * to be idempotent via an idempotency key).
    */
   idempotent?: boolean;
+
+  /**
+   * External provider this request targets (e.g. "coingecko"). When set,
+   * every attempt runs inside that provider's concurrency limit (see
+   * `ProviderConcurrencyService`); a saturated provider fails fast and is
+   * never retried.
+   */
+  provider?: string;
 }
+
+type RetryDefaults = Required<Omit<RetryOptions, 'idempotent' | 'provider'>>;
 
 // `idempotent` is intentionally absent here: it has no universal default
 // (retry-safety depends on the HTTP method), so it stays `undefined` unless
 // a caller (or a method-specific convenience method like get()/post()) sets
 // it explicitly. `undefined` is treated the same as "retryable" downstream,
 // preserving behaviour for any caller that doesn't specify it.
-const DEFAULT_OPTIONS: Required<Omit<RetryOptions, 'idempotent'>> = {
+const DEFAULT_OPTIONS: RetryDefaults = {
   maxAttempts: 3,
   baseDelayMs: 500,
   maxDelayMs: 10_000,
@@ -83,7 +95,11 @@ const DEFAULT_OPTIONS: Required<Omit<RetryOptions, 'idempotent'>> = {
 export class HttpRetryService {
   private readonly logger = new Logger(HttpRetryService.name);
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    @Optional()
+    private readonly providerConcurrency?: ProviderConcurrencyService,
+  ) {}
 
   async get<T = any>(
     url: string,
@@ -149,15 +165,21 @@ export class HttpRetryService {
     label = 'request',
     options?: RetryOptions,
   ): Promise<T> {
-    const opts: Required<Omit<RetryOptions, 'idempotent'>> & Pick<RetryOptions, 'idempotent'> = {
-      ...DEFAULT_OPTIONS,
-      ...options,
-    };
+    const opts: RetryDefaults & Pick<RetryOptions, 'idempotent' | 'provider'> =
+      {
+        ...DEFAULT_OPTIONS,
+        ...options,
+      };
+    const { provider } = opts;
+    const attemptFn =
+      provider && this.providerConcurrency
+        ? () => this.providerConcurrency!.execute(provider, fn)
+        : fn;
     let lastError: Error;
 
     for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
       try {
-        return await fn();
+        return await attemptFn();
       } catch (error) {
         lastError = error;
 
@@ -195,6 +217,10 @@ export class HttpRetryService {
    * when their status code is in the retryableStatuses list.
    */
   isRetryableError(error: any, retryableStatuses: number[]): boolean {
+    // A saturated provider is shed, not retried — retrying adds load to it.
+    if (error instanceof BulkheadRejectedError) {
+      return false;
+    }
     // Axios wraps HTTP errors in error.response
     if (error?.response?.status) {
       return retryableStatuses.includes(error.response.status);
@@ -210,7 +236,7 @@ export class HttpRetryService {
    *   delay = min(baseDelayMs * 2^(attempt-1), maxDelayMs)
    *   if jitter: delay *= uniform(0.8, 1.2)
    */
-  computeDelay(attempt: number, opts: Required<Omit<RetryOptions, 'idempotent'>>): number {
+  computeDelay(attempt: number, opts: RetryDefaults): number {
     const exponential = opts.baseDelayMs * Math.pow(2, attempt - 1);
     const capped = Math.min(exponential, opts.maxDelayMs);
     if (!opts.jitter) return capped;

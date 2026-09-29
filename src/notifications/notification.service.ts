@@ -136,6 +136,7 @@ export class NotificationService {
       TRADE_EXECUTED: 'tradeUpdates',
       TRADE_PENDING: 'tradeUpdates',
       TRADE_CANCELLED: 'tradeUpdates',
+      TRADE_FAILED: 'tradeUpdates',
       SIGNAL_CREATED: 'signalPerformance',
       SIGNAL_UPDATED: 'signalPerformance',
       SIGNAL_CLOSED: 'signalPerformance',

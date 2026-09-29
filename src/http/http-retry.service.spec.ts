@@ -3,6 +3,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HttpModule, HttpService } from '@nestjs/axios';
 import { of, throwError } from 'rxjs';
 import { HttpRetryService } from './http-retry.service';
+import { ProviderConcurrencyService } from './provider-concurrency.service';
+import { BulkheadRejectedError } from '../stellar/bulkhead/bulkhead';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -341,6 +343,65 @@ describe('HttpRetryService', () => {
         expect(delay).toBeLessThanOrEqual(600);     // 500 * 1.2
       }
     });
+  });
+});
+
+describe('HttpRetryService — per-provider concurrency limits (Issue #1235)', () => {
+  let service: HttpRetryService;
+  let providerConcurrency: ProviderConcurrencyService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        HttpRetryService,
+        ProviderConcurrencyService,
+        { provide: HttpService, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get(HttpRetryService);
+    providerConcurrency = module.get(ProviderConcurrencyService);
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn(service as any, 'sleep').mockResolvedValue(undefined);
+  });
+
+  it('runs each attempt inside the named provider limit', async () => {
+    const executeSpy = jest.spyOn(providerConcurrency, 'execute');
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(networkError())
+      .mockResolvedValue('ok');
+
+    await expect(
+      service.executeWithRetry(fn, 'label', {
+        provider: 'coingecko',
+        maxAttempts: 2,
+      }),
+    ).resolves.toBe('ok');
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+    expect(executeSpy).toHaveBeenCalledWith('coingecko', fn);
+  });
+
+  it('does not use a provider limit when no provider is named', async () => {
+    const executeSpy = jest.spyOn(providerConcurrency, 'execute');
+    await service.executeWithRetry(jest.fn().mockResolvedValue('ok'));
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('fails fast without retrying when the provider is saturated', async () => {
+    jest
+      .spyOn(providerConcurrency, 'execute')
+      .mockRejectedValue(new BulkheadRejectedError('coingecko'));
+    const fn = jest.fn();
+
+    await expect(
+      service.executeWithRetry(fn, 'label', {
+        provider: 'coingecko',
+        maxAttempts: 3,
+      }),
+    ).rejects.toBeInstanceOf(BulkheadRejectedError);
+    expect(providerConcurrency.execute).toHaveBeenCalledTimes(1);
   });
 });
 

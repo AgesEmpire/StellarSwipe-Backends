@@ -9,6 +9,7 @@ import { JobsController } from './jobs.controller';
 import { DeadLetterController } from './dead-letter.controller';
 import { AuthModule } from '../auth/auth.module';
 import { ApiKeysModule } from '../api-keys/api-keys.module';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
 
 @Module({
   imports: [
@@ -19,7 +20,12 @@ import { ApiKeysModule } from '../api-keys/api-keys.module';
     ApiKeysModule,
   ],
   controllers: [JobsController, DeadLetterController],
-  providers: [DeadLetterService, JobSchedulerService, JobErrorHandler],
+  providers: [
+    DeadLetterService,
+    JobSchedulerService,
+    JobErrorHandler,
+    DistributedLockService,
+  ],
   exports: [DeadLetterService, JobSchedulerService, JobErrorHandler],
 })
 export class JobsModule {}

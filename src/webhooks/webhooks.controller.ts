@@ -23,6 +23,7 @@ import {
   SUPPORTED_WEBHOOK_EVENTS,
   MANDATORY_WEBHOOK_EVENTS,
 } from './dto/register-webhook.dto';
+import { VerifyWebhookEndpointDto } from './dto/verify-webhook-endpoint.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('webhooks')
@@ -62,6 +63,25 @@ export class WebhooksController {
     @Body() dto: UpdateWebhookDto,
   ) {
     return this.webhooksService.update(req.user.id, id, dto);
+  }
+
+  @Post(':id/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyEndpoint(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyWebhookEndpointDto,
+  ) {
+    return this.webhooksService.verifyEndpoint(req.user.id, id, dto.token);
+  }
+
+  @Post(':id/verify/resend')
+  @HttpCode(HttpStatus.ACCEPTED)
+  resendEndpointVerification(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.webhooksService.resendEndpointVerification(req.user.id, id);
   }
 
   @Delete(':id')

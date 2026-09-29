@@ -29,6 +29,7 @@ describe('WebhooksService', () => {
       find: jest.fn(),
       findOne: jest.fn(),
       remove: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       findAndCount: jest.fn(),
       createQueryBuilder: jest.fn(),
     };
@@ -48,6 +49,7 @@ describe('WebhooksService', () => {
     webhookSender = {
       deliverWebhook: jest.fn().mockResolvedValue(undefined),
       retryDelivery: jest.fn().mockResolvedValue(undefined),
+      sendVerificationChallenge: jest.fn().mockResolvedValue(true),
     } as any;
 
     const module: TestingModule = await Test.createTestingModule({

@@ -17,6 +17,9 @@ export const WEBHOOK_BACKOFF_BASE_MS = 1000;
 export const WEBHOOK_BACKOFF_CAP_MS = 64000;
 export const WEBHOOK_BACKOFF_JITTER_MS = 1000;
 export const WEBHOOK_PERMANENTLY_FAILED_EVENT = 'WebhookPermanentlyFailed';
+/** Endpoint verification tokens expire after this long and are single-use. */
+export const WEBHOOK_VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+export const WEBHOOK_VERIFICATION_EVENT = 'webhook.verification';
 
 /** Classify an axios error for retry-policy decisions. */
 export type WebhookFailureKind = 'timeout' | 'network' | 'http' | 'unknown';

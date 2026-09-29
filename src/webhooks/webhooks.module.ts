@@ -11,6 +11,11 @@ import { WebhooksController } from './webhooks.controller';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
 import { WebhookEventListener } from './listeners/webhook-event.listener';
+import { ProcessedWebhookEvent } from './inbound/processed-webhook-event.entity';
+import { WebhookReplayGuardService } from './inbound/webhook-replay-guard.service';
+
+@Module({
+  imports: [TypeOrmModule.forFeature([Webhook, WebhookDelivery, ProcessedWebhookEvent])],
 import { StellarCallbackReconciliationJob } from './jobs/stellar-callback-reconciliation.job';
 import { AuditWebhookSecretsJob } from './jobs/audit-webhook-secrets.job';
 import { WebhookDeliveryProcessor } from './jobs/webhook-delivery.processor';
@@ -34,6 +39,9 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     SignatureGeneratorService,
     WebhookSenderService,
     WebhookEventListener,
+    WebhookReplayGuardService,
+  ],
+  exports: [WebhooksService, WebhookReplayGuardService],
     StellarCallbackReconciliationJob,
     AuditWebhookSecretsJob,
     WebhookDeliveryProcessor,
