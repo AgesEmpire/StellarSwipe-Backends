@@ -1,6 +1,7 @@
-import { Injectable, NestMiddleware, NotFoundException } from '@nestjs/common';
+import { GoneException, Injectable, NestMiddleware, NotFoundException } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { VersionManagerService } from '../version-manager.service';
+import { getDeprecationWarning } from '../utils/deprecation.util';
 
 @Injectable()
 export class VersionResolverMiddleware implements NestMiddleware {
@@ -12,6 +13,18 @@ export class VersionResolverMiddleware implements NestMiddleware {
     
     const requestedVersion = urlVersion || headerVersion || this.versionManager.getDefaultVersion();
 
+    if (this.versionManager.isSunset(requestedVersion)) {
+      const metadata = this.versionManager.getVersionMetadata(requestedVersion);
+      if (metadata?.sunsetDate) res.setHeader('Sunset', metadata.sunsetDate);
+      if (metadata?.successorVersion) {
+        res.setHeader('Link', `</api/v${metadata.successorVersion}>; rel="successor-version"`);
+      }
+      throw new GoneException(
+        `API Version ${requestedVersion} was sunset${metadata?.sunsetDate ? ` on ${metadata.sunsetDate}` : ''}.` +
+          (metadata?.successorVersion ? ` Please migrate to v${metadata.successorVersion}.` : ''),
+      );
+    }
+
     if (!this.versionManager.isSupported(requestedVersion)) {
       throw new NotFoundException(`API Version ${requestedVersion} is no longer supported or invalid.`);
     }
@@ -21,11 +34,13 @@ export class VersionResolverMiddleware implements NestMiddleware {
     // ones) so clients can negotiate/introspect without guessing from docs.
     res.setHeader('X-API-Version', requestedVersion);
     res.setHeader('X-API-Supported-Versions', this.versionManager.getSupportedVersions().join(', '));
+    res.setHeader('X-API-Version-Status', this.versionManager.getEffectiveStatus(requestedVersion)!);
 
     const metadata = this.versionManager.getVersionMetadata(requestedVersion);
     if (metadata) {
       if (this.versionManager.isDeprecated(requestedVersion)) {
         res.setHeader('Deprecation', 'true');
+        res.setHeader('X-Deprecation-Notice', getDeprecationWarning(requestedVersion, metadata));
         if (metadata.sunsetDate) {
           res.setHeader('Sunset', metadata.sunsetDate);
         }

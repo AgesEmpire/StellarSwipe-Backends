@@ -37,6 +37,25 @@ export class SocketManagerService {
     this.lastPongAt.delete(client.id);
   }
 
+  /**
+   * Whether the user has at least one authenticated socket in their private room.
+   * Uses fetchSockets so it works across nodes when a clustered adapter is configured.
+   */
+  async isUserOnline(userId: string): Promise<boolean> {
+    if (!this.server) {
+      return false;
+    }
+    const sockets = await this.server.in(this.getUserRoom(userId)).fetchSockets();
+    return sockets.length > 0;
+  }
+
+  emitNotification(userId: string, payload: unknown): void {
+    if (!this.server) {
+      throw new Error('WebSocket server not initialised');
+    }
+    this.server.to(this.getUserRoom(userId)).emit(SocketEvent.NOTIFICATION, payload);
+  }
+
   emitTradeUpdated(walletAddress: string, payload: unknown): void {
     this.server
       ?.to(this.getUserRoom(walletAddress))

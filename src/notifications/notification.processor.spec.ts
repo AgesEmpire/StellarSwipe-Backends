@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { NotificationProcessor } from './notification.processor';
+import { NotificationProcessor, RECIPIENT_OFFLINE_REASON } from './notification.processor';
 import {
   Notification,
   NotificationChannel,
@@ -13,6 +13,7 @@ import {
 import { ConsentCategory } from './entities/user-consent.entity';
 import { ConsentService } from './consent.service';
 import { DeadLetterService } from '../jobs/dead-letter.service';
+import { SocketManagerService } from '../websocket/services/socket-manager.service';
 
 const makeJob = (
   overrides: Partial<{
@@ -33,6 +34,7 @@ describe('NotificationProcessor', () => {
   let auditRepository: any;
   let consentService: any;
   let deadLetterService: any;
+  let socketManager: any;
 
   beforeEach(async () => {
     notificationRepository = {
@@ -49,6 +51,10 @@ describe('NotificationProcessor', () => {
     deadLetterService = {
       capture: jest.fn().mockResolvedValue(undefined),
     };
+    socketManager = {
+      isUserOnline: jest.fn().mockResolvedValue(true),
+      emitNotification: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -63,6 +69,7 @@ describe('NotificationProcessor', () => {
         },
         { provide: ConsentService, useValue: consentService },
         { provide: DeadLetterService, useValue: deadLetterService },
+        { provide: SocketManagerService, useValue: socketManager },
       ],
     }).compile();
 
@@ -259,6 +266,89 @@ describe('NotificationProcessor', () => {
 
       expect(consentService.hasConsented).not.toHaveBeenCalled();
       expect(notification.status).toBe(NotificationStatus.SENT);
+    });
+  });
+
+  describe('websocket delivery', () => {
+    const inAppNotification = () => ({
+      id: 'notif-1',
+      type: NotificationType.TRADE_EXECUTED,
+      channel: NotificationChannel.IN_APP,
+      userId: 'u1',
+      title: 'Trade executed',
+      message: 'Your trade was executed',
+      status: NotificationStatus.PENDING,
+    });
+
+    it('emits to the authenticated recipient room when online', async () => {
+      const notification = inAppNotification();
+      notificationRepository.findOne.mockResolvedValue(notification);
+      notificationRepository.save.mockResolvedValue(notification);
+
+      await processor.handleDeliver(makeJob() as any);
+
+      expect(socketManager.isUserOnline).toHaveBeenCalledWith('u1');
+      expect(socketManager.emitNotification).toHaveBeenCalledTimes(1);
+      expect(socketManager.emitNotification).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ id: 'notif-1', title: 'Trade executed' }),
+      );
+      expect(notification.status).toBe(NotificationStatus.SENT);
+    });
+
+    it('never emits to a room other than the notification owner', async () => {
+      const notification = { ...inAppNotification(), userId: 'owner' };
+      notificationRepository.findOne.mockResolvedValue(notification);
+      notificationRepository.save.mockResolvedValue(notification);
+
+      await processor.handleDeliver(makeJob() as any);
+
+      for (const [userId] of socketManager.emitNotification.mock.calls) {
+        expect(userId).toBe('owner');
+      }
+    });
+
+    it('persists the notification and audits when the recipient is offline', async () => {
+      socketManager.isUserOnline.mockResolvedValue(false);
+      const notification = inAppNotification();
+      notificationRepository.findOne.mockResolvedValue(notification);
+
+      await processor.handleDeliver(makeJob() as any);
+
+      expect(socketManager.emitNotification).not.toHaveBeenCalled();
+      expect(notification.status).toBe(NotificationStatus.PENDING);
+      expect(auditRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          notificationId: 'notif-1',
+          deliveredAt: null,
+          skippedReason: RECIPIENT_OFFLINE_REASON,
+        }),
+      );
+    });
+
+    it('marks FAILED and rethrows for Bull retry when emission fails', async () => {
+      socketManager.emitNotification.mockImplementation(() => {
+        throw new Error('WebSocket server not initialised');
+      });
+      const notification = inAppNotification();
+      notificationRepository.findOne.mockResolvedValue(notification);
+      notificationRepository.save.mockResolvedValue(notification);
+
+      await expect(processor.handleDeliver(makeJob() as any)).rejects.toThrow(
+        'WebSocket server not initialised',
+      );
+      expect(notification.status).toBe(NotificationStatus.FAILED);
+    });
+
+    it('does not use the websocket for email-only notifications', async () => {
+      const notification = { ...inAppNotification(), channel: NotificationChannel.EMAIL };
+      notificationRepository.findOne.mockResolvedValue(notification);
+      notificationRepository.save.mockResolvedValue(notification);
+
+      await processor.handleDeliver(makeJob() as any);
+
+      expect(socketManager.isUserOnline).not.toHaveBeenCalled();
+      expect(socketManager.emitNotification).not.toHaveBeenCalled();
     });
   });
 

@@ -26,6 +26,7 @@ import { SessionFingerprintService } from './session/session-fingerprint.service
 import { LoginFingerprint } from './session/entities/login-fingerprint.entity';
 import { EmailModule } from '../email/email.module';
 import { AnomalousLoginListener } from './session/anomalous-login.listener';
+import { SecuritySessionInvalidationListener } from './session/security-session-invalidation.listener';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
@@ -35,6 +36,7 @@ import { WebauthnController } from './webauthn/webauthn.controller';
 import { WebauthnService } from './webauthn/webauthn.service';
 import { WebauthnCredential } from './webauthn/entities/webauthn-credential.entity';
 import { ChallengeStoreService } from './challenge/challenge-store.service';
+import { PasswordHasherService } from './password/password-hasher.service';
 
 @Module({
   imports: [
@@ -83,10 +85,12 @@ import { ChallengeStoreService } from './challenge/challenge-store.service';
     SessionCleanupService,
     SessionFingerprintService,
     AnomalousLoginListener,
+    SecuritySessionInvalidationListener,
     RefreshTokenCleanupService,
     DistributedLockService,
     WebauthnService,
     ChallengeStoreService,
+    PasswordHasherService,
   ],
   exports: [
     AuthService,
@@ -100,6 +104,7 @@ import { ChallengeStoreService } from './challenge/challenge-store.service';
     SessionFingerprintService,
     RefreshTokenCleanupService,
     ChallengeStoreService,
+    PasswordHasherService,
   ],
 })
 export class AuthModule {}

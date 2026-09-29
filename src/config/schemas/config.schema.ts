@@ -59,6 +59,7 @@ export interface ValidatedEnvironment {
   JWT_SECRET: string;
   JWT_EXPIRES_IN: string;
   JWT_EXPIRATION?: string;
+  PASSWORD_HASH_ROUNDS: number;
   XAI_API_KEY: string;
   XAI_MODEL: string;
   SENTRY_DSN?: string;
@@ -171,6 +172,7 @@ export const configSchema = Joi.object<ValidatedEnvironment>({
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_EXPIRES_IN: Joi.string().default('7d'),
   JWT_EXPIRATION: Joi.string().optional().allow(''),
+  PASSWORD_HASH_ROUNDS: Joi.number().integer().min(10).max(15).default(10),
 
   XAI_API_KEY: Joi.string().required(),
   XAI_MODEL: Joi.string().default('grok-2-1212'),

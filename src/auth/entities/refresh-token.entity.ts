@@ -14,6 +14,10 @@ import {
  * usable refresh tokens. Each successful refresh rotates the token: the
  * current record is marked as rotated/revoked and a new record is issued.
  * Reuse of an already-rotated token is detectable via `rotatedAt`.
+ *
+ * Tokens are grouped into a "family" (see `familyId`). When reuse of a
+ * rotated token is detected the entire family is revoked, invalidating
+ * every descendant token/session issued from the same login.
  */
 @Entity('refresh_tokens')
 export class RefreshToken {
@@ -23,6 +27,15 @@ export class RefreshToken {
   @Index()
   @Column({ type: 'uuid' })
   userId: string;
+
+  /**
+   * Identifier shared by every token in a rotation chain. The first token
+   * of a login starts a new family; each rotated token inherits the family
+   * id of the token it replaced. Used to revoke all sessions on reuse.
+   */
+  @Index()
+  @Column({ type: 'uuid' })
+  familyId: string;
 
   /** SHA-256 hash of the opaque refresh token value. */
   @Index({ unique: true })
@@ -45,6 +58,13 @@ export class RefreshToken {
   @Column({ type: 'timestamptz', nullable: true })
   rotatedAt: Date | null;
 
+  /**
+   * Set when this token was presented after it had already been rotated,
+   * indicating a replay. Recorded for auditing alongside family revocation.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  reuseDetectedAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
@@ -54,5 +74,13 @@ export class RefreshToken {
   /** True when the token can no longer be used (expired, revoked or rotated). */
   isUsable(now: Date = new Date()): boolean {
     return !this.revoked && this.rotatedAt === null && this.expiresAt > now;
+  }
+
+  /**
+   * True when this token has already been rotated, meaning any further
+   * presentation of it is a replay of a consumed token.
+   */
+  isReplayed(): boolean {
+    return this.rotatedAt !== null;
   }
 }

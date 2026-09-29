@@ -6,10 +6,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { Webhook } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { WebhookDeadLetter } from './entities/webhook-dead-letter.entity';
+import { WebhookReplayAudit } from './entities/webhook-replay-audit.entity';
 import { WebhooksService } from './webhooks.service';
 import { WebhooksController } from './webhooks.controller';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
+import { WebhookDeliveryMetricsService } from './services/webhook-delivery-metrics.service';
 import { WebhookEventListener } from './listeners/webhook-event.listener';
 import { ProcessedWebhookEvent } from './inbound/processed-webhook-event.entity';
 import { WebhookReplayGuardService } from './inbound/webhook-replay-guard.service';
@@ -25,7 +27,12 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Webhook, WebhookDelivery, WebhookDeadLetter]),
+    TypeOrmModule.forFeature([
+      Webhook,
+      WebhookDelivery,
+      WebhookDeadLetter,
+      WebhookReplayAudit,
+    ]),
     ScheduleModule.forRoot(),
     BullModule.registerQueue(
       { name: WEBHOOK_DELIVERY_QUEUE },
@@ -45,6 +52,7 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     StellarCallbackReconciliationJob,
     AuditWebhookSecretsJob,
     WebhookDeliveryProcessor,
+    WebhookDeliveryMetricsService,
     WebhookDeadLetterService,
     DistributedLockService,
   ],

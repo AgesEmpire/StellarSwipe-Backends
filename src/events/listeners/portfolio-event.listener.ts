@@ -1,11 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { TradeExecutedEvent } from '../events/trade.events';
 import { UserRegisteredEvent } from '../events/user.events';
+import { PortfolioCreatedEvent } from '../portfolio.events';
 
 @Injectable()
 export class PortfolioEventListener {
   private readonly logger = new Logger(PortfolioEventListener.name);
+
+  constructor(private readonly eventEmitter: EventEmitter2) {}
 
   /**
    * Initialize portfolio when user registers
@@ -55,7 +58,6 @@ export class PortfolioEventListener {
 
     try {
       await Promise.allSettled([
-        this.updateHoldings(event),
         this.recalculatePortfolioValue(event),
         this.updateAssetAllocation(event),
         this.checkRebalancingNeeded(event),
@@ -79,12 +81,17 @@ export class PortfolioEventListener {
   // Private helper methods
   private async createInitialPortfolio(event: UserRegisteredEvent): Promise<void> {
     this.logger.debug(`Creating initial portfolio for user: ${event.userId}`);
-    // TODO: Implement portfolio creation
-    // await this.portfolioService.create({
-    //   userId: event.userId,
-    //   initialBalance: 0,
-    //   currency: 'USD',
-    // });
+    // Persisted idempotently by PortfolioLifecycleListener (PortfolioModule).
+    await this.eventEmitter.emitAsync(
+      'portfolio.created',
+      new PortfolioCreatedEvent({
+        eventId: `user.registered:${event.userId}`,
+        userId: event.userId,
+        baseCurrency: 'USD',
+        initialMetadata: { source: 'user.registered', referralCode: event.referralCode },
+        correlationId: event.correlationId,
+      }),
+    );
   }
 
   private async sendWelcomeNotification(event: UserRegisteredEvent): Promise<void> {
@@ -113,20 +120,7 @@ export class PortfolioEventListener {
     // });
   }
 
-  private async updateHoldings(event: TradeExecutedEvent): Promise<void> {
-    this.logger.debug(`Updating holdings for user: ${event.userId}`);
-    
-    const adjustment = event.type === 'BUY' ? event.quantity : -event.quantity;
-    
-    // TODO: Implement holdings update
-    // await this.portfolioService.updateHoldings({
-    //   userId: event.userId,
-    //   symbol: event.symbol,
-    //   quantityChange: adjustment,
-    //   averagePrice: event.price,
-    //   timestamp: event.timestamp,
-    // });
-  }
+  // Holdings are applied idempotently by PortfolioLifecycleListener (PortfolioModule).
 
   private async recalculatePortfolioValue(event: TradeExecutedEvent): Promise<void> {
     this.logger.debug(`Recalculating portfolio value for user: ${event.userId}`);

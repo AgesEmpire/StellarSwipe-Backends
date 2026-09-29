@@ -4,6 +4,7 @@ export enum SocketEvent {
   PORTFOLIO_CHANGED = 'portfolio:changed',
   NEW_SIGNAL = 'signal:new',
   CONTEST_LEADERBOARD_UPDATED = 'contest:leaderboard:updated',
+  NOTIFICATION = 'notification:new',
 }
 
 export enum SocketRoom {
