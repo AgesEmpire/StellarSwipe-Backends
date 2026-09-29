@@ -1,4 +1,5 @@
 import {
+  Brackets,
   SelectQueryBuilder,
   Repository,
   ObjectLiteral,
@@ -50,7 +51,8 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
 
   /**
    * Delegates to the inner query builder's where clause.
-   * Tenant scoping is already applied and cannot be bypassed.
+   * TypeORM's `where()` replaces every existing condition — including the
+   * tenant predicate — so the scope is re-applied immediately afterwards.
    */
   where(
     where: string | ((qb: SelectQueryBuilder<T>) => string),
@@ -61,6 +63,9 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
     } else {
       this.innerQb.where(where(this.innerQb));
     }
+    this.innerQb = this.tenantScopingService.scopeQuery(this.innerQb, {
+      alias: this.innerQb.alias,
+    });
     return this;
   }
 
@@ -81,16 +86,25 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
 
   /**
    * Delegates to the inner query builder's orWhere clause.
+   * The OR branch carries its own tenant predicate — `(a AND tenant) OR b`
+   * would otherwise match another tenant's rows through `b`.
    */
   orWhere(
     where: string | ((qb: SelectQueryBuilder<T>) => string),
     parameters?: ObjectLiteral,
   ): this {
-    if (typeof where === 'string') {
-      this.innerQb.orWhere(where, parameters);
-    } else {
-      this.innerQb.orWhere(where(this.innerQb));
-    }
+    const condition =
+      typeof where === 'string' ? where : where(this.innerQb);
+    const alias = this.innerQb.alias;
+    this.innerQb.orWhere(
+      new Brackets((branch) => {
+        branch.where(condition, parameters);
+        this.tenantScopingService.scopeQuery(
+          branch as unknown as SelectQueryBuilder<T>,
+          { alias },
+        );
+      }),
+    );
     return this;
   }
 
@@ -101,7 +115,11 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
     sort: string | { [key: string]: 'ASC' | 'DESC' },
     order?: 'ASC' | 'DESC',
   ): this {
-    this.innerQb.orderBy(sort, order);
+    if (typeof sort === 'string') {
+      this.innerQb.orderBy(sort, order);
+    } else {
+      this.innerQb.orderBy(sort);
+    }
     return this;
   }
 
@@ -112,7 +130,13 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
     sort: string | { [key: string]: 'ASC' | 'DESC' },
     order?: 'ASC' | 'DESC',
   ): this {
-    this.innerQb.addOrderBy(sort, order);
+    if (typeof sort === 'string') {
+      this.innerQb.addOrderBy(sort, order);
+    } else {
+      for (const [column, direction] of Object.entries(sort)) {
+        this.innerQb.addOrderBy(column, direction);
+      }
+    }
     return this;
   }
 
@@ -182,7 +206,7 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
     aliasName?: string,
   ): this {
     if (Array.isArray(selection)) {
-      this.innerQb.select(selection, aliasName);
+      this.innerQb.select(selection);
     } else if (typeof selection === 'string') {
       this.innerQb.select(selection, aliasName);
     } else if (typeof selection === 'function') {
@@ -199,7 +223,7 @@ export class TenantScopedQueryBuilder<T extends ObjectLiteral> {
     aliasName?: string,
   ): this {
     if (Array.isArray(selection)) {
-      this.innerQb.addSelect(selection, aliasName);
+      this.innerQb.addSelect(selection);
     } else if (typeof selection === 'string') {
       this.innerQb.addSelect(selection, aliasName);
     } else if (typeof selection === 'function') {

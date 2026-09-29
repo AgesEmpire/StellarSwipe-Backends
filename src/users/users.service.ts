@@ -134,6 +134,47 @@ export class UsersService {
         return user;
     }
 
+    /**
+     * Looks up a user together with their password hash, which is excluded
+     * from default selects. Returns null rather than throwing so callers can
+     * keep credential failures indistinguishable.
+     */
+    async findByEmailWithPassword(email: string): Promise<User | null> {
+        return this.userRepository.findOne({
+            where: { email },
+            select: {
+                id: true,
+                email: true,
+                username: true,
+                displayName: true,
+                walletAddress: true,
+                isActive: true,
+                password: true,
+            },
+        });
+    }
+
+    async updatePassword(userId: string, passwordHash: string): Promise<void> {
+        await this.userRepository.update({ id: userId }, { password: passwordHash });
+    }
+
+    /**
+     * Compare-and-set password write: only replaces the hash if it still
+     * equals `expectedHash`, so a background rehash can never overwrite a
+     * password that was reset concurrently. Returns whether a row changed.
+     */
+    async updatePasswordIfUnchanged(
+        userId: string,
+        expectedHash: string,
+        passwordHash: string,
+    ): Promise<boolean> {
+        const result = await this.userRepository.update(
+            { id: userId, password: expectedHash },
+            { password: passwordHash },
+        );
+        return (result.affected ?? 0) > 0;
+    }
+
     async findByUsername(username: string): Promise<User> {
         const user = await this.userRepository.findOne({
             where: { username },

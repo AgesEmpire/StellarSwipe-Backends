@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { Brackets, Repository, SelectQueryBuilder } from 'typeorm';
 import { TenantScopingService, TENANT_COLUMN } from '../tenant-scoping.service';
 import { TenantScopedQueryHelper } from './tenant-scoped-query.helper';
 import { TenantScopedQueryBuilder } from './tenant-scoped-query.builder';
@@ -149,6 +149,42 @@ describe('TenantScopedQueryHelper', () => {
       qb.where('user.email = :email', { email: 'test@example.com' });
 
       expect(mockQueryBuilder.where).toHaveBeenCalled();
+    });
+
+    it('should re-apply the tenant scope after where() resets conditions', () => {
+      const qb = helper.createQueryBuilder(mockRepository, 'user');
+      (tenantScopingService.scopeQuery as jest.Mock).mockClear();
+
+      qb.where('user.id = :id', { id: '1' });
+
+      expect(tenantScopingService.scopeQuery).toHaveBeenCalledWith(
+        mockQueryBuilder,
+        { alias: 'user' },
+      );
+      const whereOrder = mockQueryBuilder.where.mock.invocationCallOrder[0];
+      const scopeOrder = (tenantScopingService.scopeQuery as jest.Mock).mock
+        .invocationCallOrder[0];
+      expect(scopeOrder).toBeGreaterThan(whereOrder);
+    });
+
+    it('should scope each orWhere branch independently', () => {
+      const qb = helper.createQueryBuilder(mockRepository, 'user');
+      (tenantScopingService.scopeQuery as jest.Mock).mockClear();
+
+      qb.orWhere('user.email = :email', { email: 'b@example.com' });
+
+      const [brackets] = mockQueryBuilder.orWhere.mock.calls[0];
+      expect(brackets).toBeInstanceOf(Brackets);
+
+      const branch = { where: jest.fn().mockReturnThis(), andWhere: jest.fn() };
+      (brackets as Brackets).whereFactory(branch as any);
+
+      expect(branch.where).toHaveBeenCalledWith('user.email = :email', {
+        email: 'b@example.com',
+      });
+      expect(tenantScopingService.scopeQuery).toHaveBeenCalledWith(branch, {
+        alias: 'user',
+      });
     });
 
     it('should delegate andWhere calls', () => {
