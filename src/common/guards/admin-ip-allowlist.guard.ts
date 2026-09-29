@@ -9,12 +9,102 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { isIPv4, isIPv6 } from 'net';
 import { ADMIN_IP_GUARD_KEY, AdminIpGuardConfig } from '../decorators/admin-ip-guard.decorator';
+
+interface ParsedIpAddress {
+  version: 4 | 6;
+  value: bigint;
+}
+
+export interface ParsedIpRange extends ParsedIpAddress {
+  prefix: number;
+}
+
+const IPV4_MAPPED_PREFIX = BigInt('0xffff00000000');
+
+function ipv4ToBigInt(ip: string): bigint {
+  return ip
+    .split('.')
+    .reduce((acc, part) => (acc << BigInt(8)) + BigInt(Number(part)), BigInt(0));
+}
+
+function ipv6ToBigInt(ip: string): bigint {
+  let address = ip;
+  // Expand an embedded IPv4 tail (e.g. ::ffff:10.0.0.1) into two hextets.
+  const lastColon = address.lastIndexOf(':');
+  const tail = address.slice(lastColon + 1);
+  if (isIPv4(tail)) {
+    const v4 = ipv4ToBigInt(tail);
+    address = `${address.slice(0, lastColon + 1)}${(v4 >> BigInt(16)).toString(16)}:${(v4 & BigInt(0xffff)).toString(16)}`;
+  }
+
+  const [head, rest] = address.split('::');
+  const headParts = head ? head.split(':') : [];
+  const restParts = rest !== undefined && rest !== '' ? rest.split(':') : [];
+  const fill = rest !== undefined ? 8 - headParts.length - restParts.length : 0;
+  const hextets = [...headParts, ...Array(fill).fill('0'), ...restParts];
+
+  return hextets.reduce((acc, h) => (acc << BigInt(16)) + BigInt(parseInt(h, 16)), BigInt(0));
+}
+
+/** Parses an IPv4/IPv6 address, normalising IPv4-mapped IPv6 to IPv4. */
+export function parseIpAddress(raw: string): ParsedIpAddress | null {
+  const ip = raw.split('%')[0]; // strip IPv6 zone id
+  if (isIPv4(ip)) {
+    return { version: 4, value: ipv4ToBigInt(ip) };
+  }
+  if (isIPv6(ip)) {
+    const value = ipv6ToBigInt(ip);
+    if (value >> BigInt(32) === IPV4_MAPPED_PREFIX >> BigInt(32)) {
+      return { version: 4, value: value & BigInt(0xffffffff) };
+    }
+    return { version: 6, value };
+  }
+  return null;
+}
+
+/** Parses an address or CIDR range; returns a reason when the entry is malformed. */
+export function parseIpRange(raw: string): ParsedIpRange | { reason: string } {
+  const parts = raw.split('/');
+  if (parts.length > 2) {
+    return { reason: 'multiple prefix separators' };
+  }
+  const ip = parseIpAddress(parts[0]);
+  if (!ip) {
+    return { reason: 'invalid IP address' };
+  }
+  const maxBits = ip.version === 4 ? 32 : 128;
+  if (parts.length === 1) {
+    return { ...ip, prefix: maxBits };
+  }
+  if (!/^\d{1,3}$/.test(parts[1])) {
+    return { reason: 'invalid prefix length' };
+  }
+  let prefix = Number(parts[1]);
+  // IPv4-mapped IPv6 ranges are normalised to IPv4, so shift the prefix too.
+  if (ip.version === 4 && isIPv6(parts[0].split('%')[0])) {
+    prefix -= 96;
+  }
+  if (prefix < 0 || prefix > maxBits) {
+    return { reason: `prefix length out of range for IPv${ip.version}` };
+  }
+  return { ...ip, prefix };
+}
+
+export function isIpInRange(ip: ParsedIpAddress, range: ParsedIpRange): boolean {
+  if (ip.version !== range.version) {
+    return false;
+  }
+  const bits = BigInt(ip.version === 4 ? 32 : 128);
+  const hostBits = bits - BigInt(range.prefix);
+  return ip.value >> hostBits === range.value >> hostBits;
+}
 
 @Injectable()
 export class AdminIpAllowlistGuard implements CanActivate {
   private readonly logger = new Logger(AdminIpAllowlistGuard.name);
-  private readonly allowedIpRanges: string[];
+  private readonly allowedIpRanges: ParsedIpRange[];
   private readonly environment: string;
 
   constructor(
@@ -60,17 +150,27 @@ export class AdminIpAllowlistGuard implements CanActivate {
     return true;
   }
 
-  private loadAllowedIpRanges(): string[] {
-    if (!this.configService) {
-      return this.getDefaultIpRanges();
-    }
+  private loadAllowedIpRanges(): ParsedIpRange[] {
+    const envVar = this.configService?.get<string>('ADMIN_IP_ALLOWLIST');
+    const rawRanges = envVar
+      ? envVar.split(',').map(ip => ip.trim()).filter(Boolean)
+      : this.getDefaultIpRanges();
 
-    const envVar = this.configService.get<string>('ADMIN_IP_ALLOWLIST');
-    if (envVar) {
-      return envVar.split(',').map(ip => ip.trim());
+    const parsed: ParsedIpRange[] = [];
+    for (const raw of rawRanges) {
+      const result = parseIpRange(raw);
+      if ('reason' in result) {
+        // Fail closed: malformed entries never match, and are logged for audit.
+        this.logger.warn(`Ignoring malformed admin IP allowlist entry: ${raw}`, {
+          type: 'admin_ip_allowlist_invalid_range',
+          range: raw,
+          reason: result.reason,
+        });
+        continue;
+      }
+      parsed.push(result);
     }
-
-    return this.getDefaultIpRanges();
+    return parsed;
   }
 
   private getDefaultIpRanges(): string[] {
@@ -81,53 +181,16 @@ export class AdminIpAllowlistGuard implements CanActivate {
       '10.0.0.0/8',       // Private network
       '172.16.0.0/12',    // Private network
       '192.168.0.0/16',   // Private network
+      'fc00::/7',         // IPv6 unique local addresses
     ];
   }
 
   private isIpAllowed(clientIp: string): boolean {
-    return this.allowedIpRanges.some(range => {
-      // Exact match
-      if (clientIp === range) {
-        return true;
-      }
-
-      // CIDR range check (simplified: handles /8, /12, /16, /24)
-      if (range.includes('/')) {
-        return this.isIpInCidrRange(clientIp, range);
-      }
-
-      return false;
-    });
-  }
-
-  private isIpInCidrRange(ip: string, cidrRange: string): boolean {
-    // Skip IPv6 complex CIDR checks; handle IPv4 only for simplicity
-    if (ip.includes(':')) {
-      return false; // TODO: implement IPv6 CIDR support if needed
-    }
-
-    const [rangeIp, maskBits] = cidrRange.split('/');
-    const mask = parseInt(maskBits, 10);
-
-    const ipParts = ip.split('.').map(Number);
-    const rangeParts = rangeIp.split('.').map(Number);
-
-    if (ipParts.length !== 4 || rangeParts.length !== 4) {
+    const ip = parseIpAddress(clientIp);
+    if (!ip) {
       return false;
     }
-
-    // Convert to 32-bit integers for bitwise comparison
-    const ipInt = (ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3];
-    const rangeInt =
-      (rangeParts[0] << 24) |
-      (rangeParts[1] << 16) |
-      (rangeParts[2] << 8) |
-      rangeParts[3];
-
-    // Create bitmask
-    const maskInt = ~((1 << (32 - mask)) - 1);
-
-    return (ipInt & maskInt) === (rangeInt & maskInt);
+    return this.allowedIpRanges.some(range => isIpInRange(ip, range));
   }
 
   private getClientIP(request: any): string {
