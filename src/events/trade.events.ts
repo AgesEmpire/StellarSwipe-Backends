@@ -51,6 +51,11 @@ export class TradeExecutedEvent extends BaseEvent {
   @IsString()
   readonly signalId?: string;
 
+  /** Identifies a partial fill; each fill of a trade carries its own id. */
+  @IsOptional()
+  @IsString()
+  readonly fillId?: string;
+
   @IsOptional()
   readonly metadata?: EventMetadata;
 
@@ -63,6 +68,7 @@ export class TradeExecutedEvent extends BaseEvent {
     price: number;
     totalValue: number;
     signalId?: string;
+    fillId?: string;
     metadata?: EventMetadata;
     correlationId?: string;
   }) {

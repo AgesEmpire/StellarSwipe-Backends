@@ -22,6 +22,11 @@ import { Position } from './entities/position.entity';
 import { ArchivedPosition } from './entities/archived-position.entity';
 import { PnlHistory } from './entities/pnl-history.entity';
 import { PortfolioSnapshot } from './entities/portfolio-snapshot.entity';
+import { Portfolio } from './entities/portfolio.entity';
+import { PortfolioHolding } from './entities/portfolio-holding.entity';
+import { PortfolioAppliedTrade } from './entities/portfolio-applied-trade.entity';
+import { PortfolioLifecycleService } from './services/portfolio-lifecycle.service';
+import { PortfolioLifecycleListener } from './listeners/portfolio-lifecycle.listener';
 import { User } from '../users/entities/user.entity';
 import { CopiedPosition } from '../signals/entities/copied-position.entity';
 import { PriceService } from '../shared/price.service';
@@ -33,7 +38,7 @@ import { RateLimitService } from '../common/services/rate-limit.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Trade, Position, ArchivedPosition, PnlHistory, PortfolioSnapshot, User, CopiedPosition]),
+    TypeOrmModule.forFeature([Trade, Position, ArchivedPosition, PnlHistory, PortfolioSnapshot, User, CopiedPosition, Portfolio, PortfolioHolding, PortfolioAppliedTrade]),
     BullModule.registerQueue({ name: 'export-history' }),
     ScheduleModule.forRoot(),
     ConfigModule,
@@ -56,7 +61,9 @@ import { RateLimitService } from '../common/services/rate-limit.service';
     PortfolioSnapshotJob,
     PnlSnapshotService,
     PnlSnapshotJob,
+    PortfolioLifecycleService,
+    PortfolioLifecycleListener,
   ],
-  exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService, PositionBalanceUpdaterService, PositionArchiveService, PortfolioSnapshotService],
+  exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService, PositionBalanceUpdaterService, PositionArchiveService, PortfolioSnapshotService, PortfolioLifecycleService],
 })
 export class PortfolioModule {}
