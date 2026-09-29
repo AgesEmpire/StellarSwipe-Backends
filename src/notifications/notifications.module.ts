@@ -18,6 +18,7 @@ import { NotificationService, NOTIFICATION_QUEUE } from './notification.service'
 import { NotificationsService } from './notifications.service';
 import { NotificationController } from './notification.controller';
 import { NotificationProcessor } from './notification.processor';
+import { WebsocketModule } from '../websocket/websocket.module';
 import { NotificationTemplateService } from './notification-template.service';
 import { NotificationTcpController } from './notification-tcp.controller';
 import { JobsModule } from '../jobs/jobs.module';
@@ -27,6 +28,7 @@ import { JobsModule } from '../jobs/jobs.module';
     TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate, UserConsent, NotificationDeliveryAuditLog]),
     BullModule.registerQueue({ name: NOTIFICATION_QUEUE }),
     JobsModule,
+    WebsocketModule,
   ],
   controllers: [NotificationController, PreferencesController, PreferenceController, NotificationTcpController, ConsentController],
   providers: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationProcessor, NotificationTemplateService, ConsentService],

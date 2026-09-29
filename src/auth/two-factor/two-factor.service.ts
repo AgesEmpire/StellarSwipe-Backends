@@ -4,7 +4,9 @@ import {
   UnauthorizedException,
   NotFoundException,
   Inject,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -20,6 +22,7 @@ import { Verify2faDto } from '../dto/verify-2fa.dto';
 import { RecoveryCodeService } from './recovery-code.service';
 import { AuditService } from '../../audit-log/audit.service';
 import { AuditAction, AuditStatus } from '../../audit-log/entities/audit-log.entity';
+import { SECURITY_SESSION_EVENTS } from '../session/security-session-invalidation.listener';
 
 const BCRYPT_ROUNDS = 12;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
@@ -42,6 +45,7 @@ export class TwoFactorService {
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly recoveryCodeService: RecoveryCodeService,
     private readonly auditService: AuditService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {
     const key = this.configService.get<string>('TWO_FACTOR_ENCRYPTION_KEY');
     if (!key || Buffer.from(key, 'hex').length !== 32) {
@@ -240,6 +244,8 @@ export class TwoFactorService {
       status: AuditStatus.SUCCESS,
     });
 
+    this.events?.emit(SECURITY_SESSION_EVENTS.TWO_FACTOR_ENABLED, { userId });
+
     // Return plaintext codes only once — user must save them immediately
     return { backupCodes: plaintextCodes };
   }
@@ -329,6 +335,8 @@ export class TwoFactorService {
     record.backupCodes = [];
     record.lastSecurityChangeAt = new Date();
     await this.twoFactorRepo.save(record);
+
+    this.events?.emit(SECURITY_SESSION_EVENTS.TWO_FACTOR_DISABLED, { userId });
   }
 
   /**
@@ -358,6 +366,11 @@ export class TwoFactorService {
       userId,
       ipAddress,
     );
+
+    this.events?.emit(SECURITY_SESSION_EVENTS.TWO_FACTOR_BACKUP_CODES_REGENERATED, {
+      userId,
+    });
+
     return { backupCodes };
   }
 

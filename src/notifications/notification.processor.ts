@@ -16,6 +16,15 @@ import { ConsentCategory } from './entities/user-consent.entity';
 import { NOTIFICATION_QUEUE } from './notification.service';
 import { DeadLetterService } from '../jobs/dead-letter.service';
 import { ConsentService } from './consent.service';
+import { SocketManagerService } from '../websocket/services/socket-manager.service';
+
+const WEBSOCKET_CHANNELS = new Set<NotificationChannel>([
+  NotificationChannel.IN_APP,
+  NotificationChannel.PUSH,
+  NotificationChannel.BOTH,
+]);
+
+export const RECIPIENT_OFFLINE_REASON = 'Recipient offline; persisted for later retrieval';
 
 @Processor(NOTIFICATION_QUEUE)
 export class NotificationProcessor {
@@ -28,6 +37,7 @@ export class NotificationProcessor {
     private readonly auditRepository: Repository<NotificationDeliveryAuditLog>,
     private readonly consentService: ConsentService,
     private readonly deadLetterService: DeadLetterService,
+    private readonly socketManager: SocketManagerService,
   ) {}
 
   @Process('deliver')
@@ -64,11 +74,41 @@ export class NotificationProcessor {
     }
 
     try {
-      // Delivery logic: in production, integrate email/push providers here
       this.logger.log(
         `Delivering notification ${notificationId} via ` +
           `${notification.channel} to user ${notification.userId}`,
       );
+
+      if (WEBSOCKET_CHANNELS.has(notification.channel)) {
+        const online = await this.socketManager.isUserOnline(notification.userId);
+        if (!online) {
+          // Notification stays persisted (PENDING) and is served via the inbox API
+          this.logger.log(
+            `Recipient ${notification.userId} offline; notification ${notificationId} persisted`,
+          );
+          await this.auditRepository.save(
+            this.auditRepository.create({
+              userId: notification.userId,
+              notificationId: notification.id,
+              notificationType: notification.type,
+              channel: notification.channel,
+              deliveredAt: null,
+              skippedReason: RECIPIENT_OFFLINE_REASON,
+            }),
+          );
+          return;
+        }
+
+        // Emitted only to the user's private room, which sockets join after JWT auth
+        this.socketManager.emitNotification(notification.userId, {
+          id: notification.id,
+          type: notification.type,
+          title: notification.title,
+          message: notification.message,
+          metadata: notification.metadata,
+          createdAt: notification.createdAt,
+        });
+      }
 
       notification.status = NotificationStatus.SENT;
       await this.notificationRepository.save(notification);

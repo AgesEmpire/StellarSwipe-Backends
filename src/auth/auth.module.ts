@@ -26,6 +26,7 @@ import { SessionFingerprintService } from './session/session-fingerprint.service
 import { LoginFingerprint } from './session/entities/login-fingerprint.entity';
 import { EmailModule } from '../email/email.module';
 import { AnomalousLoginListener } from './session/anomalous-login.listener';
+import { SecuritySessionInvalidationListener } from './session/security-session-invalidation.listener';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenCleanupService } from './refresh-token-cleanup.service';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
@@ -84,6 +85,7 @@ import { PasswordHasherService } from './password/password-hasher.service';
     SessionCleanupService,
     SessionFingerprintService,
     AnomalousLoginListener,
+    SecuritySessionInvalidationListener,
     RefreshTokenCleanupService,
     DistributedLockService,
     WebauthnService,

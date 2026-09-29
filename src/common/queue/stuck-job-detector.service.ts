@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Queue, Job } from 'bull';
 
@@ -28,6 +28,32 @@ export interface QuarantinedJob {
 }
 
 /**
+ * Structured alert emitted when a job exceeds its processing window.
+ */
+export interface StuckJobAlert {
+  severity: 'high';
+  type: 'stuck_job_quarantined';
+  message: string;
+  queueName: string;
+  jobName: string;
+  jobId: string;
+  ageMs: number;
+  maxDurationMs: number;
+  startedAt: string;
+  detectedAt: string;
+}
+
+/**
+ * Pluggable alert sink (e.g. PagerDuty, Slack, monitoring system).
+ * Provide an implementation under STUCK_JOB_ALERT_PROVIDER to enable alerting.
+ */
+export interface StuckJobAlertProvider {
+  sendAlert(alert: StuckJobAlert): Promise<void> | void;
+}
+
+export const STUCK_JOB_ALERT_PROVIDER = 'STUCK_JOB_ALERT_PROVIDER';
+
+/**
  * StuckJobDetectorService
  *
  * Monitors BullMQ queues for jobs that have been actively processing
@@ -45,7 +71,7 @@ export interface QuarantinedJob {
  *
  * Notes:
  *   - Quarantined jobs are stored with metadata for investigation
- *   - Alerts should be emitted (stubbed for integration)
+ *   - Alerts are sent once per stuck job via STUCK_JOB_ALERT_PROVIDER (if provided)
  *   - Does not retry or fail jobs automatically; requires manual intervention
  */
 @Injectable()
@@ -54,8 +80,14 @@ export class StuckJobDetectorService {
   private readonly jobConfigs = new Map<string, JobProcessingConfig>(); // key: "{queueName}:{jobName}"
   private readonly queuesMap = new Map<string, Queue>(); // key: queueName
   private readonly quarantineStore = new Map<string, QuarantinedJob[]>(); // key: queueName
+  private readonly quarantinedJobKeys = new Set<string>(); // key: "{queueName}:{jobId}"
+  private readonly pendingAlerts = new Map<string, QuarantinedJob>(); // alerts awaiting delivery
 
-  constructor() {}
+  constructor(
+    @Optional()
+    @Inject(STUCK_JOB_ALERT_PROVIDER)
+    private readonly alertProvider?: StuckJobAlertProvider,
+  ) {}
 
   /**
    * Register a job type for monitoring with max processing duration.
@@ -125,7 +157,16 @@ export class StuckJobDetectorService {
         const durationMs = now - progressedAt;
 
         if (durationMs > config.maxDurationMs) {
-          await this.quarantineJob(job, queueName, config.maxDurationMs, durationMs);
+          const key = `${queueName}:${job.id}`;
+          if (this.quarantinedJobKeys.has(key)) {
+            // Already quarantined on a previous scan; only retry an undelivered alert
+            const pending = this.pendingAlerts.get(key);
+            if (pending) {
+              await this.sendStuckJobAlert(pending);
+            }
+            continue;
+          }
+          await this.quarantineJob(job, queueName, config, durationMs);
         }
       }
     } catch (error) {
@@ -138,9 +179,10 @@ export class StuckJobDetectorService {
   private async quarantineJob(
     job: Job,
     queueName: string,
-    maxDurationMs: number,
+    config: JobProcessingConfig,
     actualDurationMs: number,
   ): Promise<void> {
+    const { maxDurationMs } = config;
     const quarantinedJob: QuarantinedJob = {
       jobId: job.id?.toString() || 'unknown',
       jobName: job.name,
@@ -161,6 +203,7 @@ export class StuckJobDetectorService {
     const store = this.quarantineStore.get(queueName) || [];
     store.push(quarantinedJob);
     this.quarantineStore.set(queueName, store);
+    this.quarantinedJobKeys.add(`${queueName}:${quarantinedJob.jobId}`);
 
     this.logger.error(
       `Job quarantined: ${job.name} (${job.id}) in queue ${queueName} - exceeded max duration (${actualDurationMs}ms > ${maxDurationMs}ms)`,
@@ -189,13 +232,42 @@ export class StuckJobDetectorService {
       );
     }
 
-    // TODO: Integrate with alerting system
-    // Example: this.alertingService.alert({
-    //   severity: 'high',
-    //   type: 'stuck_job_quarantined',
-    //   message: `Job ${job.name} (${job.id}) quarantined in queue ${queueName}`,
-    //   details: quarantinedJob,
-    // })
+    if (config.alertOnQuarantine !== false) {
+      this.pendingAlerts.set(`${queueName}:${quarantinedJob.jobId}`, quarantinedJob);
+      await this.sendStuckJobAlert(quarantinedJob);
+    }
+  }
+
+  private async sendStuckJobAlert(quarantinedJob: QuarantinedJob): Promise<void> {
+    const key = `${quarantinedJob.queueName}:${quarantinedJob.jobId}`;
+    if (!this.alertProvider) {
+      this.pendingAlerts.delete(key);
+      return;
+    }
+
+    const alert: StuckJobAlert = {
+      severity: 'high',
+      type: 'stuck_job_quarantined',
+      message: `Job ${quarantinedJob.jobName} (${quarantinedJob.jobId}) quarantined in queue ${quarantinedJob.queueName}`,
+      queueName: quarantinedJob.queueName,
+      jobName: quarantinedJob.jobName,
+      jobId: quarantinedJob.jobId,
+      ageMs: quarantinedJob.actualDurationMs,
+      maxDurationMs: quarantinedJob.maxDurationMs,
+      startedAt: quarantinedJob.startedAt.toISOString(),
+      detectedAt: quarantinedJob.quarantinedAt.toISOString(),
+    };
+
+    try {
+      await this.alertProvider.sendAlert(alert);
+      this.pendingAlerts.delete(key);
+    } catch (error) {
+      // Keep the alert pending so the next scan retries delivery
+      this.logger.error(
+        `Failed to send stuck job alert for ${key}: ${(error as Error).message}`,
+        { type: 'stuck_job_alert_failed', queue: quarantinedJob.queueName, jobId: quarantinedJob.jobId },
+      );
+    }
   }
 
   /**
@@ -267,6 +339,12 @@ export class StuckJobDetectorService {
    */
   clearQuarantineRecords(queueName: string): void {
     this.quarantineStore.delete(queueName);
+    for (const key of [...this.quarantinedJobKeys]) {
+      if (key.startsWith(`${queueName}:`)) {
+        this.quarantinedJobKeys.delete(key);
+        this.pendingAlerts.delete(key);
+      }
+    }
     this.logger.log(`Cleared quarantine records for queue ${queueName}`);
   }
 }
