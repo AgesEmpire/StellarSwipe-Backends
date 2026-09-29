@@ -10,6 +10,7 @@ import { WebhooksService } from './webhooks.service';
 import { WebhooksController } from './webhooks.controller';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
+import { WebhookDeliveryMetricsService } from './services/webhook-delivery-metrics.service';
 import { WebhookEventListener } from './listeners/webhook-event.listener';
 import { ProcessedWebhookEvent } from './inbound/processed-webhook-event.entity';
 import { WebhookReplayGuardService } from './inbound/webhook-replay-guard.service';
@@ -45,6 +46,7 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     StellarCallbackReconciliationJob,
     AuditWebhookSecretsJob,
     WebhookDeliveryProcessor,
+    WebhookDeliveryMetricsService,
     WebhookDeadLetterService,
     DistributedLockService,
   ],
