@@ -21,7 +21,18 @@ export const SUPPORTED_WEBHOOK_EVENTS = [
   'payment.stellar.received',
   'payment.stellar.sent',
   'payment.stellar.failed',
+  'webhook.secret.rotation_started',
+  'webhook.secret.rotated',
 ] as const;
+
+/**
+ * Security notifications that are always delivered to the affected webhook,
+ * regardless of the subscriber's event filter.
+ */
+export const MANDATORY_WEBHOOK_EVENTS = [
+  'webhook.secret.rotation_started',
+  'webhook.secret.rotated',
+] as const satisfies ReadonlyArray<(typeof SUPPORTED_WEBHOOK_EVENTS)[number]>;
 
 export const STELLAR_PAYMENT_EVENTS = [
   'payment.stellar.received',
@@ -30,6 +41,10 @@ export const STELLAR_PAYMENT_EVENTS = [
 ] as const satisfies ReadonlyArray<(typeof SUPPORTED_WEBHOOK_EVENTS)[number]>;
 
 export type WebhookEventType = (typeof SUPPORTED_WEBHOOK_EVENTS)[number];
+
+export function isMandatoryWebhookEvent(event: string): boolean {
+  return (MANDATORY_WEBHOOK_EVENTS as readonly string[]).includes(event);
+}
 
 @Entity('webhooks')
 export class Webhook {
@@ -60,6 +75,20 @@ export class Webhook {
 
   @Column({ default: true })
   active!: boolean;
+
+  /** Destination awaiting ownership verification; not used for deliveries. */
+  @Column({ type: 'varchar', length: 2048, nullable: true })
+  pendingUrl?: string | null;
+
+  /** SHA-256 of the outstanding verification token, scoped to id + pendingUrl. */
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false })
+  verificationTokenHash?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verificationTokenExpiresAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  urlVerifiedAt?: Date | null;
 
   @Column({ default: 0 })
   consecutiveFailures!: number;

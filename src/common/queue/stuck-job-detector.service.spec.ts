@@ -342,4 +342,108 @@ describe('StuckJobDetectorService', () => {
       expect(quarantined.length).toBe(0);
     });
   });
+
+  describe('stuck job alerting', () => {
+    let alertProvider: { sendAlert: jest.Mock };
+    let alertingService: StuckJobDetectorService;
+    let activeJobs: any[];
+
+    const stuckJob = (id: string, ageMs: number) => ({
+      id,
+      name: 'long-task',
+      timestamp: Date.now() - ageMs,
+      progressedAt: Date.now() - ageMs,
+      attemptsMade: 1,
+      moveToFailed: jest.fn().mockResolvedValue(undefined),
+    });
+
+    beforeEach(() => {
+      alertProvider = { sendAlert: jest.fn().mockResolvedValue(undefined) };
+      alertingService = new StuckJobDetectorService(alertProvider);
+      activeJobs = [];
+      alertingService.registerQueueMonitoring('alert-queue', 'long-task', { maxDurationMs: 30000 });
+      alertingService.attachQueue({
+        name: 'alert-queue',
+        getActive: jest.fn(async () => activeJobs),
+      } as any);
+    });
+
+    it('sends a structured alert with queue, job and age metadata', async () => {
+      activeJobs = [stuckJob('42', 60000)];
+
+      await alertingService.detectAndQuarantineStuckJobs();
+
+      expect(alertProvider.sendAlert).toHaveBeenCalledTimes(1);
+      const alert = alertProvider.sendAlert.mock.calls[0][0];
+      expect(alert).toMatchObject({
+        severity: 'high',
+        type: 'stuck_job_quarantined',
+        queueName: 'alert-queue',
+        jobName: 'long-task',
+        jobId: '42',
+        maxDurationMs: 30000,
+      });
+      expect(alert.ageMs).toBeGreaterThanOrEqual(60000);
+    });
+
+    it('does not alert for jobs at or below the threshold', async () => {
+      activeJobs = [stuckJob('1', 10000)];
+
+      await alertingService.detectAndQuarantineStuckJobs();
+
+      expect(alertProvider.sendAlert).not.toHaveBeenCalled();
+    });
+
+    it('does not send duplicate alerts on repeated scans', async () => {
+      activeJobs = [stuckJob('42', 60000)];
+
+      await alertingService.detectAndQuarantineStuckJobs();
+      await alertingService.detectAndQuarantineStuckJobs();
+      await alertingService.detectAndQuarantineStuckJobs();
+
+      expect(alertProvider.sendAlert).toHaveBeenCalledTimes(1);
+      expect(alertingService.getQuarantinedJobs('alert-queue')).toHaveLength(1);
+    });
+
+    it('skips alerting when alertOnQuarantine is false', async () => {
+      alertingService.registerQueueMonitoring('alert-queue', 'long-task', {
+        maxDurationMs: 30000,
+        alertOnQuarantine: false,
+      });
+      activeJobs = [stuckJob('42', 60000)];
+
+      await alertingService.detectAndQuarantineStuckJobs();
+
+      expect(alertProvider.sendAlert).not.toHaveBeenCalled();
+    });
+
+    it('survives alert provider failure and retries on the next scan', async () => {
+      alertProvider.sendAlert
+        .mockRejectedValueOnce(new Error('provider down'))
+        .mockResolvedValue(undefined);
+      activeJobs = [stuckJob('42', 60000)];
+
+      await expect(alertingService.detectAndQuarantineStuckJobs()).resolves.toBeUndefined();
+      expect(alertingService.getQuarantinedJobs('alert-queue')).toHaveLength(1);
+
+      await alertingService.detectAndQuarantineStuckJobs();
+      await alertingService.detectAndQuarantineStuckJobs();
+
+      expect(alertProvider.sendAlert).toHaveBeenCalledTimes(2);
+      expect(alertingService.getQuarantinedJobs('alert-queue')).toHaveLength(1);
+    });
+
+    it('quarantines without error when no alert provider is configured', async () => {
+      const noProvider = new StuckJobDetectorService();
+      noProvider.registerQueueMonitoring('alert-queue', 'long-task', { maxDurationMs: 30000 });
+      noProvider.attachQueue({
+        name: 'alert-queue',
+        getActive: jest.fn().mockResolvedValue([stuckJob('7', 60000)]),
+      } as any);
+
+      await noProvider.detectAndQuarantineStuckJobs();
+
+      expect(noProvider.getQuarantinedJobs('alert-queue')).toHaveLength(1);
+    });
+  });
 });

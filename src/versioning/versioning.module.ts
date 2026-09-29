@@ -4,8 +4,10 @@ import { VersionManagerService } from './version-manager.service';
 import { VersionResolverMiddleware } from './middleware/version-resolver.middleware';
 import { DeprecationInterceptor } from './interceptors/deprecation.interceptor';
 import { VersionCompatibilityGuard } from './guards/version-compatibility.guard';
+import { VersionsController } from './versions.controller';
 
 @Module({
+  controllers: [VersionsController],
   providers: [VersionManagerService, DeprecationInterceptor, VersionCompatibilityGuard, Reflector],
   exports: [VersionManagerService, DeprecationInterceptor, VersionCompatibilityGuard],
 })

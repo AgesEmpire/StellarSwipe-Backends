@@ -40,6 +40,7 @@ describe('WebhookSenderService', () => {
   };
   let signatureGenerator: {
     generateSignature: jest.Mock;
+    signWithWebhookSecret: jest.Mock;
   };
   let eventEmitter: {
     emit: jest.Mock;
@@ -66,6 +67,7 @@ describe('WebhookSenderService', () => {
     };
     signatureGenerator = {
       generateSignature: jest.fn().mockReturnValue('signed-payload'),
+      signWithWebhookSecret: jest.fn().mockReturnValue('signed-challenge'),
     };
     eventEmitter = {
       emit: jest.fn().mockReturnValue(true),
@@ -107,6 +109,57 @@ describe('WebhookSenderService', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.clearAllMocks();
+  });
+
+  describe('verification challenge', () => {
+    const challenge = {
+      event: 'webhook.verification' as const,
+      webhookId: 'webhook-1',
+      token: 'f'.repeat(64),
+      expiresAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    it('posts a signed challenge to the pending URL', async () => {
+      const webhook = makeWebhook();
+      mockedAxios.post.mockResolvedValue({ status: 200, data: {} });
+
+      await expect(
+        service.sendVerificationChallenge(
+          webhook,
+          'https://new.example.com/hook',
+          challenge,
+        ),
+      ).resolves.toBe(true);
+
+      expect(signatureGenerator.signWithWebhookSecret).toHaveBeenCalledWith(
+        challenge,
+        webhook,
+      );
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        'https://new.example.com/hook',
+        challenge,
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-StellarSwipe-Signature': 'sha256=signed-challenge',
+            'X-StellarSwipe-Event': 'webhook.verification',
+          }),
+        }),
+      );
+    });
+
+    it('returns false without leaking the token when delivery fails', async () => {
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      mockedAxios.post.mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+      await expect(
+        service.sendVerificationChallenge(
+          makeWebhook(),
+          'https://new.example.com/hook',
+          challenge,
+        ),
+      ).resolves.toBe(false);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(challenge.token);
+    });
   });
 
   describe('queueing', () => {

@@ -1,6 +1,7 @@
 import {
   Injectable,
   Inject,
+  Optional,
   UnauthorizedException,
   NotFoundException,
   ForbiddenException,
@@ -10,7 +11,6 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Keypair } from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
-import * as bcrypt from 'bcrypt';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
@@ -21,6 +21,8 @@ import { AuditAction, AuditStatus } from '../audit-log/entities/audit-log.entity
 import { SessionManagerService } from './session/session-manager.service';
 import { SessionFingerprintService } from './session/session-fingerprint.service';
 import { EmailService } from '../email/email.service';
+import { PasswordHasherService } from './password/password-hasher.service';
+import { User } from '../users/entities/user.entity';
 import { Request } from 'express';
 
 @Injectable()
@@ -35,6 +37,8 @@ export class AuthService {
   private static readonly FAILED_ATTEMPTS_WINDOW_MS = 15 * 60 * 1000;
   private static readonly LOCKOUT_DURATION_MS = 30 * 60 * 1000;
 
+  private readonly passwordHasher: PasswordHasherService;
+
   constructor(
     private jwtService: JwtService,
     private usersService: UsersService,
@@ -43,7 +47,10 @@ export class AuthService {
     private sessionFingerprintService: SessionFingerprintService,
     private emailService: EmailService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
-  ) {}
+    @Optional() passwordHasher?: PasswordHasherService,
+  ) {
+    this.passwordHasher = passwordHasher ?? new PasswordHasherService();
+  }
 
   async generateChallenge(publicKey: string): Promise<{ message: string }> {
     const nonce = crypto.randomBytes(32).toString('hex');
@@ -164,7 +171,7 @@ export class AuthService {
     }
 
     // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await this.passwordHasher.hash(password);
 
     // Create user
     const user = await this.usersService.createUser({
@@ -203,6 +210,37 @@ export class AuthService {
       },
       accessToken,
     };
+  }
+
+  /**
+   * Verifies an email/password pair. On success, a hash produced with a lower
+   * cost than the configured PASSWORD_HASH_ROUNDS is transparently upgraded;
+   * the upgrade is compare-and-set so it never clobbers a concurrent reset.
+   * Unknown emails and wrong passwords raise the same error.
+   */
+  async validatePassword(email: string, password: string): Promise<User> {
+    const user = await this.usersService.findByEmailWithPassword(email);
+    if (!user || user.isActive === false) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const { valid } = await this.passwordHasher.verifyAndUpgrade(
+      password,
+      user.password,
+      (previousHash, upgradedHash) =>
+        this.usersService.updatePasswordIfUnchanged(
+          user.id,
+          previousHash,
+          upgradedHash,
+        ),
+    );
+
+    if (!valid) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    delete user.password;
+    return user;
   }
 
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
@@ -296,7 +334,7 @@ export class AuthService {
     await this.cacheManager.del(`pwd_reset:${selector}`);
 
     // 2. Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await this.passwordHasher.hash(newPassword);
 
     // 3. Update password
     await this.usersService.updatePassword(record.userId, hashedPassword);

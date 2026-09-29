@@ -1,16 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Repository } from 'typeorm';
 import { Queue } from 'bullmq';
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
 import { NotificationChannel } from '../../notifications/entities/notification.entity';
 import { NotificationService } from '../../notifications/notification.service';
 import { Webhook } from '../entities/webhook.entity';
 import { WebhookDelivery } from '../entities/webhook-delivery.entity';
 import { WebhookPayload } from '../dto/webhook-event.dto';
 import { SignatureGeneratorService } from './signature-generator.service';
+import { WebhookDeliveryMetricsService } from './webhook-delivery-metrics.service';
 import {
   WEBHOOK_CONNECT_TIMEOUT_MS,
   WEBHOOK_DELIVERY_JOB,
@@ -22,11 +23,19 @@ import {
   WEBHOOK_PERMANENTLY_FAILED_EVENT,
   WEBHOOK_REQUEST_TIMEOUT_MS,
   WEBHOOK_RESPONSE_BODY_MAX_CHARS,
+  WEBHOOK_VERIFICATION_EVENT,
   WebhookDeliveryJobData,
   WebhookFailureKind,
   calculateWebhookBackoffDelay,
   classifyWebhookFailure,
 } from '../jobs/webhook-delivery.constants';
+
+export interface WebhookVerificationChallenge {
+  event: typeof WEBHOOK_VERIFICATION_EVENT;
+  webhookId: string;
+  token: string;
+  expiresAt: string;
+}
 
 @Injectable()
 export class WebhookSenderService {
@@ -42,12 +51,14 @@ export class WebhookSenderService {
     private readonly signatureGenerator: SignatureGeneratorService,
     private readonly eventEmitter: EventEmitter2,
     private readonly notificationService: NotificationService,
+    @Optional()
+    private readonly metrics?: WebhookDeliveryMetricsService,
   ) {}
 
   async deliverWebhook(
     webhook: Webhook,
     payload: WebhookPayload,
-  ): Promise<void> {
+  ): Promise<WebhookDelivery> {
     const delivery = this.deliveryRepo.create({
       webhookId: webhook.id,
       eventType: payload.event,
@@ -59,6 +70,42 @@ export class WebhookSenderService {
     const saved = await this.deliveryRepo.save(delivery);
 
     await this.enqueueDelivery(saved.id, false);
+    return saved;
+  }
+
+  /**
+   * Sends an ownership-verification challenge to a destination that has not
+   * been verified yet. Returns false instead of throwing on delivery failure so
+   * the caller can let the owner request a new challenge.
+   */
+  async sendVerificationChallenge(
+    webhook: Webhook,
+    url: string,
+    challenge: WebhookVerificationChallenge,
+  ): Promise<boolean> {
+    const signature = this.signatureGenerator.signWithWebhookSecret(
+      challenge,
+      webhook,
+    );
+
+    try {
+      await axios.post(url, challenge, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-StellarSwipe-Signature': `sha256=${signature}`,
+          'X-StellarSwipe-Event': WEBHOOK_VERIFICATION_EVENT,
+        },
+        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        transitional: { clarifyTimeoutError: true },
+        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
+      });
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Webhook verification challenge failed: webhook=${webhook.id} url=${url} error=${(err as Error).message}`,
+      );
+      return false;
+    }
   }
 
   async retryDelivery(deliveryId: string): Promise<void> {
@@ -104,13 +151,12 @@ export class WebhookSenderService {
     delivery.attempts = attempt;
 
     try {
-      const response = await axios.post(webhook.url, payload, {
-        headers: this.buildHeaders(payload, signature),
-        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
-        transitional: { clarifyTimeoutError: true },
-        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
-        maxBodyLength: Infinity,
-      });
+      const response = await this.postAttempt(
+        webhook,
+        payload,
+        signature,
+        attempt,
+      );
 
       await this.recordDeliverySuccess(
         delivery,
@@ -154,13 +200,12 @@ export class WebhookSenderService {
     delivery.attempts += 1;
 
     try {
-      const response = await axios.post(webhook.url, payload, {
-        headers: this.buildHeaders(payload, signature),
-        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
-        transitional: { clarifyTimeoutError: true },
-        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
-        maxBodyLength: Infinity,
-      });
+      const response = await this.postAttempt(
+        webhook,
+        payload,
+        signature,
+        delivery.attempts,
+      );
 
       await this.recordDeliverySuccess(
         delivery,
@@ -185,6 +230,54 @@ export class WebhookSenderService {
         `Reconciliation delivery attempt ${delivery.attempts} failed: delivery=${delivery.id} event=${payload.event} error=${(err as Error).message}`,
       );
       return false;
+    }
+  }
+
+  private resolveSigningSecret(webhook: Webhook, now = new Date()): string {
+    const inRotationWindow =
+      !!webhook.nextSecret &&
+      !!webhook.rotationStartedAt &&
+      !!webhook.rotationFinalizesAt &&
+      now >= webhook.rotationStartedAt &&
+      now <= webhook.rotationFinalizesAt;
+
+    return inRotationWindow ? webhook.nextSecret! : webhook.secret;
+  }
+
+  /** Sends one HTTP attempt and records its latency and outcome. */
+  private async postAttempt(
+    webhook: Webhook,
+    payload: WebhookPayload,
+    signature: string,
+    attempt: number,
+  ): Promise<AxiosResponse> {
+    const startedAt = process.hrtime.bigint();
+    const elapsedSeconds = () =>
+      Number(process.hrtime.bigint() - startedAt) / 1e9;
+
+    try {
+      const response = await axios.post(webhook.url, payload, {
+        headers: this.buildHeaders(payload, signature),
+        timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
+        transitional: { clarifyTimeoutError: true },
+        maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
+        maxBodyLength: Infinity,
+      });
+      this.metrics?.recordAttempt({
+        outcome: 'success',
+        status: response.status,
+        attempt,
+        durationSeconds: elapsedSeconds(),
+      });
+      return response;
+    } catch (err) {
+      this.metrics?.recordAttempt({
+        outcome: classifyWebhookFailure(err),
+        status: (err as AxiosError).response?.status,
+        attempt,
+        durationSeconds: elapsedSeconds(),
+      });
+      throw err;
     }
   }
 
@@ -230,6 +323,7 @@ export class WebhookSenderService {
     delivery.nextRetryAt = undefined;
     delivery.errorMessage = undefined;
     await this.deliveryRepo.save(delivery);
+    this.metrics?.recordFinalOutcome('delivered', delivery.attempts);
 
     await this.webhookRepo.update(delivery.webhook.id, {
       consecutiveFailures: 0,
@@ -258,6 +352,7 @@ export class WebhookSenderService {
       delivery.status = 'permanently_failed';
       delivery.nextRetryAt = undefined;
       await this.deliveryRepo.save(delivery);
+      this.metrics?.recordFinalOutcome('permanently_failed', attempt);
       await this.handlePermanentFailure(delivery, error);
       return;
     }
@@ -266,6 +361,7 @@ export class WebhookSenderService {
     delivery.status = 'failed';
     delivery.nextRetryAt = new Date(Date.now() + delayMs);
     await this.deliveryRepo.save(delivery);
+    this.metrics?.recordRetryScheduled(kind);
 
     this.logger.warn(
       `Webhook delivery attempt ${attempt}/${WEBHOOK_MAX_ATTEMPTS} failed [${kind}]: webhook=${delivery.webhook.id} event=${delivery.eventType} error=${error.message} nextRetry=${delivery.nextRetryAt.toISOString()}`,
