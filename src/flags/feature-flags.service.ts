@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { FEATURE_FLAG_SCHEMA, validateFeatureFlagConfig } from './feature-flag-config.validator';
 
 export interface FeatureFlag {
   name: string;
@@ -28,63 +29,27 @@ export class FeatureFlagsService {
   }
 
   /**
-   * Initialize default feature flags from environment
+   * Initialize feature flags from environment. Configuration is validated
+   * against FEATURE_FLAG_SCHEMA and a malformed value aborts startup.
    */
   private initializeFlags(): void {
     this.logger.log('Initializing feature flags...');
 
-    // Default flags - can be configured via environment variables
-    const defaultFlags: FeatureFlag[] = [
-      {
-        name: 'new_portfolio_ui',
-        enabled: this.getEnvBoolean('FF_NEW_PORTFOLIO_UI', false),
-        description: 'Gradual rollout of new portfolio UI',
-        rolloutPercentage: parseInt(
-          this.configService.get<string>('FF_NEW_PORTFOLIO_UI_ROLLOUT') || '0',
-          10,
-        ),
-      },
-      {
-        name: 'advanced_analytics',
-        enabled: this.getEnvBoolean('FF_ADVANCED_ANALYTICS', false),
-        description: 'Advanced analytics features',
-        rolloutPercentage: parseInt(
-          this.configService.get<string>('FF_ADVANCED_ANALYTICS_ROLLOUT') || '0',
-          10,
-        ),
-      },
-      {
-        name: 'soroban_contracts',
-        enabled: this.getEnvBoolean('FF_SOROBAN_CONTRACTS', false),
-        description: 'Soroban smart contract integration',
-        rolloutPercentage: parseInt(
-          this.configService.get<string>('FF_SOROBAN_CONTRACTS_ROLLOUT') || '0',
-          10,
-        ),
-      },
-      {
-        name: 'automated_trading',
-        enabled: this.getEnvBoolean('FF_AUTOMATED_TRADING', false),
-        description: 'Automated trading features',
-        rolloutPercentage: parseInt(
-          this.configService.get<string>('FF_AUTOMATED_TRADING_ROLLOUT') || '0',
-          10,
-        ),
-      },
-      {
-        name: 'signal_marketplace',
-        enabled: this.getEnvBoolean('FF_SIGNAL_MARKETPLACE', false),
-        description: 'Signal marketplace features',
-        rolloutPercentage: parseInt(
-          this.configService.get<string>('FF_SIGNAL_MARKETPLACE_ROLLOUT') || '0',
-          10,
-        ),
-      },
-    ];
+    const env: Record<string, string | undefined> = { ...process.env };
+    for (const def of FEATURE_FLAG_SCHEMA) {
+      for (const key of [def.envKey, `${def.envKey}_ROLLOUT`]) {
+        const value = this.configService.get<string>(key);
+        if (value !== undefined) env[key] = String(value);
+      }
+    }
+    env.NODE_ENV = this.configService.get<string>('NODE_ENV') ?? env.NODE_ENV;
 
-    defaultFlags.forEach((flag) => {
-      this.flags.set(flag.name, flag);
-    });
+    try {
+      validateFeatureFlagConfig(env).forEach((flag) => this.flags.set(flag.name, flag));
+    } catch (error) {
+      this.logger.error((error as Error).message);
+      throw error;
+    }
 
     this.logger.log(`Initialized ${this.flags.size} feature flags`);
   }
@@ -254,14 +219,5 @@ export class FeatureFlagsService {
       hash = hash & hash; // Convert to 32-bit integer
     }
     return Math.abs(hash);
-  }
-
-  /**
-   * Parse boolean from environment variable
-   */
-  private getEnvBoolean(key: string, defaultValue: boolean): boolean {
-    const value = this.configService.get<string>(key);
-    if (value === undefined) return defaultValue;
-    return value.toLowerCase() === 'true' || value === '1';
   }
 }
