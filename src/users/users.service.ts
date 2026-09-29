@@ -84,6 +84,30 @@ export class UsersService {
         return user;
     }
 
+    /**
+     * Resolve a user for security-event processing without throwing when the
+     * account is missing or soft-deleted. Returns null so callers can handle
+     * the absence deterministically and without leaking account existence.
+     */
+    async findByIdForSecurityEvent(id: string): Promise<User | null> {
+        if (!id) {
+            return null;
+        }
+
+        try {
+            return await this.userRepository.findOne({
+                where: { id },
+                withDeleted: true,
+            });
+        } catch (error) {
+            this.logger.warn(
+                'Security-event user lookup failed',
+                (error as Error).message,
+            );
+            return null;
+        }
+    }
+
     async findByWalletAddress(walletAddress: string): Promise<User> {
         const user = await this.userRepository.findOne({
             where: { walletAddress },
@@ -236,32 +260,5 @@ export class UsersService {
             { token },
             { lastActivityAt: new Date() },
         );
-    }
-
-    async getActiveSessions(walletAddress: string): Promise<Session[]> {
-        const user = await this.findByWalletAddress(walletAddress);
-        return this.sessionRepository.find({
-            where: { userId: user.id, isActive: true },
-        });
-    }
-
-    async updateWalletAddress(userId: string, walletAddress: string): Promise<User> {
-        const user = await this.findById(userId);
-
-        // Check if wallet already linked to another user
-        const existing = await this.userRepository.findOne({ where: { walletAddress } });
-        if (existing && existing.id !== userId) {
-            throw new ConflictException('This wallet is already linked to another account');
-        }
-
-        user.walletAddress = walletAddress;
-        const saved = await this.userRepository.save(user);
-        // Invalidation hook: evict profile cache after wallet update
-        await this.cacheInvalidation.invalidateUserProfile(userId);
-        return saved;
-    }
-
-    async updatePassword(userId: string, hashedPassword: string): Promise<void> {
-        await this.userRepository.update(userId, { password: hashedPassword });
     }
 }

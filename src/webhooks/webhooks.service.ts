@@ -3,13 +3,26 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
-import { Webhook, SUPPORTED_WEBHOOK_EVENTS } from './entities/webhook.entity';
-import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { createHash, randomBytes } from 'crypto';
+import {
+  Webhook,
+  SUPPORTED_WEBHOOK_EVENTS,
+  isMandatoryWebhookEvent,
+} from './entities/webhook.entity';
+import {
+  DeliveryStatus,
+  WebhookDelivery,
+} from './entities/webhook-delivery.entity';
+import {
+  WebhookReplayAudit,
+  WebhookReplayOutcome,
+} from './entities/webhook-replay-audit.entity';
 import {
   RegisterWebhookDto,
   UpdateWebhookDto,
@@ -18,10 +31,21 @@ import { WebhookPayload } from './dto/webhook-event.dto';
 import { SignatureGeneratorService } from './services/signature-generator.service';
 import { WebhookSenderService } from './services/webhook-sender.service';
 import { SsrfValidationPipe } from './pipes/ssrf-validation.pipe';
+import {
+  WEBHOOK_VERIFICATION_EVENT,
+  WEBHOOK_VERIFICATION_TOKEN_TTL_MS,
+} from './jobs/webhook-delivery.constants';
 
 const DEFAULT_MAX_DELIVERY_ATTEMPTS = 5;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60000;
+
+/** Identical replays (same delivery to the same webhook) are rejected within this window. */
+export const WEBHOOK_REPLAY_DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
+
+export interface WebhookReplayRecord extends WebhookReplayAudit {
+  deliveryStatus: DeliveryStatus | null;
+}
 
 export interface DeadLetterEntry {
   deliveryId: string;
@@ -57,6 +81,8 @@ export class WebhooksService {
     private readonly webhookRepo: Repository<Webhook>,
     @InjectRepository(WebhookDelivery)
     private readonly deliveryRepo: Repository<WebhookDelivery>,
+    @InjectRepository(WebhookReplayAudit)
+    private readonly replayAuditRepo: Repository<WebhookReplayAudit>,
     private readonly signatureGenerator: SignatureGeneratorService,
     private readonly webhookSender: WebhookSenderService,
   ) {}
@@ -67,17 +93,19 @@ export class WebhooksService {
 
     const secret = this.signatureGenerator.generateSecret();
 
+    // New endpoints stay inactive until the destination proves ownership.
     const webhook = this.webhookRepo.create({
       userId,
       url: dto.url,
-      events: dto.events as string[],
+      events: this.normalizeEvents(dto.events),
       secret,
-      active: true,
+      active: false,
       consecutiveFailures: 0,
       description: dto.description,
     });
 
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    return this.issueEndpointVerification(saved, dto.url);
   }
 
   async findAllForUser(userId: string): Promise<Webhook[]> {
@@ -105,18 +133,120 @@ export class WebhooksService {
       this.validateEvents(dto.events as string[]);
     }
 
-    if (dto.url !== undefined) {
-      await this.ssrfPipe.transform(dto.url);
-      webhook.url = dto.url;
+    if (dto.active && !webhook.urlVerifiedAt) {
+      throw new BadRequestException(
+        'Webhook endpoint must be verified before it can be activated',
+      );
     }
-    if (dto.events !== undefined) webhook.events = dto.events as string[];
+    const urlChanged = dto.url !== undefined && dto.url !== webhook.url;
+    if (urlChanged) await this.ssrfPipe.transform(dto.url);
+
+    if (dto.events !== undefined)
+      webhook.events = this.normalizeEvents(dto.events);
     if (dto.active !== undefined) {
       webhook.active = dto.active;
       if (dto.active) webhook.consecutiveFailures = 0;
     }
     if (dto.description !== undefined) webhook.description = dto.description;
 
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    // A changed URL only replaces the current one once it has been verified.
+    return urlChanged
+      ? this.issueEndpointVerification(saved, dto.url as string)
+      : saved;
+  }
+
+  async resendEndpointVerification(
+    userId: string,
+    id: string,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, id);
+    if (!webhook.pendingUrl) {
+      throw new BadRequestException('No endpoint verification is pending');
+    }
+    return this.issueEndpointVerification(webhook, webhook.pendingUrl);
+  }
+
+  /**
+   * Confirms ownership of the pending destination using the token delivered
+   * to it. Tokens are bound to the webhook and URL, expire, and are consumed
+   * atomically so they cannot be replayed.
+   */
+  async verifyEndpoint(
+    userId: string,
+    id: string,
+    token: string,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, id);
+    if (!webhook.pendingUrl || !webhook.verificationTokenExpiresAt) {
+      throw new BadRequestException('No endpoint verification is pending');
+    }
+    if (webhook.verificationTokenExpiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Verification token has expired');
+    }
+
+    const result = await this.webhookRepo.update(
+      {
+        id: webhook.id,
+        pendingUrl: webhook.pendingUrl,
+        verificationTokenHash: this.hashVerificationToken(
+          webhook.id,
+          webhook.pendingUrl,
+          token,
+        ),
+        verificationTokenExpiresAt: MoreThan(new Date()),
+      },
+      {
+        url: webhook.pendingUrl,
+        pendingUrl: null,
+        verificationTokenHash: null,
+        verificationTokenExpiresAt: null,
+        urlVerifiedAt: new Date(),
+        active: true,
+        consecutiveFailures: 0,
+      },
+    );
+    if (!result.affected) {
+      throw new BadRequestException('Invalid verification token');
+    }
+
+    this.logger.log(`Verified endpoint for webhook ${webhook.id}`);
+    return this.findOne(userId, id);
+  }
+
+  private async issueEndpointVerification(
+    webhook: Webhook,
+    url: string,
+  ): Promise<Webhook> {
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + WEBHOOK_VERIFICATION_TOKEN_TTL_MS);
+
+    await this.webhookRepo.update(webhook.id, {
+      pendingUrl: url,
+      verificationTokenHash: this.hashVerificationToken(webhook.id, url, token),
+      verificationTokenExpiresAt: expiresAt,
+    });
+    webhook.pendingUrl = url;
+    webhook.verificationTokenExpiresAt = expiresAt;
+
+    await this.webhookSender.sendVerificationChallenge(webhook, url, {
+      event: WEBHOOK_VERIFICATION_EVENT,
+      webhookId: webhook.id,
+      token,
+      expiresAt: expiresAt.toISOString(),
+    });
+
+    return webhook;
+  }
+
+  private hashVerificationToken(
+    webhookId: string,
+    url: string,
+    token: string,
+  ): string {
+    return createHash('sha256')
+      .update(`${webhookId}:${url}:${token}`)
+      .digest('hex');
   }
 
   async remove(userId: string, id: string): Promise<void> {
@@ -155,18 +285,66 @@ export class WebhooksService {
     await this.webhookSender.retryDelivery(deliveryId);
   }
 
+  /**
+   * Replays a past delivery to one of the caller's webhooks. Every attempt,
+   * including denied and duplicate ones, is recorded in an immutable audit log.
+   */
   async replayToSubscriber(
     userId: string,
     deliveryId: string,
     subscriberWebhookId: string,
-  ): Promise<void> {
+  ): Promise<WebhookReplayAudit> {
+    const audit = (
+      outcome: WebhookReplayOutcome,
+      reason?: string,
+      replayDeliveryId?: string,
+    ) =>
+      this.recordReplayAudit({
+        requestedBy: userId,
+        originalDeliveryId: deliveryId,
+        targetWebhookId: subscriberWebhookId,
+        outcome,
+        reason,
+        replayDeliveryId,
+      });
+
     const delivery = await this.deliveryRepo.findOne({
       where: { id: deliveryId },
+      relations: ['webhook'],
     });
-    if (!delivery)
+    if (!delivery) {
+      await audit('denied', 'Delivery not found');
       throw new NotFoundException(`Delivery not found: ${deliveryId}`);
+    }
+    if (delivery.webhook?.userId !== userId) {
+      await audit('denied', 'Delivery belongs to another user');
+      throw new ForbiddenException();
+    }
 
-    const webhook = await this.findOne(userId, subscriberWebhookId);
+    let webhook: Webhook;
+    try {
+      webhook = await this.findOne(userId, subscriberWebhookId);
+    } catch (err) {
+      await audit('denied', (err as Error).message);
+      throw err;
+    }
+
+    const recentReplay = await this.replayAuditRepo.findOne({
+      where: {
+        originalDeliveryId: deliveryId,
+        targetWebhookId: subscriberWebhookId,
+        outcome: 'queued',
+        createdAt: MoreThan(
+          new Date(Date.now() - WEBHOOK_REPLAY_DUPLICATE_WINDOW_MS),
+        ),
+      },
+    });
+    if (recentReplay) {
+      await audit('duplicate', `Already replayed by ${recentReplay.id}`);
+      throw new ConflictException(
+        `Delivery ${deliveryId} was already replayed to webhook ${subscriberWebhookId}`,
+      );
+    }
 
     const replayPayload = {
       ...(delivery.payload as any),
@@ -175,20 +353,77 @@ export class WebhooksService {
       originalDeliveryId: deliveryId,
     };
 
-    await this.webhookSender.deliverWebhook(webhook, replayPayload);
+    const replayDelivery = await this.webhookSender.deliverWebhook(
+      webhook,
+      replayPayload,
+    );
+    return audit('queued', undefined, replayDelivery.id);
+  }
+
+  async getReplayAudits(
+    userId: string,
+    webhookId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<{ replays: WebhookReplayRecord[]; total: number }> {
+    await this.findOne(userId, webhookId);
+
+    const [audits, total] = await this.replayAuditRepo.findAndCount({
+      where: { targetWebhookId: webhookId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    const deliveryIds = audits
+      .map((a) => a.replayDeliveryId)
+      .filter((id): id is string => !!id);
+    const deliveries = deliveryIds.length
+      ? await this.deliveryRepo.find({ where: { id: In(deliveryIds) } })
+      : [];
+    const statusById = new Map(deliveries.map((d) => [d.id, d.status]));
+
+    const replays = audits.map((a) => ({
+      ...a,
+      deliveryStatus: a.replayDeliveryId
+        ? (statusById.get(a.replayDeliveryId) ?? null)
+        : null,
+    }));
+
+    return { replays, total };
+  }
+
+  private async recordReplayAudit(
+    entry: Omit<WebhookReplayAudit, 'id' | 'createdAt'>,
+  ): Promise<WebhookReplayAudit> {
+    const audit = await this.replayAuditRepo.save(
+      this.replayAuditRepo.create(entry),
+    );
+    this.logger.log(
+      `Webhook replay ${audit.outcome}: delivery=${entry.originalDeliveryId} target=${entry.targetWebhookId} requestedBy=${entry.requestedBy}`,
+    );
+    return audit;
   }
 
   async dispatchEvent(
     eventName: string,
     eventData: Record<string, unknown>,
   ): Promise<void> {
-    const webhooks = await this.webhookRepo
+    const mandatory = isMandatoryWebhookEvent(eventName);
+    const query = this.webhookRepo
       .createQueryBuilder('w')
-      .where('w.active = true')
-      .andWhere(":event = ANY(string_to_array(w.events, ','))", {
+      .where('w.active = true');
+    if (!mandatory) {
+      query.andWhere(":event = ANY(string_to_array(w.events, ','))", {
         event: eventName,
-      })
-      .getMany();
+      });
+    }
+
+    // Subscribers only receive events they opted into; mandatory security
+    // notifications bypass the filter.
+    const webhooks = (await query.getMany()).filter(
+      (webhook) => mandatory || webhook.events.includes(eventName),
+    );
 
     if (webhooks.length === 0) return;
 
@@ -298,7 +533,16 @@ export class WebhooksService {
     this.logger.log(
       `Initiated secret rotation for webhook ${webhookId}, window: ${rotationWindowMs}ms`,
     );
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    await this.sendSecurityNotification(
+      saved,
+      'webhook.secret.rotation_started',
+      {
+        webhookId,
+        rotationFinalizesAt: saved.rotationFinalizesAt?.toISOString(),
+      },
+    );
+    return saved;
   }
 
   async finalizeSecretRotation(
@@ -317,7 +561,40 @@ export class WebhooksService {
     webhook.rotationFinalizesAt = undefined;
 
     this.logger.log(`Finalized secret rotation for webhook ${webhookId}`);
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    await this.sendSecurityNotification(saved, 'webhook.secret.rotated', {
+      webhookId,
+    });
+    return saved;
+  }
+
+  /**
+   * Delivers a mandatory security notification to a single webhook. These are
+   * sent regardless of the webhook's event filter and never block the caller.
+   */
+  private async sendSecurityNotification(
+    webhook: Webhook,
+    event: WebhookPayload['event'],
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (!webhook.active) return;
+
+    try {
+      await this.webhookSender.deliverWebhook(webhook, {
+        event,
+        timestamp: new Date().toISOString(),
+        deliveryId: uuidv4(),
+        data,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to queue security notification "${event}" for webhook ${webhook.id}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private normalizeEvents(events: string[]): string[] {
+    return [...new Set(events)];
   }
 
   private validateEvents(events: string[]): void {

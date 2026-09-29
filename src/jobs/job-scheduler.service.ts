@@ -3,6 +3,10 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { ConfigService } from '@nestjs/config';
 import { computeBackoffDelayMs, isPermanentJobError } from '../common/retry';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
+
+/** Default lease for a scheduled run; renewed while the handler is still running. */
+export const DEFAULT_JOB_LOCK_TTL_MS = 5 * 60_000;
 
 export interface JobDefinition {
   /** Unique name used as the key in SchedulerRegistry */
@@ -25,6 +29,12 @@ export interface JobDefinition {
    * across job instances; "none" disables randomization (useful in tests).
    */
   jitter?: 'full' | 'none';
+  /**
+   * Lease duration in ms for the distributed lock that keeps a run exclusive
+   * across replicas (default 5 min). The lease is renewed while the handler
+   * runs, so this only bounds how long a crashed instance can block the job.
+   */
+  lockTtlMs?: number;
 }
 
 export interface JobExecution {
@@ -60,17 +70,23 @@ export interface JobExecution {
  *    failure (bad input, auth, not-found, or an explicit `PermanentError`)
  *    short-circuits retries immediately instead of burning through
  *    `maxRetries` on an error that will never succeed.
+ *  - Guards every run (including retries) with a Redis-backed distributed
+ *    lock, so in a multi-replica deployment only one instance executes a
+ *    job at a time; the others skip that tick. A lease abandoned by a
+ *    crashed instance expires after `lockTtlMs` and the job recovers.
  */
 @Injectable()
 export class JobSchedulerService implements OnModuleDestroy {
   private readonly logger = new Logger(JobSchedulerService.name);
   private readonly executions = new Map<string, JobExecution[]>();
   private readonly retryTimers: ReturnType<typeof setTimeout>[] = [];
+  private readonly lockTtls = new Map<string, number>();
   private readonly MAX_HISTORY = 20;
 
   constructor(
     private readonly schedulerRegistry: SchedulerRegistry,
     private readonly config: ConfigService,
+    private readonly lock: DistributedLockService,
   ) {}
 
   /**
@@ -104,6 +120,7 @@ export class JobSchedulerService implements OnModuleDestroy {
     job.start();
 
     this.executions.set(def.name, []);
+    this.lockTtls.set(def.name, def.lockTtlMs ?? DEFAULT_JOB_LOCK_TTL_MS);
     this.logger.log(`Registered job "${def.name}" with cron "${cron}"`);
   }
 
@@ -153,6 +170,12 @@ export class JobSchedulerService implements OnModuleDestroy {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
+  /**
+   * Runs one attempt under the job's distributed lock. If another replica
+   * holds the lease the attempt is skipped; if the lock store is unreachable
+   * the attempt is also skipped (fail closed) rather than risking every
+   * replica running the job at once.
+   */
   private async runWithRetry(
     name: string,
     handler: () => Promise<void>,
@@ -161,6 +184,44 @@ export class JobSchedulerService implements OnModuleDestroy {
     attempt = 1,
     maxRetryDelayMs = 60_000,
     jitter: 'full' | 'none' = 'full',
+  ): Promise<void> {
+    const lockTtlMs = this.lockTtls.get(name) ?? DEFAULT_JOB_LOCK_TTL_MS;
+    try {
+      const { ran } = await this.lock.withLock(
+        `scheduled-job:${name}`,
+        lockTtlMs,
+        () =>
+          this.execute(
+            name,
+            handler,
+            maxRetries,
+            baseDelayMs,
+            attempt,
+            maxRetryDelayMs,
+            jitter,
+          ),
+      );
+      if (!ran) {
+        this.logger.debug(
+          `Job "${name}" skipped — another instance holds its lease`,
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Job "${name}" skipped — distributed lock unavailable: ${message}`,
+      );
+    }
+  }
+
+  private async execute(
+    name: string,
+    handler: () => Promise<void>,
+    maxRetries: number,
+    baseDelayMs: number,
+    attempt: number,
+    maxRetryDelayMs: number,
+    jitter: 'full' | 'none',
   ): Promise<void> {
     const exec: JobExecution = {
       jobName: name,

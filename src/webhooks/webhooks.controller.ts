@@ -17,7 +17,13 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WebhooksService } from './webhooks.service';
-import { RegisterWebhookDto, UpdateWebhookDto, SUPPORTED_WEBHOOK_EVENTS } from './dto/register-webhook.dto';
+import {
+  RegisterWebhookDto,
+  UpdateWebhookDto,
+  SUPPORTED_WEBHOOK_EVENTS,
+  MANDATORY_WEBHOOK_EVENTS,
+} from './dto/register-webhook.dto';
+import { VerifyWebhookEndpointDto } from './dto/verify-webhook-endpoint.dto';
 import { toWebhookResponse } from './dto/webhook-response.dto';
 
 @UseGuards(JwtAuthGuard)
@@ -39,7 +45,10 @@ export class WebhooksController {
 
   @Get('events')
   getSupportedEvents() {
-    return { events: SUPPORTED_WEBHOOK_EVENTS };
+    return {
+      events: SUPPORTED_WEBHOOK_EVENTS,
+      mandatoryEvents: MANDATORY_WEBHOOK_EVENTS,
+    };
   }
 
   @Get(':id')
@@ -61,6 +70,25 @@ export class WebhooksController {
     return toWebhookResponse(
       await this.webhooksService.update(req.user.id, id, dto),
     );
+  }
+
+  @Post(':id/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyEndpoint(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyWebhookEndpointDto,
+  ) {
+    return this.webhooksService.verifyEndpoint(req.user.id, id, dto.token);
+  }
+
+  @Post(':id/verify/resend')
+  @HttpCode(HttpStatus.ACCEPTED)
+  resendEndpointVerification(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.webhooksService.resendEndpointVerification(req.user.id, id);
   }
 
   @Delete(':id')
@@ -99,6 +127,16 @@ export class WebhooksController {
     @Param('webhookId', ParseUUIDPipe) webhookId: string,
   ) {
     return this.webhooksService.replayToSubscriber(req.user.id, deliveryId, webhookId);
+  }
+
+  @Get(':id/replays')
+  getReplays(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+  ) {
+    return this.webhooksService.getReplayAudits(req.user.id, id, limit, offset);
   }
 
   @Post(':id/secret-rotation/initiate')

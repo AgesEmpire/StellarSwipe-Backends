@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { HttpRetryService } from './http-retry.service';
 import { CircuitBreakerService } from './circuit-breaker.service';
+import { ProviderConcurrencyService } from './provider-concurrency.service';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { PrometheusService } from '../monitoring/metrics/prometheus.service';
 import { Registry } from 'prom-client';
@@ -25,6 +26,7 @@ import { defaultHttpModuleOptions } from './http-client-defaults';
   ],
   providers: [
     HttpRetryService,
+    ProviderConcurrencyService,
     {
       provide: CircuitBreakerService,
       useFactory: (prometheus: PrometheusService) =>
@@ -32,6 +34,10 @@ import { defaultHttpModuleOptions } from './http-client-defaults';
       inject: [PrometheusService],
     },
   ],
-  exports: [HttpRetryService, CircuitBreakerService],
+  exports: [
+    HttpRetryService,
+    CircuitBreakerService,
+    ProviderConcurrencyService,
+  ],
 })
 export class HttpRetryModule {}

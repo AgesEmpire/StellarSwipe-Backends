@@ -1,4 +1,4 @@
-name: SDK Type Drift Check
+name: OpenAPI Spec Drift Check
 
 on:
   pull_request:
@@ -7,8 +7,8 @@ on:
     branches: [main, develop]
 
 jobs:
-  sdk-drift:
-    name: Check OpenAPI → SDK type sync
+  openapi-drift:
+    name: Detect OpenAPI specification drift
     runs-on: ubuntu-latest
 
     services:
@@ -47,7 +47,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ── Step 1: Generate the OpenAPI spec from the built application ──────
+      # ── Step 1: Generate the OpenAPI spec deterministically ───────────────
       - name: Build application
         run: npm run build
         env:
@@ -75,71 +75,60 @@ jobs:
           path: docs/generated/openapi.json
           retention-days: 7
 
-      # ── Step 2: Regenerate SDK types into a temp location ─────────────────
-      - name: Regenerate SDK types to temp location
+      # ── Step 2: Compare generated spec against the committed spec ─────────
+      - name: Check for OpenAPI specification drift
         run: |
-          npx --yes openapi-typescript@6 \
-            docs/generated/openapi.json \
-            --output /tmp/openapi.generated.ts
+          COMMITTED="docs/openapi.json"
+          GENERATED="docs/generated/openapi.json"
 
-      # ── Step 3: Fail if committed types differ from regenerated types ──────
-      - name: Check for SDK type drift
-        run: |
-          COMMITTED="sdk/typescript/src/types/openapi.generated.ts"
-          GENERATED="/tmp/openapi.generated.ts"
-
-          # If the committed generated file doesn't exist yet, this is itself
-          # a drift — the file should be committed after initial generation.
+          # If the committed spec doesn't exist yet, this is itself a drift —
+          # the spec should be committed after initial generation.
           if [ ! -f "${COMMITTED}" ]; then
             echo "❌  ${COMMITTED} does not exist."
             echo ""
             echo "Generate it locally and commit:"
             echo "    npm run export:openapi"
-            echo "    npm run sdk:generate-types"
             echo "    git add ${COMMITTED}"
-            echo "    git commit -m 'chore(sdk): add generated OpenAPI types'"
+            echo "    git commit -m 'chore(openapi): add committed specification'"
             exit 1
           fi
 
-          # Strip auto-generated timestamp comments before diffing to avoid
-          # false positives from header-only changes.
-          strip_comments() {
-            grep -v '^\s*/\*' "$1" | grep -v '^\s*\*' | grep -v '^\s*//' || true
-          }
+          # Normalise both specs so ordering and formatting differences do not
+          # produce false positives. jq -S sorts object keys recursively.
+          jq -S . "${COMMITTED}" > /tmp/committed_openapi.json
+          jq -S . "${GENERATED}"  > /tmp/generated_openapi.json
 
-          strip_comments "${COMMITTED}"  > /tmp/committed_clean.ts
-          strip_comments "${GENERATED}"  > /tmp/generated_clean.ts
-
-          if ! diff -u /tmp/committed_clean.ts /tmp/generated_clean.ts; then
+          if ! diff -u /tmp/committed_openapi.json /tmp/generated_openapi.json; then
             echo ""
-            echo "❌  SDK types have drifted from the current OpenAPI spec."
+            echo "❌  OpenAPI specification has drifted from the committed spec."
+            echo "    Controller or DTO changes produced undocumented API drift."
             echo ""
-            echo "To fix, run locally:"
+            echo "If the drift is intentional, update the committed spec locally:"
             echo "    npm run export:openapi"
-            echo "    npm run sdk:generate-types"
-            echo "    git add sdk/typescript/src/types/openapi.generated.ts"
-            echo "    git commit -m 'chore(sdk): regenerate types from updated OpenAPI spec'"
+            echo "    cp docs/generated/openapi.json docs/openapi.json"
+            echo "    git add docs/openapi.json"
+            echo "    git commit -m 'chore(openapi): update committed specification'"
             echo ""
             echo "Then push and re-run CI."
             exit 1
           fi
 
-          echo "✅  SDK types are in sync with the OpenAPI spec."
+          echo "✅  OpenAPI specification is in sync with the committed spec."
 
       # ── Upload diff artifact on failure for easier debugging ──────────────
       - name: Upload drift diff on failure
         if: failure()
         run: |
           diff \
-            sdk/typescript/src/types/openapi.generated.ts \
-            /tmp/openapi.generated.ts \
-            > /tmp/sdk-drift.patch || true
+            /tmp/committed_openapi.json \
+            /tmp/generated_openapi.json \
+            > /tmp/openapi-drift.patch || true
         continue-on-error: true
 
       - name: Upload drift diff artifact
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: sdk-type-drift-diff
-          path: /tmp/sdk-drift.patch
+          name: openapi-drift-diff
+          path: /tmp/openapi-drift.patch
           retention-days: 3
