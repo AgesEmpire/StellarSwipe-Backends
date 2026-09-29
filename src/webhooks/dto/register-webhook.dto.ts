@@ -5,8 +5,13 @@ import {
   IsString,
   IsOptional,
   IsBoolean,
+  IsIn,
 } from 'class-validator';
-import { SUPPORTED_WEBHOOK_EVENTS, WebhookEventType } from '../entities/webhook.entity';
+import {
+  MANDATORY_WEBHOOK_EVENTS,
+  SUPPORTED_WEBHOOK_EVENTS,
+  WebhookEventType,
+} from '../entities/webhook.entity';
 
 export class RegisterWebhookDto {
   @IsUrl({ require_tld: false, require_protocol: true })
@@ -15,6 +20,7 @@ export class RegisterWebhookDto {
   @IsArray()
   @ArrayNotEmpty()
   @IsString({ each: true })
+  @IsIn(SUPPORTED_WEBHOOK_EVENTS, { each: true })
   events!: WebhookEventType[];
 
   @IsOptional()
@@ -31,6 +37,7 @@ export class UpdateWebhookDto {
   @IsArray()
   @ArrayNotEmpty()
   @IsString({ each: true })
+  @IsIn(SUPPORTED_WEBHOOK_EVENTS, { each: true })
   events?: WebhookEventType[];
 
   @IsOptional()
@@ -42,4 +49,4 @@ export class UpdateWebhookDto {
   description?: string;
 }
 
-export { SUPPORTED_WEBHOOK_EVENTS };
+export { SUPPORTED_WEBHOOK_EVENTS, MANDATORY_WEBHOOK_EVENTS };

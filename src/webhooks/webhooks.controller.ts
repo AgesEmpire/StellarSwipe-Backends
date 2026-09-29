@@ -17,7 +17,12 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WebhooksService } from './webhooks.service';
-import { RegisterWebhookDto, UpdateWebhookDto, SUPPORTED_WEBHOOK_EVENTS } from './dto/register-webhook.dto';
+import {
+  RegisterWebhookDto,
+  UpdateWebhookDto,
+  SUPPORTED_WEBHOOK_EVENTS,
+  MANDATORY_WEBHOOK_EVENTS,
+} from './dto/register-webhook.dto';
 import { VerifyWebhookEndpointDto } from './dto/verify-webhook-endpoint.dto';
 
 @UseGuards(JwtAuthGuard)
@@ -37,7 +42,10 @@ export class WebhooksController {
 
   @Get('events')
   getSupportedEvents() {
-    return { events: SUPPORTED_WEBHOOK_EVENTS };
+    return {
+      events: SUPPORTED_WEBHOOK_EVENTS,
+      mandatoryEvents: MANDATORY_WEBHOOK_EVENTS,
+    };
   }
 
   @Get(':id')

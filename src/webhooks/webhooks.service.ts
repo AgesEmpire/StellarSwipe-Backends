@@ -9,7 +9,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash, randomBytes } from 'crypto';
-import { Webhook, SUPPORTED_WEBHOOK_EVENTS } from './entities/webhook.entity';
+import {
+  Webhook,
+  SUPPORTED_WEBHOOK_EVENTS,
+  isMandatoryWebhookEvent,
+} from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import {
   RegisterWebhookDto,
@@ -76,7 +80,7 @@ export class WebhooksService {
     const webhook = this.webhookRepo.create({
       userId,
       url: dto.url,
-      events: dto.events as string[],
+      events: this.normalizeEvents(dto.events),
       secret,
       active: false,
       consecutiveFailures: 0,
@@ -117,11 +121,11 @@ export class WebhooksService {
         'Webhook endpoint must be verified before it can be activated',
       );
     }
-
     const urlChanged = dto.url !== undefined && dto.url !== webhook.url;
     if (urlChanged) await this.ssrfPipe.transform(dto.url);
 
-    if (dto.events !== undefined) webhook.events = dto.events as string[];
+    if (dto.events !== undefined)
+      webhook.events = this.normalizeEvents(dto.events);
     if (dto.active !== undefined) {
       webhook.active = dto.active;
       if (dto.active) webhook.consecutiveFailures = 0;
@@ -291,13 +295,21 @@ export class WebhooksService {
     eventName: string,
     eventData: Record<string, unknown>,
   ): Promise<void> {
-    const webhooks = await this.webhookRepo
+    const mandatory = isMandatoryWebhookEvent(eventName);
+    const query = this.webhookRepo
       .createQueryBuilder('w')
-      .where('w.active = true')
-      .andWhere(":event = ANY(string_to_array(w.events, ','))", {
+      .where('w.active = true');
+    if (!mandatory) {
+      query.andWhere(":event = ANY(string_to_array(w.events, ','))", {
         event: eventName,
-      })
-      .getMany();
+      });
+    }
+
+    // Subscribers only receive events they opted into; mandatory security
+    // notifications bypass the filter.
+    const webhooks = (await query.getMany()).filter(
+      (webhook) => mandatory || webhook.events.includes(eventName),
+    );
 
     if (webhooks.length === 0) return;
 
@@ -407,7 +419,16 @@ export class WebhooksService {
     this.logger.log(
       `Initiated secret rotation for webhook ${webhookId}, window: ${rotationWindowMs}ms`,
     );
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    await this.sendSecurityNotification(
+      saved,
+      'webhook.secret.rotation_started',
+      {
+        webhookId,
+        rotationFinalizesAt: saved.rotationFinalizesAt?.toISOString(),
+      },
+    );
+    return saved;
   }
 
   async finalizeSecretRotation(
@@ -426,7 +447,40 @@ export class WebhooksService {
     webhook.rotationFinalizesAt = undefined;
 
     this.logger.log(`Finalized secret rotation for webhook ${webhookId}`);
-    return this.webhookRepo.save(webhook);
+    const saved = await this.webhookRepo.save(webhook);
+    await this.sendSecurityNotification(saved, 'webhook.secret.rotated', {
+      webhookId,
+    });
+    return saved;
+  }
+
+  /**
+   * Delivers a mandatory security notification to a single webhook. These are
+   * sent regardless of the webhook's event filter and never block the caller.
+   */
+  private async sendSecurityNotification(
+    webhook: Webhook,
+    event: WebhookPayload['event'],
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (!webhook.active) return;
+
+    try {
+      await this.webhookSender.deliverWebhook(webhook, {
+        event,
+        timestamp: new Date().toISOString(),
+        deliveryId: uuidv4(),
+        data,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to queue security notification "${event}" for webhook ${webhook.id}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private normalizeEvents(events: string[]): string[] {
+    return [...new Set(events)];
   }
 
   private validateEvents(events: string[]): void {
