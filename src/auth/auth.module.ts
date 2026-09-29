@@ -35,6 +35,7 @@ import { WebauthnController } from './webauthn/webauthn.controller';
 import { WebauthnService } from './webauthn/webauthn.service';
 import { WebauthnCredential } from './webauthn/entities/webauthn-credential.entity';
 import { ChallengeStoreService } from './challenge/challenge-store.service';
+import { PasswordHasherService } from './password/password-hasher.service';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { ChallengeStoreService } from './challenge/challenge-store.service';
     DistributedLockService,
     WebauthnService,
     ChallengeStoreService,
+    PasswordHasherService,
   ],
   exports: [
     AuthService,
@@ -100,6 +102,7 @@ import { ChallengeStoreService } from './challenge/challenge-store.service';
     SessionFingerprintService,
     RefreshTokenCleanupService,
     ChallengeStoreService,
+    PasswordHasherService,
   ],
 })
 export class AuthModule {}
