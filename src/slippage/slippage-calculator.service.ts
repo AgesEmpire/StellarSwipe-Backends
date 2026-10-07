@@ -4,6 +4,167 @@ import {
   SlippageEstimateResponseDto,
   SlippageToleranceLevel,
 } from './slippage-config.dto';
+export interface MarketPriceObservation {
+  price: number;
+  timestamp: Date | number | string;
+}
+
+export interface VolatilityCalculationOptions {
+  /**
+   * Minimum number of valid price observations required to compute volatility.
+   * If fewer than this number are available, fallbackVolatility is returned.
+   * Default: 3
+   */
+  minSampleSize?: number;
+
+  /**
+   * Maximum allowed age in milliseconds for the latest observation relative to referenceTime.
+   * If the latest observation is older than this value, observations are considered stale.
+   * Default: 3600000 (1 hour)
+   */
+  maxObservationAgeMs?: number;
+
+  /**
+   * Fallback volatility percentage returned when observations are insufficient, stale, or invalid.
+   * Default: 1.0
+   */
+  fallbackVolatility?: number;
+
+  /**
+   * Reference time used to determine staleness. Defaults to Date.now().
+   */
+  referenceTime?: Date | number;
+}
+
+/**
+ * Calculates historical price volatility based on market observations.
+ *
+ * Implements deterministic calculation using sample standard deviation of
+ * period-to-period price returns:
+ * 1. Input validation & filtering: filters null, undefined, NaN, non-finite, and non-positive prices.
+ * 2. Minimum sample rule: requires at least `minSampleSize` observations (default: 3).
+ * 3. Stale-data rule: verifies observations are within `maxObservationAgeMs` of `referenceTime`.
+ * 4. Deterministic for a known price series: computes deterministic sample standard deviation of returns.
+ * 5. Flat series: returns 0.0 when all prices are identical.
+ */
+export function calculateHistoricalVolatility(
+  observations?: Array<MarketPriceObservation | number> | null,
+  options?: VolatilityCalculationOptions,
+): number {
+  const minSampleSize = options?.minSampleSize ?? 3;
+  const maxObservationAgeMs = options?.maxObservationAgeMs ?? 3_600_000; // 1 hour
+  const fallbackVolatility = options?.fallbackVolatility ?? 1.0;
+  const refTime =
+    options?.referenceTime !== undefined
+      ? options.referenceTime instanceof Date
+        ? options.referenceTime.getTime()
+        : Number(options.referenceTime)
+      : Date.now();
+
+  if (!Array.isArray(observations) || observations.length === 0) {
+    return fallbackVolatility;
+  }
+
+  // Parse and filter valid price observations
+  const validObservations: Array<{ price: number; timestamp: number }> = [];
+
+  for (const obs of observations) {
+    if (obs === null || obs === undefined) continue;
+
+    let price: number;
+    let timestamp: number;
+
+    if (typeof obs === 'number') {
+      price = obs;
+      timestamp = refTime;
+    } else if (typeof obs === 'object') {
+      price = Number(obs.price);
+      if (obs.timestamp instanceof Date) {
+        timestamp = obs.timestamp.getTime();
+      } else if (typeof obs.timestamp === 'number') {
+        timestamp = obs.timestamp;
+      } else if (typeof obs.timestamp === 'string') {
+        timestamp = new Date(obs.timestamp).getTime();
+      } else {
+        timestamp = refTime;
+      }
+    } else {
+      continue;
+    }
+
+    if (
+      typeof price === 'number' &&
+      isFinite(price) &&
+      !isNaN(price) &&
+      price > 0 &&
+      !isNaN(timestamp)
+    ) {
+      validObservations.push({ price, timestamp });
+    }
+  }
+
+  // Minimum sample check
+  if (validObservations.length < minSampleSize) {
+    return fallbackVolatility;
+  }
+
+  // Sort chronologically ascending
+  validObservations.sort((a, b) => a.timestamp - b.timestamp);
+
+  // Stale-data rule: check the latest observation age against referenceTime
+  const latestTimestamp = validObservations[validObservations.length - 1].timestamp;
+  const ageOfLatest = refTime - latestTimestamp;
+
+  if (ageOfLatest > maxObservationAgeMs || ageOfLatest < -60_000) {
+    return fallbackVolatility;
+  }
+
+  // Filter observations to only those within acceptable window [refTime - maxObservationAgeMs, refTime + 60_000]
+  const windowObservations = validObservations.filter(
+    (obs) =>
+      obs.timestamp >= refTime - maxObservationAgeMs &&
+      obs.timestamp <= refTime + 60_000,
+  );
+
+  if (windowObservations.length < minSampleSize) {
+    return fallbackVolatility;
+  }
+
+  const prices = windowObservations.map((obs) => obs.price);
+
+  // Check for flat series (all prices identical within tolerance)
+  const firstPrice = prices[0];
+  const isFlat = prices.every((p) => Math.abs(p - firstPrice) < 1e-9);
+  if (isFlat) {
+    return 0.0;
+  }
+
+  // Calculate percentage returns between adjacent periods: (P_i - P_{i-1}) / P_{i-1} * 100
+  const returns: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    const prev = prices[i - 1];
+    const curr = prices[i];
+    const ret = ((curr - prev) / prev) * 100;
+    returns.push(ret);
+  }
+
+  if (returns.length === 0) {
+    return 0.0;
+  }
+
+  // Compute sample standard deviation of returns
+  const mean = returns.reduce((acc, val) => acc + val, 0) / returns.length;
+  const sumSquaredDiff = returns.reduce(
+    (acc, val) => acc + Math.pow(val - mean, 2),
+    0,
+  );
+
+  const divisor = returns.length > 1 ? returns.length - 1 : 1;
+  const variance = sumSquaredDiff / divisor;
+  const stdDev = Math.sqrt(variance);
+
+  return Math.round(stdDev * 10000) / 10000;
+}
 
 interface MarketDepth {
   bids: Array<{ price: number; quantity: number }>;
@@ -23,6 +184,7 @@ interface HistoricalSlippage {
 export class SlippageCalculatorService {
   private readonly logger = new Logger(SlippageCalculatorService.name);
   private readonly historicalSlippage = new Map<string, HistoricalSlippage>();
+  private readonly historicalObservations = new Map<string, MarketPriceObservation[]>();
 
   // Default slippage tolerances by level
   private readonly TOLERANCE_PRESETS = {
@@ -393,14 +555,60 @@ export class SlippageCalculatorService {
   }
 
   /**
+   * Add a market observation for a specific trading symbol.
+   */
+  addMarketObservation(
+    symbol: string,
+    price: number,
+    timestamp: Date | number | string = new Date(),
+  ): void {
+    const list = this.historicalObservations.get(symbol) ?? [];
+    list.push({ price, timestamp });
+    if (list.length > 500) {
+      list.splice(0, list.length - 500);
+    }
+    this.historicalObservations.set(symbol, list);
+  }
+
+  /**
+   * Get recorded market observations for a symbol.
+   */
+  getMarketObservations(symbol: string): MarketPriceObservation[] {
+    return this.historicalObservations.get(symbol) ?? [];
+  }
+
+  /**
+   * Calculate historical volatility for a provided price observation series.
+   */
+  calculateVolatility(
+    observations?: Array<MarketPriceObservation | number> | null,
+    options?: VolatilityCalculationOptions,
+  ): number {
+    return calculateHistoricalVolatility(observations, options);
+  }
+
+  /**
+   * Calculate historical volatility for a tracked symbol using in-memory observations.
+   */
+  calculateVolatilityForSymbol(
+    symbol: string,
+    options?: VolatilityCalculationOptions,
+  ): number {
+    const observations = this.getMarketObservations(symbol);
+    return this.calculateVolatility(observations, options);
+  }
+
+  /**
    * Clear historical data for testing or reset
    */
   clearHistoricalData(symbol?: string): void {
     if (symbol) {
       this.historicalSlippage.delete(symbol);
+      this.historicalObservations.delete(symbol);
       this.logger.log(`Cleared historical slippage data for ${symbol}`);
     } else {
       this.historicalSlippage.clear();
+      this.historicalObservations.clear();
       this.logger.log('Cleared all historical slippage data');
     }
   }

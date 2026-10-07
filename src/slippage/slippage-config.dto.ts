@@ -46,6 +46,36 @@ export class SlippageConfigDto {
   @Min(100)
   @Max(30000)
   maxExecutionTimeMs?: number = 5000;
+
+  @ApiPropertyOptional({
+    description: 'Fallback volatility percentage when observations are insufficient or stale',
+    example: 1.0,
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  fallbackVolatility?: number = 1.0;
+
+  @ApiPropertyOptional({
+    description: 'Minimum number of market price observations required to compute volatility',
+    example: 3,
+    minimum: 2,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(2)
+  minVolatilitySampleSize?: number = 3;
+
+  @ApiPropertyOptional({
+    description: 'Maximum age of latest observation in milliseconds before considered stale',
+    example: 3600000,
+    minimum: 1000,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1000)
+  maxVolatilityObservationAgeMs?: number = 3600000;
 }
 
 export class SlippageEstimationDto {

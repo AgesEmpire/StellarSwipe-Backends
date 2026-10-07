@@ -1,5 +1,8 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { SlippageCalculatorService } from './slippage-calculator.service';
+import {
+  SlippageCalculatorService,
+  MarketPriceObservation,
+} from './slippage-calculator.service';
 import {
   SlippageConfigDto,
   SlippageReportDto,
@@ -14,6 +17,7 @@ interface TradeExecutionContext {
   timestamp: Date;
   userId?: string;
   orderId?: string;
+  marketObservations?: MarketPriceObservation[];
 }
 
 interface SlippageProtectionResult {
@@ -84,6 +88,7 @@ export class SlippageProtectionService {
       const maxAllowedSlippage = this.calculateMaxAllowedSlippage(
         config,
         estimation.liquidityScore,
+        context,
       );
 
       // Check if slippage is within limits
@@ -358,13 +363,30 @@ export class SlippageProtectionService {
   private calculateMaxAllowedSlippage(
     config: SlippageConfigDto,
     liquidityScore: number,
+    context?: TradeExecutionContext,
   ): number {
     let maxSlippage = config.maxSlippagePercent;
 
     // Apply dynamic slippage if enabled
     if (config.enableDynamicSlippage) {
-      // Estimate market volatility (simplified - in production use actual volatility)
-      const estimatedVolatility = 1.0; // TODO: Replace with actual volatility calculation
+      // Calculate market volatility based on historical market observations
+      const observations =
+        context?.marketObservations ||
+        (context?.symbol
+          ? this.slippageCalculator.getMarketObservations(context.symbol)
+          : undefined);
+
+      const estimatedVolatility = this.slippageCalculator.calculateVolatility(
+        observations,
+        {
+          fallbackVolatility: config.fallbackVolatility ?? 1.0,
+          minSampleSize: config.minVolatilitySampleSize ?? 3,
+          maxObservationAgeMs: config.maxVolatilityObservationAgeMs ?? 3_600_000,
+          referenceTime: context?.timestamp
+            ? new Date(context.timestamp).getTime()
+            : Date.now(),
+        },
+      );
 
       maxSlippage = this.slippageCalculator.calculateDynamicTolerance(
         config.maxSlippagePercent,

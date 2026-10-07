@@ -283,4 +283,93 @@ describe('SlippageCalculatorService', () => {
       expect(service['getHistoricalSlippage']('ETH/USD')).toBeUndefined();
     });
   });
+
+  describe('calculateVolatility', () => {
+    it('should be deterministic for a known normal price series', () => {
+      const normalSeries = [100, 101, 99.5, 100.8, 101.2];
+      const result1 = service.calculateVolatility(normalSeries);
+      const result2 = service.calculateVolatility(normalSeries);
+
+      expect(result1).toBe(result2);
+      expect(result1).toBeCloseTo(1.2516, 3);
+    });
+
+    it('should return 0 for a flat price series', () => {
+      const flatSeries = [100, 100, 100, 100, 100];
+      const result = service.calculateVolatility(flatSeries);
+
+      expect(result).toBe(0);
+    });
+
+    it('should calculate higher volatility for volatile price series', () => {
+      const normalSeries = [100, 101, 100.5, 101.2, 100.8];
+      const volatileSeries = [100, 120, 80, 130, 70];
+
+      const normalVol = service.calculateVolatility(normalSeries);
+      const volatileVol = service.calculateVolatility(volatileSeries);
+
+      expect(volatileVol).toBeGreaterThan(normalVol);
+      expect(volatileVol).toBeGreaterThan(20);
+    });
+
+    it('should return fallback volatility when series is insufficient (< minSampleSize)', () => {
+      const fallback = 1.5;
+      const insufficientSeries = [100, 102];
+
+      const result = service.calculateVolatility(insufficientSeries, {
+        minSampleSize: 3,
+        fallbackVolatility: fallback,
+      });
+
+      expect(result).toBe(fallback);
+    });
+
+    it('should return fallback volatility when observations are stale', () => {
+      const fallback = 1.0;
+      const now = Date.now();
+      const twoHoursAgo = now - 2 * 3600 * 1000;
+
+      const staleObservations = [
+        { price: 100, timestamp: twoHoursAgo },
+        { price: 102, timestamp: twoHoursAgo + 60000 },
+        { price: 101, timestamp: twoHoursAgo + 120000 },
+      ];
+
+      const result = service.calculateVolatility(staleObservations, {
+        maxObservationAgeMs: 3600 * 1000, // 1 hour max age
+        fallbackVolatility: fallback,
+        referenceTime: now,
+      });
+
+      expect(result).toBe(fallback);
+    });
+
+    it('should return fallback volatility for invalid series inputs', () => {
+      const fallback = 1.0;
+
+      expect(service.calculateVolatility(null, { fallbackVolatility: fallback })).toBe(fallback);
+      expect(service.calculateVolatility(undefined, { fallbackVolatility: fallback })).toBe(fallback);
+      expect(service.calculateVolatility([], { fallbackVolatility: fallback })).toBe(fallback);
+      expect(
+        service.calculateVolatility([100, -50, 0, NaN], {
+          minSampleSize: 3,
+          fallbackVolatility: fallback,
+        }),
+      ).toBe(fallback);
+    });
+
+    it('should track market observations by symbol and calculate volatility', () => {
+      const symbol = 'XLM/USDC';
+      const now = Date.now();
+
+      service.addMarketObservation(symbol, 0.12, now - 60000);
+      service.addMarketObservation(symbol, 0.125, now - 40000);
+      service.addMarketObservation(symbol, 0.122, now - 20000);
+      service.addMarketObservation(symbol, 0.128, now);
+
+      const vol = service.calculateVolatilityForSymbol(symbol, { referenceTime: now });
+      expect(vol).toBeGreaterThan(0);
+      expect(typeof vol).toBe('number');
+    });
+  });
 });
