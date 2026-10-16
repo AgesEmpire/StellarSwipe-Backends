@@ -21,5 +21,17 @@
     "PAYMENT_SCHEDULED": "Your payment has been scheduled for {date}",
     "PAYMENT_EXECUTED": "Your scheduled payment has been executed",
     "PAYMENT_CANCELLED": "Your scheduled payment has been cancelled",
-    "PAYMENT_REMINDER": "Reminder: You have a payment scheduled for {date}"
+    "PAYMENT_REMINDER": "Reminder: You have a payment scheduled for {date}",
+    "SUBSCRIPTION_CREATED_TITLE": "Subscription activated",
+    "SUBSCRIPTION_CREATED_MESSAGE": "Your subscription to {tier} is now active.",
+    "SUBSCRIPTION_CANCELLED_TITLE": "Subscription cancelled",
+    "SUBSCRIPTION_CANCELLED_MESSAGE": "Your subscription to {tier} has been cancelled.",
+    "SUBSCRIPTION_PAUSED_TITLE": "Subscription paused",
+    "SUBSCRIPTION_PAUSED_MESSAGE": "Auto-renewal for your {tier} subscription is paused. Access continues until {date}.",
+    "SUBSCRIPTION_RESUMED_TITLE": "Subscription resumed",
+    "SUBSCRIPTION_RESUMED_MESSAGE": "Auto-renewal for your {tier} subscription has been resumed.",
+    "SUBSCRIPTION_RENEWED_TITLE": "Subscription renewed",
+    "SUBSCRIPTION_RENEWED_MESSAGE": "Your {tier} subscription has been renewed until {date}.",
+    "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Renewal payment failed",
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "We could not renew your {tier} subscription (attempt {attempt}). Please update your payment method."
 }

@@ -90,6 +90,7 @@ export class FeesController {
       tradeAmount: string;
       assetCode: string;
       assetIssuer: string;
+      promoCode?: string;
     },
   ): Promise<FeeCalculationDto> {
     return this.feesService.calculateFee(tradeDetails);
