@@ -8,13 +8,16 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionsController } from './subscriptions.controller';
 import { PaymentProcessorService } from './services/payment-processor.service';
 import { AccessControlService } from './services/access-control.service';
+import { SubscriptionChangeNotifierService } from './services/subscription-change-notifier.service';
 import { SubscriptionRenewalJob } from './services/subscription-renewal.job';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SubscriptionTier, UserSubscription]),
     ConfigModule,
     ScheduleModule.forRoot(),
+    NotificationsModule,
   ],
   controllers: [SubscriptionsController],
   providers: [
@@ -22,11 +25,13 @@ import { SubscriptionRenewalJob } from './services/subscription-renewal.job';
     PaymentProcessorService,
     AccessControlService,
     SubscriptionRenewalJob,
+    SubscriptionChangeNotifierService,
   ],
   exports: [
     SubscriptionsService,
     AccessControlService,
     PaymentProcessorService,
+    SubscriptionChangeNotifierService,
     TypeOrmModule,
   ],
 })

@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SlippageCalculatorService } from './slippage-calculator.service';
+import { VolatilityService } from './volatility.service';
 import {
   SlippageConfigDto,
   SlippageReportDto,
@@ -50,6 +51,7 @@ export class SlippageProtectionService {
 
   constructor(
     private readonly slippageCalculator: SlippageCalculatorService,
+    private readonly volatilityService: VolatilityService,
   ) {}
 
   /**
@@ -81,9 +83,10 @@ export class SlippageProtectionService {
       });
 
       // Determine max allowed slippage
-      const maxAllowedSlippage = this.calculateMaxAllowedSlippage(
+      const maxAllowedSlippage = await this.calculateMaxAllowedSlippage(
         config,
         estimation.liquidityScore,
+        context.symbol,
       );
 
       // Check if slippage is within limits
@@ -353,23 +356,31 @@ export class SlippageProtectionService {
   }
 
   /**
-   * Calculate maximum allowed slippage with dynamic adjustment
+   * Calculate maximum allowed slippage with dynamic adjustment based on the
+   * historical volatility of the traded symbol.
    */
-  private calculateMaxAllowedSlippage(
+  private async calculateMaxAllowedSlippage(
     config: SlippageConfigDto,
     liquidityScore: number,
-  ): number {
+    symbol = '',
+  ): Promise<number> {
     let maxSlippage = config.maxSlippagePercent;
 
     // Apply dynamic slippage if enabled
     if (config.enableDynamicSlippage) {
-      // Estimate market volatility (simplified - in production use actual volatility)
-      const estimatedVolatility = 1.0; // TODO: Replace with actual volatility calculation
+      const volatility = await this.volatilityService.getVolatility(symbol);
+
+      if (volatility.usedFallback) {
+        this.logger.warn(
+          `Using fallback volatility ${volatility.value} for ${symbol} ` +
+            `(${volatility.samples} observation(s) available)`,
+        );
+      }
 
       maxSlippage = this.slippageCalculator.calculateDynamicTolerance(
         config.maxSlippagePercent,
         liquidityScore,
-        estimatedVolatility,
+        volatility.value,
       );
     }
 

@@ -20,6 +20,10 @@ import {
 } from './entities/user-subscription.entity';
 import { PaymentProcessorService } from './services/payment-processor.service';
 import { AccessControlService } from './services/access-control.service';
+import {
+  SubscriptionChangeNotifierService,
+  TierSnapshot,
+} from './services/subscription-change-notifier.service';
 import { CreateTierDto, UpdateTierDto } from './dto/create-tier.dto';
 import {
   SubscribeDto,
@@ -47,6 +51,7 @@ export class SubscriptionsService {
     private readonly paymentProcessor: PaymentProcessorService,
     private readonly accessControl: AccessControlService,
     private readonly dataSource: DataSource,
+    private readonly changeNotifier: SubscriptionChangeNotifierService,
   ) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -114,6 +119,8 @@ export class SubscriptionsService {
       throw new ForbiddenException('You do not own this tier');
     }
 
+    const before = this.snapshotTier(tier);
+
     // Price change guard
     if (
       dto.price !== undefined &&
@@ -138,7 +145,14 @@ export class SubscriptionsService {
       }),
     });
 
-    return this.tierRepo.save(tier);
+    const saved = await this.tierRepo.save(tier);
+
+    // Existing subscribers are notified about anything that alters their
+    // access, pricing or entitlements. Notification failures never roll back
+    // the tier update itself.
+    await this.notifySubscribersOfChange(tierId, before, this.snapshotTier(saved));
+
+    return saved;
   }
 
   /**
@@ -152,7 +166,21 @@ export class SubscriptionsService {
       throw new ForbiddenException('You do not own this tier');
     }
 
-    await this.dataSource.transaction(async (manager) => {
+    const before = this.snapshotTier(tier);
+    const after: TierSnapshot = {
+      ...before,
+      active: false,
+      acceptingNewSubscribers: false,
+    };
+
+    const affectedUserIds = await this.dataSource.transaction(async (manager) => {
+      // Collect the affected subscribers before the bulk status update so they
+      // can still be notified after the transaction commits.
+      const affected = await manager.find(UserSubscription, {
+        where: { tierId, status: SubscriptionStatus.ACTIVE },
+        select: ['userId'],
+      });
+
       // Revoke all active subscriptions
       await manager.update(
         UserSubscription,
@@ -171,9 +199,16 @@ export class SubscriptionsService {
         acceptingNewSubscribers: false,
         subscriberCount: 0,
       });
+
+      return Array.from(new Set(affected.map((subscription) => subscription.userId)));
     });
 
     this.logger.log(`Tier ${tierId} cancelled by provider ${providerId}`);
+
+    await this.notifySubscribersOfChange(tierId, before, after, {
+      userIds: affectedUserIds,
+      force: true,
+    });
   }
 
   /**
@@ -573,5 +608,47 @@ export class SubscriptionsService {
     });
     if (!sub) throw new NotFoundException(`Subscription ${id} not found`);
     return sub;
+  }
+
+  /**
+   * Capture the tier fields that are relevant to existing subscribers so the
+   * pre-update values survive `Object.assign` / `save`.
+   */
+  private snapshotTier(tier: SubscriptionTier): TierSnapshot {
+    return {
+      providerId: tier.providerId,
+      name: tier.name,
+      price: tier.price,
+      benefits: [...(tier.benefits ?? [])],
+      active: tier.active,
+      acceptingNewSubscribers: tier.acceptingNewSubscribers,
+      signalLimit: tier.signalLimit ?? null,
+    };
+  }
+
+  /**
+   * Notify affected subscribers without letting a notification failure break
+   * the (already committed) tier change.
+   */
+  private async notifySubscribersOfChange(
+    tierId: string,
+    before: TierSnapshot,
+    after: TierSnapshot,
+    options: { userIds?: string[]; force?: boolean } = {},
+  ): Promise<void> {
+    try {
+      await this.changeNotifier.notifyAffectedSubscribers(
+        tierId,
+        before,
+        after,
+        options,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to notify subscribers about changes to tier ${tierId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 }

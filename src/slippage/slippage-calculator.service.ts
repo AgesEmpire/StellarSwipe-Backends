@@ -4,12 +4,8 @@ import {
   SlippageEstimateResponseDto,
   SlippageToleranceLevel,
 } from './slippage-config.dto';
-
-interface MarketDepth {
-  bids: Array<{ price: number; quantity: number }>;
-  asks: Array<{ price: number; quantity: number }>;
-  timestamp: Date;
-}
+import { DepthWalkResult, MarketDepth } from './market-depth.types';
+import { OrderBookService } from './order-book.service';
 
 interface HistoricalSlippage {
   symbol: string;
@@ -31,6 +27,8 @@ export class SlippageCalculatorService {
     [SlippageToleranceLevel.RELAXED]: 1.0, // 1.0%
   };
 
+  constructor(private readonly orderBookService: OrderBookService) {}
+
   /**
    * Estimate slippage before trade execution
    */
@@ -47,15 +45,26 @@ export class SlippageCalculatorService {
         estimationDto.side,
       );
 
-      const depth =
-        marketDepth || (await this.getMarketDepth(estimationDto.symbol));
+      // Caller supplied books are validated too: an empty, crossed or
+      // malformed book must never be priced against.
+      const depth = marketDepth
+        ? this.orderBookService.validateAndNormalise(marketDepth)
+        : await this.getMarketDepth(estimationDto.symbol);
 
-      // Calculate estimated execution price based on order book
-      const estimatedExecutionPrice = this.calculateExecutionPrice(
+      // Walk the correct side of the order book
+      const bookWalk = this.calculateExecutionPrice(
         estimationDto.quantity,
         estimationDto.side,
         depth,
       );
+      const estimatedExecutionPrice = bookWalk.averagePrice;
+
+      if (bookWalk.insufficientDepth) {
+        this.logger.warn(
+          `Order exceeds visible depth for ${estimationDto.symbol}: ` +
+            `${bookWalk.unfilledQuantity} of ${estimationDto.quantity} unfillable`,
+        );
+      }
 
       // Calculate slippage
       const expectedPrice = estimationDto.expectedPrice || currentPrice;
@@ -84,6 +93,7 @@ export class SlippageCalculatorService {
         slippagePercent,
         liquidityScore,
         historical,
+        bookWalk.insufficientDepth,
       );
 
       const executionTime = Date.now() - startTime;
@@ -135,36 +145,15 @@ export class SlippageCalculatorService {
   }
 
   /**
-   * Calculate execution price based on order book depth
+   * Calculate execution price based on order book depth by walking the
+   * correct side of the book (asks for buys, bids for sells).
    */
   private calculateExecutionPrice(
     quantity: number,
     side: 'buy' | 'sell',
     depth: MarketDepth,
-  ): number {
-    const orders = side === 'buy' ? depth.asks : depth.bids;
-
-    let remainingQuantity = quantity;
-    let totalCost = 0;
-    let executedQuantity = 0;
-
-    for (const order of orders) {
-      if (remainingQuantity <= 0) break;
-
-      const fillQuantity = Math.min(remainingQuantity, order.quantity);
-      totalCost += fillQuantity * order.price;
-      executedQuantity += fillQuantity;
-      remainingQuantity -= fillQuantity;
-    }
-
-    // If we couldn't fill the entire order, estimate remaining at worst price
-    if (remainingQuantity > 0 && orders.length > 0) {
-      const worstPrice = orders[orders.length - 1].price;
-      totalCost += remainingQuantity * worstPrice * 1.02; // Add 2% penalty for liquidity
-      executedQuantity += remainingQuantity;
-    }
-
-    return executedQuantity > 0 ? totalCost / executedQuantity : 0;
+  ): DepthWalkResult {
+    return this.orderBookService.walkBook(side, depth, quantity);
   }
 
   /**
@@ -177,6 +166,10 @@ export class SlippageCalculatorService {
   ): number {
     const orders = side === 'buy' ? depth.asks : depth.bids;
 
+    if (!Array.isArray(orders) || orders.length === 0 || quantity <= 0) {
+      return 0;
+    }
+
     // Calculate total available liquidity in the top N levels
     const topLevels = 10;
     const availableLiquidity = orders
@@ -187,8 +180,13 @@ export class SlippageCalculatorService {
     const bestBid = depth.bids[0]?.price || 0;
     const bestAsk = depth.asks[0]?.price || 0;
     const midPrice = (bestBid + bestAsk) / 2;
-    const spreadPercent =
-      midPrice > 0 ? ((bestAsk - bestBid) / midPrice) * 100 : 100;
+
+    // A book without a usable two-sided price cannot be scored.
+    if (!Number.isFinite(midPrice) || midPrice <= 0) {
+      return 0;
+    }
+
+    const spreadPercent = ((bestAsk - bestBid) / midPrice) * 100;
 
     // Score factors:
     // 1. Liquidity coverage (how much of order can be filled in top levels)
@@ -239,6 +237,7 @@ export class SlippageCalculatorService {
     estimatedSlippage: number,
     liquidityScore: number,
     historical?: HistoricalSlippage,
+    insufficientDepth = false,
   ): { recommendation: 'proceed' | 'caution' | 'delay'; reasoning: string } {
     const reasons: string[] = [];
 
@@ -254,6 +253,11 @@ export class SlippageCalculatorService {
       reasons.push('Low market liquidity');
     } else if (liquidityScore < 0.6) {
       reasons.push('Moderate market liquidity');
+    }
+
+    // Check order book depth
+    if (insufficientDepth) {
+      reasons.push('Order exceeds visible order book depth');
     }
 
     // Check historical patterns
@@ -275,7 +279,10 @@ export class SlippageCalculatorService {
     } else {
       return {
         recommendation: 'proceed',
-        reasoning: 'Market conditions are favorable with good liquidity',
+        reasoning:
+          reasons.length > 0
+            ? `Market conditions are favorable: ${reasons.join(', ')}`
+            : 'Market conditions are favorable with good liquidity',
       };
     }
   }
@@ -371,25 +378,11 @@ export class SlippageCalculatorService {
   }
 
   /**
-   * Mock method - replace with actual order book provider
+   * Fetch the live order book from the configured market data provider.
    */
   private async getMarketDepth(symbol: string): Promise<MarketDepth> {
-    // TODO: Replace with actual order book data from exchange
-    // This is a placeholder that should connect to your exchange API
     this.logger.debug(`Fetching market depth for ${symbol}`);
-
-    // Simulated order book - replace with real implementation
-    return {
-      bids: Array.from({ length: 20 }, (_, i) => ({
-        price: 45000 - i * 10,
-        quantity: 0.5 + Math.random() * 2,
-      })),
-      asks: Array.from({ length: 20 }, (_, i) => ({
-        price: 45000 + i * 10,
-        quantity: 0.5 + Math.random() * 2,
-      })),
-      timestamp: new Date(),
-    };
+    return this.orderBookService.fetchMarketDepth(symbol);
   }
 
   /**
