@@ -603,3 +603,6 @@ MIT
 
 <!-- handsoff-issue-1309 -->
 - #1309: Add configurable database statement timeout for API workloads
+
+<!-- handsoff-issue-1310 -->
+- #1310: Add dependency health state history for incident analysis
