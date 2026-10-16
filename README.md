@@ -600,3 +600,6 @@ MIT
 
 <!-- handsoff-issue-1304 -->
 - #1304: Add GraphQL query complexity limits by authenticated role
+
+<!-- handsoff-issue-1305 -->
+- #1305: Add GraphQL request depth limit configuration
