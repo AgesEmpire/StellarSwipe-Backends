@@ -603,3 +603,6 @@ MIT
 
 <!-- handsoff-issue-1212 -->
 - #1212: Expose transaction reconciliation status to authorized clients
+
+<!-- handsoff-issue-1213 -->
+- #1213: Add bounded pagination to audit trail queries

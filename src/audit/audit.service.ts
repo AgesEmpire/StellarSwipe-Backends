@@ -84,6 +84,86 @@ export function redactAuditPayload<T>(value: T): T {
   return value;
 }
 
+/**
+ * Default number of audit events returned when no page size is supplied.
+ */
+export const DEFAULT_AUDIT_PAGE_SIZE = 25;
+
+/**
+ * Hard upper bound on the number of audit events returned per page. Requests
+ * asking for more are clamped to this value so a single query can never scan
+ * an unbounded slice of the audit trail.
+ */
+export const MAX_AUDIT_PAGE_SIZE = 100;
+
+/**
+ * A single page of audit history plus the cursor needed to fetch the next one.
+ */
+export interface AuditPage {
+  items: AuditEvent[];
+  /** Cursor to pass as `cursor` for the next page, or null when exhausted. */
+  nextCursor: string | null;
+  /** True when no further pages exist after this one. */
+  hasMore: boolean;
+}
+
+/**
+ * Opaque, deterministic cursor over the audit trail. Ordering is by
+ * `createdAt` descending with `id` descending as a stable tie-breaker, so the
+ * cursor only needs to carry the last row's sort key.
+ */
+interface AuditCursor {
+  createdAt: string;
+  id: string;
+}
+
+function encodeCursor(event: AuditEvent): string {
+  const payload: AuditCursor = {
+    createdAt: new Date(event.createdAt).toISOString(),
+    id: String(event.id),
+  };
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: string): AuditCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('Invalid audit cursor');
+  }
+
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    typeof (parsed as AuditCursor).createdAt !== 'string' ||
+    typeof (parsed as AuditCursor).id !== 'string' ||
+    Number.isNaN(Date.parse((parsed as AuditCursor).createdAt))
+  ) {
+    throw new Error('Invalid audit cursor');
+  }
+
+  return parsed as AuditCursor;
+}
+
+/**
+ * Normalizes a requested page size into the supported [1, MAX] range.
+ * Non-finite, non-positive, or oversized values are bounded rather than
+ * allowed to reach the database.
+ */
+function normalizePageSize(limit?: number): number {
+  if (limit === undefined || limit === null || !Number.isFinite(limit)) {
+    return DEFAULT_AUDIT_PAGE_SIZE;
+  }
+
+  const floored = Math.floor(limit);
+  if (floored < 1) {
+    return DEFAULT_AUDIT_PAGE_SIZE;
+  }
+
+  return Math.min(floored, MAX_AUDIT_PAGE_SIZE);
+}
+
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
@@ -115,5 +195,40 @@ export class AuditService {
 
   async findAll(): Promise<AuditEvent[]> {
     return this.auditRepository.find();
+  }
+
+  /**
+   * Returns a bounded, deterministically ordered page of audit history.
+   *
+   * Ordering is `createdAt DESC, id DESC`; the returned cursor encodes the
+   * last row's sort key so subsequent pages are stable even when new events
+   * are written concurrently. Oversized page sizes are clamped to
+   * {@link MAX_AUDIT_PAGE_SIZE} and malformed cursors are rejected.
+   */
+  async findPage(options: { limit?: number; cursor?: string } = {}): Promise<AuditPage> {
+    const limit = normalizePageSize(options.limit);
+
+    const qb = this.auditRepository
+      .createQueryBuilder('audit')
+      .orderBy('audit.createdAt', 'DESC')
+      .addOrderBy('audit.id', 'DESC')
+      // Fetch one extra row to detect whether another page exists.
+      .take(limit + 1);
+
+    if (options.cursor) {
+      const cursor = decodeCursor(options.cursor);
+      qb.where(
+        '(audit.createdAt < :createdAt) OR (audit.createdAt = :createdAt AND audit.id < :id)',
+        { createdAt: cursor.createdAt, id: cursor.id },
+      );
+    }
+
+    const rows = await qb.getMany();
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor =
+      hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]) : null;
+
+    return { items, nextCursor, hasMore };
   }
 }
