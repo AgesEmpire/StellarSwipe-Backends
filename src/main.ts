@@ -146,6 +146,13 @@ async function bootstrap() {
   const rateLimitMiddleware = app.get(RateLimitMiddleware);
   app.use(rateLimitMiddleware.use.bind(rateLimitMiddleware));
 
+  // Enforce endpoint-appropriate request deadlines (#1306). The timeout
+  // interceptor aborts long-running handlers with a consistent 408 Problem
+  // Details response and propagates cancellation to supported downstream
+  // operations so timed-out work cannot keep producing side effects.
+  const requestTimeoutMs = configService.get<number>('app.requestTimeoutMs') ?? 30000;
+  app.useGlobalInterceptors(new TimeoutInterceptor(requestTimeoutMs));
+
   // Track in-flight requests for graceful drain
   let inFlightRequests = 0;
   app.use((_req: any, _res: any, next: () => void) => {
@@ -156,110 +163,6 @@ async function bootstrap() {
   });
 
   // NOTE: we deliberately do NOT call app.enableShutdownHooks() here. It
-  // would register its own SIGTERM/SIGINT listeners that call
-  // callShutdownHook() (running onModuleDestroy/onApplicationShutdown on
-  // every provider — closing the DB, Redis clients and BullMQ workers)
-  // immediately on signal receipt, racing with the bounded in-flight drain
-  // below. Lifecycle hooks still fire correctly because app.close() (called
-  // explicitly in gracefulShutdown) always runs them — enableShutdownHooks()
-  // only wires up automatic signal handling, which we do ourselves so we
-  // control the order: reject new traffic → drain → close.
+  // would register its own SIGTERM/SIGINT listeners that 
 
-  // Global pipes
-  app.useGlobalPipes(
-    new SanitizationPipe(),
-    new I18nValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-     
-
-  // Redis Adapter for WebSockets
-  const redisIoAdapter = new RedisIoAdapter(app, configService);
-  await redisIoAdapter.connectToRedis();
-  app.useWebSocketAdapter(redisIoAdapter);
-
-  // Instance Identification in Logs
-  const instanceCoordinator = app.get(InstanceCoordinatorService);
-  logger.info(`Application started on instance: ${instanceCoordinator.getInstanceId()}`);
-
-  // Global filter — single RFC 7807 Problem Details filter for every
-  // validation, domain, authentication and unexpected error (#1056).
-  const errorClassifier = app.get(ErrorClassificationService);
-  app.useGlobalFilters(
-    new ProblemDetailsFilter(logger, sentryService, errorClassifier, configService),
-  );
-
-  // Global interceptors
-  app.useGlobalInterceptors(new DeadlockRetryInterceptor());
-  app.useGlobalInterceptors(new IdempotencyInterceptor(app.get(Reflector)));
-  app.useGlobalInterceptors(new TimeoutInterceptor(app.get(Reflector)));
-  app.useGlobalInterceptors(new LoggingInterceptor(logger));
-  app.useGlobalInterceptors(new TransformInterceptor());
-  app.useGlobalInterceptors(new SensitiveDataInterceptor());
-  app.useGlobalInterceptors(app.get(MetricsInterceptor));
-
-  // Swagger Setup — uses the doc generator's DocumentBuilder for consistency
-  const { document, json, yaml } = generateOpenApiDocument(app);
-  SwaggerModule.setup(`${globalPrefix}/docs`, app, document);
-
-  // Feed the live document into the doc generator and trigger initial generation
-  const docGenerator = app.get(DocGeneratorService);
-  docGenerator.setDocument(document);
-  docGenerator.generateAll().catch((err) => logger.error('Initial doc generation failed', err));
-
-  // V1 Swagger (Deprecated)
-  const configV1 = new DocumentBuilder()
-    .setTitle('StellarSwipe API v1 (Deprecated)')
-    .setDescription('Legacy API - Sunset: 2025-12-31')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-
-  const documentV1 = SwaggerModule.createDocument(app, configV1);
-  SwaggerModule.setup('api/v1/docs', app, documentV1);
-
-  await app.listen(port, host, () => {
-    logger.info(`🚀 StellarSwipe Backend running on http://${host}:${port}`);
-    logger.info(`📚 API available at http://${host}:${port}${globalPrefix}`);
-    logger.info(`📚 Swagger documentation at http://${host}:${port}${globalPrefix}/docs`);
-  });
-
-  process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
-    logger.error('Unhandled Rejection', reason, { promise: String(promise) });
-    sentryService.captureException(
-      reason instanceof Error ? reason : new Error(String(reason)),
-      { type: 'unhandledRejection' },
-    );
-  });
-
-  process.on('uncaughtException', (error: Error) => {
-    logger.error('Uncaught Exception', error);
-    sentryService.captureException(error, { type: 'uncaughtException' });
-    setTimeout(() => process.exit(1), 1000);
-  });
-
-  process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received: starting graceful shutdown');
-
-    // Stop accepting new connections
-    await app.close();
-
-    // Drain in-flight requests (max 30 s)
-    const drainTimeout = 30_000;
-    const drainStart = Date.now();
-    while (inFlightRequests > 0 && Date.now() - drainStart < drainTimeout) {
-      logger.info(`Draining ${inFlightRequests} in-flight request(s)…`);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-
-    if (inFlightRequests > 0) {
-      logger.warn(`Shutdown forced with ${inFlightRequests} request(s) still in-flight`);
-    } else {
-      logger.info('All in-flight requests drained. Shutdown complete.');
-    }
-
-    await sentryService.flush();
-    process.exit(0);
-  });
-}
-
+/* … truncated 4290 chars — edit only what you need near the top … */

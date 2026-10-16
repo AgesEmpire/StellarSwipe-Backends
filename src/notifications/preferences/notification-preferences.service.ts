@@ -13,8 +13,24 @@ export type NotificationType =
 
 export type NotificationChannelType = 'email' | 'push';
 
+/**
+ * Immutable audit event describing a change to a user's notification
+ * delivery preferences or consent settings.
+ *
+ * Only the names of changed fields are recorded — never the values — so that
+ * sensitive consent data is excluded from the audit trail.
+ */
+export interface PreferenceAuditEvent {
+  readonly userId: string;
+  readonly actor: string;
+  readonly timestamp: Date;
+  readonly changedFields: readonly string[];
+}
+
 @Injectable()
 export class NotificationPreferencesService {
+  private readonly auditTrail: PreferenceAuditEvent[] = [];
+
   constructor(
     @InjectRepository(NotificationPreference)
     private readonly preferenceRepository: Repository<NotificationPreference>,
@@ -32,51 +48,91 @@ export class NotificationPreferencesService {
   /**
    * Update notification preferences for a user.
    * Only provided fields are updated; others remain unchanged.
+   * Emits an immutable audit event capturing the actor, timestamp and the
+   * set of changed fields (values are never recorded).
    */
   async updatePreferences(
     userId: string,
     dto: UpdatePreferencesDto,
+    actor: string = userId,
   ): Promise<PreferenceDto> {
     const preference = await this.findOrCreate(userId);
+    const changedFields: string[] = [];
 
     if (dto.tradeUpdates !== undefined) {
       if (dto.tradeUpdates.email !== undefined) {
+        if (preference.tradeUpdatesEmail !== dto.tradeUpdates.email) {
+          changedFields.push('tradeUpdates.email');
+        }
         preference.tradeUpdatesEmail = dto.tradeUpdates.email;
       }
       if (dto.tradeUpdates.push !== undefined) {
+        if (preference.tradeUpdatesPush !== dto.tradeUpdates.push) {
+          changedFields.push('tradeUpdates.push');
+        }
         preference.tradeUpdatesPush = dto.tradeUpdates.push;
       }
     }
 
     if (dto.signalPerformance !== undefined) {
       if (dto.signalPerformance.email !== undefined) {
+        if (preference.signalPerformanceEmail !== dto.signalPerformance.email) {
+          changedFields.push('signalPerformance.email');
+        }
         preference.signalPerformanceEmail = dto.signalPerformance.email;
       }
       if (dto.signalPerformance.push !== undefined) {
+        if (preference.signalPerformancePush !== dto.signalPerformance.push) {
+          changedFields.push('signalPerformance.push');
+        }
         preference.signalPerformancePush = dto.signalPerformance.push;
       }
     }
 
     if (dto.systemAlerts !== undefined) {
       if (dto.systemAlerts.email !== undefined) {
+        if (preference.systemAlertsEmail !== dto.systemAlerts.email) {
+          changedFields.push('systemAlerts.email');
+        }
         preference.systemAlertsEmail = dto.systemAlerts.email;
       }
       if (dto.systemAlerts.push !== undefined) {
+        if (preference.systemAlertsPush !== dto.systemAlerts.push) {
+          changedFields.push('systemAlerts.push');
+        }
         preference.systemAlertsPush = dto.systemAlerts.push;
       }
     }
 
     if (dto.marketing !== undefined) {
       if (dto.marketing.email !== undefined) {
+        if (preference.marketingEmail !== dto.marketing.email) {
+          changedFields.push('marketing.email');
+        }
         preference.marketingEmail = dto.marketing.email;
       }
       if (dto.marketing.push !== undefined) {
+        if (preference.marketingPush !== dto.marketing.push) {
+          changedFields.push('marketing.push');
+        }
         preference.marketingPush = dto.marketing.push;
       }
     }
 
     const saved = await this.preferenceRepository.save(preference);
+
+    if (changedFields.length > 0) {
+      this.recordAuditEvent(userId, actor, changedFields);
+    }
+
     return this.toDto(saved);
+  }
+
+  /**
+   * Retrieve the immutable audit trail of preference changes for a user.
+   */
+  getAuditTrail(userId: string): readonly PreferenceAuditEvent[] {
+    return this.auditTrail.filter((event) => event.userId === userId);
   }
 
   /**
@@ -120,14 +176,30 @@ export class NotificationPreferencesService {
     userId: string,
     type: NotificationType,
     channel: NotificationChannelType,
+    actor: string = userId,
   ): Promise<PreferenceDto> {
     const dto: UpdatePreferencesDto = {
       [type]: { [channel]: false },
     };
-    return this.updatePreferences(userId, dto);
+    return this.updatePreferences(userId, dto, actor);
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────
+
+  private recordAuditEvent(
+    userId: string,
+    actor: string,
+    changedFields: string[],
+  ): void {
+    this.auditTrail.push(
+      Object.freeze({
+        userId,
+        actor,
+        timestamp: new Date(),
+        changedFields: Object.freeze([...changedFields]),
+      }),
+    );
+  }
 
   private async findOrCreate(userId: string): Promise<NotificationPreference> {
     const existing = await this.preferenceRepository.findOne({
