@@ -20,10 +20,12 @@ import { User } from '../users/entities/user.entity';
 import { OnChainEvent } from './entities/on-chain-event.entity';
 import { IngestionCheckpoint } from './entities/ingestion-checkpoint.entity';
 import { SubmittedOperation } from './entities/submitted-operation.entity';
+import { TransactionAttempt } from './entities/transaction-attempt.entity';
 import { OnChainSyncService } from './on-chain-sync.service';
 import { OnChainSyncJob } from './on-chain-sync.job';
 import { StellarTxReconciliationService } from './reconciliation/stellar-tx-reconciliation.service';
 import { StellarTxReconciliationJob } from './reconciliation/stellar-tx-reconciliation.job';
+import { TransactionAttemptService } from './reconciliation/transaction-attempt.service';
 import { FeeBumpModule } from './fee-bump/fee-bump.module';
 import { ClaimableBalanceModule } from './claimable-balance/claimable-balance.module';
 import { SponsoredReservesModule } from './sponsored-reserves/sponsored-reserves.module';
@@ -36,7 +38,13 @@ import { HttpRetryModule } from '../http/http.module';
     EventEmitterModule.forRoot(),
     CacheModule,
     ScheduleModule.forRoot(),
-    TypeOrmModule.forFeature([User, OnChainEvent, IngestionCheckpoint, SubmittedOperation]),
+    TypeOrmModule.forFeature([
+      User,
+      OnChainEvent,
+      IngestionCheckpoint,
+      SubmittedOperation,
+      TransactionAttempt,
+    ]),
     FeeBumpModule,
     ClaimableBalanceModule,
     SponsoredReservesModule,
@@ -55,6 +63,7 @@ import { HttpRetryModule } from '../http/http.module';
     WalletBalanceSyncJob,
     OnChainSyncService,
     OnChainSyncJob,
+    TransactionAttemptService,
     StellarTxReconciliationService,
     StellarTxReconciliationJob,
     { provide: APP_FILTER, useClass: HorizonExceptionFilter },
@@ -70,6 +79,7 @@ import { HttpRetryModule } from '../http/http.module';
     StellarProviderService,
     WalletBalanceSyncJob,
     OnChainSyncService,
+    TransactionAttemptService,
     FeeBumpModule,
     ClaimableBalanceModule,
     SponsoredReservesModule,

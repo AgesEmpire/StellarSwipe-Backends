@@ -597,3 +597,6 @@ MIT
 
 <!-- handsoff-issue-1210 -->
 - #1210: Add contract version compatibility checks to Soroban calls
+
+<!-- handsoff-issue-1211 -->
+- #1211: Record Stellar transaction submission attempts for reconciliation
