@@ -597,3 +597,6 @@ MIT
 
 <!-- handsoff-issue-1303 -->
 - #1303: Add request locale negotiation guardrails
+
+<!-- handsoff-issue-1304 -->
+- #1304: Add GraphQL query complexity limits by authenticated role
