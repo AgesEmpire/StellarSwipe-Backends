@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
@@ -37,6 +37,44 @@ const SENSITIVE_METADATA_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const REDACTED = '[REDACTED]';
+
+/**
+ * Roles permitted to inspect and recover dead-lettered notification jobs.
+ */
+const DEAD_LETTER_OPERATOR_ROLES: ReadonlySet<string> = new Set([
+  'admin',
+  'operator',
+  'support',
+]);
+
+/**
+ * Maximum number of dead-letter jobs that may be retried in a single request.
+ * Bounds the blast radius of an operational recovery action.
+ */
+const MAX_DEAD_LETTER_RETRY_BATCH = 50;
+
+/**
+ * Safe, non-sensitive view of a permanently failed notification job.
+ */
+export interface DeadLetterJobSummary {
+  id: string;
+  notificationId: string;
+  type: NotificationType;
+  channel: NotificationChannel;
+  status: string;
+  attemptsMade: number;
+  failedAt: Date | null;
+  errorMessage: string | null;
+}
+
+/**
+ * Result of a bounded dead-letter retry operation.
+ */
+export interface DeadLetterRetryResult {
+  requested: number;
+  retried: string[];
+  skipped: string[];
+}
 
 @Injectable()
 export class NotificationsService {
@@ -247,5 +285,121 @@ export class NotificationsService {
       status: 'FAILED',
       errorMessage,
     });
+  }
+
+  /**
+   * Inspect permanently failed notification jobs (dead-letter queue).
+   *
+   * Only safe metadata is exposed: the notification id, type, channel,
+   * status, attempt count, failure timestamp and error message. Raw job
+   * payloads and user metadata are never returned.
+   *
+   * @param actorRole Role of the operator requesting the inspection
+   * @param limit Maximum number of dead-letter jobs to return
+   * @returns Safe summaries of the failed jobs
+   */
+  async inspectDeadLetterJobs(
+    actorRole: string,
+    limit = 50,
+  ): Promise<DeadLetterJobSummary[]> {
+    this.assertDeadLetterOperator(actorRole);
+
+    const boundedLimit = Math.min(Math.max(limit, 1), MAX_DEAD_LETTER_RETRY_BATCH);
+    const failedJobs = await this.notificationQueue.getFailed(0, boundedLimit - 1);
+
+    const summaries: DeadLetterJobSummary[] = [];
+    for (const job of failedJobs) {
+      const notificationId = job?.data?.notificationId;
+      if (!notificationId) {
+        continue;
+      }
+
+      const notification = await this.notificationRepository.findOne({
+        where: { id: notificationId },
+      });
+      if (!notification) {
+        continue;
+      }
+
+      summaries.push({
+        id: String(job.id),
+        notificationId: notification.id,
+        type: notification.type,
+        channel: notification.channel,
+        status: notification.status,
+        attemptsMade: job.attemptsMade ?? 0,
+        failedAt: job.failedReason ? job.finishedOn ? new Date(job.finishedOn) : null : null,
+        errorMessage: notification.errorMessage ?? job.failedReason ?? null,
+      });
+    }
+
+    this.logger.log(
+      `Operator with role ${actorRole} inspected ${summaries.length} dead-letter notification job(s)`,
+    );
+
+    return summaries;
+  }
+
+  /**
+   * Retry eligible permanently failed notification jobs.
+   *
+   * Retries are bounded to {@link MAX_DEAD_LETTER_RETRY_BATCH} jobs per call,
+   * only jobs whose notification is still in a FAILED state are retried, and
+   * every retry is audited with the acting operator role.
+   *
+   * @param actorRole Role of the operator requesting the retry
+   * @param jobIds Dead-letter job ids to retry
+   * @returns The retried and skipped job ids
+   */
+  async retryDeadLetterJobs(
+    actorRole: string,
+    jobIds: string[],
+  ): Promise<DeadLetterRetryResult> {
+    this.assertDeadLetterOperator(actorRole);
+
+    const requested = Array.isArray(jobIds) ? jobIds.slice(0, MAX_DEAD_LETTER_RETRY_BATCH) : [];
+    const retried: string[] = [];
+    const skipped: string[] = [];
+
+    for (const jobId of requested) {
+      const job = await this.notificationQueue.getJob(jobId);
+      if (!job) {
+        skipped.push(jobId);
+        continue;
+      }
+
+      const notificationId = job?.data?.notificationId;
+      const notification = notificationId
+        ? await this.notificationRepository.findOne({ where: { id: notificationId } })
+        : null;
+
+      // Only retry jobs whose notification is still permanently failed.
+      if (!notification || notification.status !== 'FAILED') {
+        skipped.push(jobId);
+        continue;
+      }
+
+      await job.retry();
+      await this.notificationRepository.update(notification.id, {
+        status: 'PENDING',
+        errorMessage: null,
+      });
+
+      retried.push(jobId);
+      this.logger.log(
+        `Audit: operator with role ${actorRole} retried dead-letter notification job ${jobId} (notification ${notification.id})`,
+      );
+    }
+
+    return { requested: requested.length, retried, skipped };
+  }
+
+  /**
+   * Enforce that the acting role is authorized for dead-letter operations.
+   */
+  private assertDeadLetterOperator(actorRole: string): void {
+    if (!actorRole || !DEAD_LETTER_OPERATOR_ROLES.has(actorRole)) {
+      throw new ForbiddenException('Not authorized to manage dead-letter notification jobs');
+    }
   }
 }

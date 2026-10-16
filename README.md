@@ -594,3 +594,6 @@ MIT
 
 <!-- handsoff-issue-1238 -->
 - #1238: Add correlation context to scheduled and queued task logs
+
+<!-- handsoff-issue-1299 -->
+- #1299: Add dead-letter recovery controls for failed notification jobs
