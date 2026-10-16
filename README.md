@@ -595,14 +595,14 @@ MIT
 <!-- handsoff-issue-1238 -->
 - #1238: Add correlation context to scheduled and queued task logs
 
-<!-- handsoff-issue-1299 -->
-- #1299: Add dead-letter recovery controls for failed notification jobs
+<!-- handsoff-issue-1303 -->
+- #1303: Add request locale negotiation guardrails
 
-<!-- handsoff-issue-1300 -->
-- #1300: Add notification template rendering validation
+<!-- handsoff-issue-1304 -->
+- #1304: Add GraphQL query complexity limits by authenticated role
 
-<!-- handsoff-issue-1301 -->
-- #1301: Add notification delivery preference change audit trail
+<!-- handsoff-issue-1305 -->
+- #1305: Add GraphQL request depth limit configuration
 
-<!-- handsoff-issue-1302 -->
-- #1302: Implement localized backend validation error catalog
+<!-- handsoff-issue-1306 -->
+- #1306: Add HTTP request timeout handling for long-running endpoints
