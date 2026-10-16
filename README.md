@@ -603,3 +603,6 @@ MIT
 
 <!-- handsoff-issue-1305 -->
 - #1305: Add GraphQL request depth limit configuration
+
+<!-- handsoff-issue-1306 -->
+- #1306: Add HTTP request timeout handling for long-running endpoints
