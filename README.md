@@ -600,3 +600,6 @@ MIT
 
 <!-- handsoff-issue-1300 -->
 - #1300: Add notification template rendering validation
+
+<!-- handsoff-issue-1301 -->
+- #1301: Add notification delivery preference change audit trail
