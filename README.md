@@ -597,3 +597,6 @@ MIT
 
 <!-- handsoff-issue-1307 -->
 - #1307: Add idempotency retention cleanup job
+
+<!-- handsoff-issue-1308 -->
+- #1308: Add database index review checks for TypeORM migrations
