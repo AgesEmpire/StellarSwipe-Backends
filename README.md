@@ -603,3 +603,6 @@ MIT
 
 <!-- handsoff-issue-1301 -->
 - #1301: Add notification delivery preference change audit trail
+
+<!-- handsoff-issue-1302 -->
+- #1302: Implement localized backend validation error catalog
