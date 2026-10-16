@@ -597,3 +597,6 @@ MIT
 
 <!-- handsoff-issue-1299 -->
 - #1299: Add dead-letter recovery controls for failed notification jobs
+
+<!-- handsoff-issue-1300 -->
+- #1300: Add notification template rendering validation

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
@@ -11,8 +11,27 @@ import { ConsentCategory } from './entities/user-consent.entity';
 
 export const NOTIFICATION_QUEUE = 'notifications';
 
+interface NotificationTemplate {
+  body: string;
+  requiredVariables: string[];
+}
+
+export const NOTIFICATION_TEMPLATES: Record<string, NotificationTemplate> = {
+  TRADE_EXECUTED: { body: 'Your trade {{symbol}} was executed at {{price}}.', requiredVariables: ['symbol', 'price'] },
+  TRADE_PENDING: { body: 'Your trade {{symbol}} is pending.', requiredVariables: ['symbol'] },
+  TRADE_CANCELLED: { body: 'Your trade {{symbol}} was cancelled.', requiredVariables: ['symbol'] },
+  TRADE_FAILED: { body: 'Your trade {{symbol}} failed: {{reason}}.', requiredVariables: ['symbol', 'reason'] },
+  SIGNAL_CREATED: { body: 'New signal for {{symbol}}.', requiredVariables: ['symbol'] },
+  SIGNAL_UPDATED: { body: 'Signal for {{symbol}} was updated.', requiredVariables: ['symbol'] },
+  SIGNAL_CLOSED: { body: 'Signal for {{symbol}} was closed.', requiredVariables: ['symbol'] },
+  RISK_ALERT: { body: 'Risk alert: {{message}}.', requiredVariables: ['message'] },
+  PRICE_ALERT: { body: 'Price alert for {{symbol}} at {{price}}.', requiredVariables: ['symbol', 'price'] },
+};
+
+const TEMPLATE_VARIABLE_PATTERN = /{{\s*([\w.]+)\s*}}/g;
+
 @Injectable()
-export class NotificationService {
+export class NotificationService implements OnModuleInit {
   private readonly logger = new Logger(NotificationService.name);
 
   constructor(
@@ -24,10 +43,55 @@ export class NotificationService {
     private readonly consentService: ConsentService,
   ) {}
 
+  onModuleInit(): void {
+    const errors = this.validateTemplates();
+    if (errors.length > 0) {
+      throw new Error(`Invalid notification templates:\n${errors.join('\n')}`);
+    }
+    this.logger.log(`Validated ${Object.keys(NOTIFICATION_TEMPLATES).length} notification templates`);
+  }
+
+  validateTemplates(): string[] {
+    const errors: string[] = [];
+    for (const [type, template] of Object.entries(NOTIFICATION_TEMPLATES)) {
+      const placeholders = new Set<string>();
+      let match: RegExpExecArray | null;
+      TEMPLATE_VARIABLE_PATTERN.lastIndex = 0;
+      while ((match = TEMPLATE_VARIABLE_PATTERN.exec(template.body)) !== null) {
+        placeholders.add(match[1]);
+      }
+      if (placeholders.size === 0) {
+        errors.push(`Template "${type}" contains no variables; expected at least one placeholder.`);
+      }
+      for (const variable of template.requiredVariables) {
+        if (!placeholders.has(variable)) {
+          errors.push(`Template "${type}" declares required variable "${variable}" but does not reference it as {{${variable}}}.`);
+        }
+      }
+      for (const placeholder of placeholders) {
+        if (!template.requiredVariables.includes(placeholder)) {
+          errors.push(`Template "${type}" references undeclared variable "${placeholder}"; add it to requiredVariables.`);
+        }
+      }
+    }
+    return errors;
+  }
+
+  renderTemplate(type: string, variables: Record<string, string>): string {
+    const template = NOTIFICATION_TEMPLATES[type];
+    if (!template) {
+      throw new NotFoundException(`No notification template registered for type ${type}`);
+    }
+    const missing = template.requiredVariables.filter((variable) => variables[variable] === undefined);
+    if (missing.length > 0) {
+      throw new Error(`Missing required variables for template "${type}": ${missing.join(', ')}`);
+    }
+    return template.body.replace(TEMPLATE_VARIABLE_PATTERN, (_match, name: string) => variables[name] ?? '');
+  }
+
   async send(dto: SendNotificationDto): Promise<Notification> {
     const channel = dto.channel ?? NotificationChannel.IN_APP;
 
-    // Check marketing consent before sending marketing notifications
     if (channel !== NotificationChannel.IN_APP) {
       const consentCategory =
         channel === NotificationChannel.EMAIL
@@ -50,14 +114,12 @@ export class NotificationService {
       }
     }
 
-    // Check user preferences before sending
     const channelKey = channel === NotificationChannel.EMAIL ? 'email' : 'push';
     const typeKey = this.mapTypeToPreference(dto.type);
     if (typeKey && channel !== NotificationChannel.IN_APP) {
       const enabled = await this.preferencesService.isEnabled(dto.userId, typeKey, channelKey as any);
       if (!enabled) {
         this.logger.log(`Notification suppressed for user ${dto.userId}: ${typeKey}/${channelKey} disabled`);
-        // Still create in-app record but mark as sent
         const notification = this.notificationRepository.create({
           ...dto,
           channel: NotificationChannel.IN_APP,
@@ -74,9 +136,8 @@ export class NotificationService {
     });
     const saved = await this.notificationRepository.save(notification);
 
-    // Enqueue for async delivery (NORMAL priority)
     await this.notificationQueue.add('deliver', { notificationId: saved.id }, {
-      priority: 100, // NORMAL
+      priority: 100,
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
     });
