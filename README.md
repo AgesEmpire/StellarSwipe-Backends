@@ -600,3 +600,6 @@ MIT
 
 <!-- handsoff-issue-1308 -->
 - #1308: Add database index review checks for TypeORM migrations
+
+<!-- handsoff-issue-1309 -->
+- #1309: Add configurable database statement timeout for API workloads

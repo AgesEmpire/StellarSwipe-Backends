@@ -1,6 +1,23 @@
 import { registerAs } from '@nestjs/config';
 import { DatabaseConfig, RedisConfig } from './schemas/config.interface';
 
+/**
+ * Resolve the request-scoped statement timeout (in milliseconds).
+ *
+ * The value is configured per environment via DATABASE_STATEMENT_TIMEOUT and
+ * falls back to the write timeout so existing deployments keep a bounded
+ * default. It is applied to request-scoped database operations so runaway
+ * queries cannot hold pool capacity indefinitely.
+ */
+export const resolveStatementTimeoutMs = (): number => {
+  const raw =
+    process.env.DATABASE_STATEMENT_TIMEOUT ||
+    process.env.DATABASE_WRITE_TIMEOUT_MS ||
+    '10000';
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10000;
+};
+
 export const databaseConfig = registerAs(
   'database',
   (): DatabaseConfig & Record<string, any> => ({
@@ -15,6 +32,8 @@ export const databaseConfig = registerAs(
     logging: process.env.DATABASE_LOGGING === 'true',
     readTimeoutMs: parseInt(process.env.DATABASE_READ_TIMEOUT_MS || '5000', 10),
     writeTimeoutMs: parseInt(process.env.DATABASE_WRITE_TIMEOUT_MS || '10000', 10),
+    // Bounded statement timeout applied to request-scoped operations.
+    statementTimeoutMs: resolveStatementTimeoutMs(),
     // TypeORM specific properties
     type: 'postgres',
     entities: ['dist/**/*.entity{.ts,.js}'],
@@ -36,10 +55,7 @@ export const databaseConfig = registerAs(
         process.env.DATABASE_POOL_CONNECTION_TIMEOUT || '2000',
         10,
       ),
-      statement_timeout: parseInt(
-        process.env.DATABASE_STATEMENT_TIMEOUT || process.env.DATABASE_WRITE_TIMEOUT_MS || '10000',
-        10,
-      ),
+      statement_timeout: resolveStatementTimeoutMs(),
       query_timeout: parseInt(process.env.DATABASE_QUERY_TIMEOUT || '10000', 10),
     },
     // Query performance settings
