@@ -600,3 +600,6 @@ MIT
 
 <!-- handsoff-issue-1211 -->
 - #1211: Record Stellar transaction submission attempts for reconciliation
+
+<!-- handsoff-issue-1212 -->
+- #1212: Expose transaction reconciliation status to authorized clients
