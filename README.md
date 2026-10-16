@@ -595,14 +595,14 @@ MIT
 <!-- handsoff-issue-1238 -->
 - #1238: Add correlation context to scheduled and queued task logs
 
-<!-- handsoff-issue-1210 -->
-- #1210: Add contract version compatibility checks to Soroban calls
+<!-- handsoff-issue-1303 -->
+- #1303: Add request locale negotiation guardrails
 
-<!-- handsoff-issue-1211 -->
-- #1211: Record Stellar transaction submission attempts for reconciliation
+<!-- handsoff-issue-1304 -->
+- #1304: Add GraphQL query complexity limits by authenticated role
 
-<!-- handsoff-issue-1212 -->
-- #1212: Expose transaction reconciliation status to authorized clients
+<!-- handsoff-issue-1305 -->
+- #1305: Add GraphQL request depth limit configuration
 
-<!-- handsoff-issue-1213 -->
-- #1213: Add bounded pagination to audit trail queries
+<!-- handsoff-issue-1306 -->
+- #1306: Add HTTP request timeout handling for long-running endpoints
