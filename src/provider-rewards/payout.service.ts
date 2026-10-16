@@ -4,25 +4,43 @@ import {
   BadRequestException,
   ConflictException,
   InternalServerErrorException,
+  Inject,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { Payout, PayoutStatus } from '../entities/payout.entity';
-import { PayoutRequestDto } from '../dto/payout-request.dto';
+import { Payout, PayoutStatus } from './payout.entity';
+import { PayoutRequestDto } from './payout-request.dto';
 import { ProviderRewardsService, MINIMUM_PAYOUT_THRESHOLD } from './provider-rewards.service';
-import { PayoutHistoryItemDto } from '../dto/earnings-summary.dto';
+import { PayoutHistoryItemDto } from './earnings-summary.dto';
+
+export interface StellarPaymentRequest {
+  destinationAddress: string;
+  amount: number;
+  asset: string;
+  memo?: string;
+  /**
+   * Stable key for the payment. Gateways that support it must treat a repeat
+   * of the same key as the same payment so a retry cannot pay twice.
+   */
+  idempotencyKey?: string;
+}
+
+export interface StellarPaymentResult {
+  transactionId: string;
+}
 
 /**
- * Minimal interface for a Stellar payment gateway.
- * Inject your real StellarService / HorizonService here.
+ * Minimal interface for a Stellar payment gateway (e.g. the existing
+ * StellarService / HorizonService integration).
  */
 export interface StellarGateway {
-  submitPayment(params: {
-    destinationAddress: string;
-    amount: number;
-    asset: string;
-    memo?: string;
-  }): Promise<{ transactionId: string }>;
+  submitPayment(params: StellarPaymentRequest): Promise<StellarPaymentResult>;
+  /**
+   * Optional lookup used to reconcile a submission that timed out after the
+   * network accepted it — resolves to the original payment if one exists.
+   */
+  findPaymentByMemo?(memo: string): Promise<StellarPaymentResult | null>;
 }
 
 export const STELLAR_GATEWAY = 'STELLAR_GATEWAY';
@@ -31,13 +49,17 @@ export const STELLAR_GATEWAY = 'STELLAR_GATEWAY';
 export class PayoutService {
   private readonly logger = new Logger(PayoutService.name);
 
+  /** In-flight submissions keyed by payout id — prevents a retry storm from paying twice. */
+  private readonly inFlightSubmissions = new Map<string, Promise<string>>();
+
   constructor(
     @InjectRepository(Payout)
     private readonly payoutRepository: Repository<Payout>,
     private readonly rewardsService: ProviderRewardsService,
     private readonly dataSource: DataSource,
-    // Inject your concrete Stellar implementation via the token
-    // @Inject(STELLAR_GATEWAY) private readonly stellarGateway: StellarGateway,
+    @Optional()
+    @Inject(STELLAR_GATEWAY)
+    private readonly stellarGateway?: StellarGateway,
   ) {}
 
   /**
@@ -97,13 +119,6 @@ export class PayoutService {
     });
 
     try {
-      // Replace with real stellar gateway call:
-      // const { transactionId } = await this.stellarGateway.submitPayment({
-      //   destinationAddress: dto.destinationAddress,
-      //   amount: availableBalance,
-      //   asset: dto.asset,
-      //   memo: payout.id,
-      // });
       const transactionId = await this.submitStellarPayment({
         destinationAddress: dto.destinationAddress,
         amount: availableBalance,
@@ -186,8 +201,16 @@ export class PayoutService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Placeholder for the real Stellar payment submission.
-   * Replace this entire method with your StellarGateway call.
+   * Submit a payment for a payout through the injected Stellar gateway.
+   *
+   * Safety properties:
+   *  - The payout id doubles as the memo and idempotency key, so a gateway
+   *    that honours either will collapse duplicate attempts.
+   *  - Before submitting, an optional `findPaymentByMemo` lookup reconciles a
+   *    previous attempt that timed out after the network accepted it. This is
+   *    what makes "retry after timeout" safe: we reuse the original
+   *    transaction instead of paying twice.
+   *  - Concurrent submissions for the same payout share one in-flight promise.
    */
   private async submitStellarPayment(params: {
     destinationAddress: string;
@@ -195,8 +218,53 @@ export class PayoutService {
     asset: string;
     payoutId: string;
   }): Promise<string> {
-    // TODO: inject StellarGateway and call it here
-    throw new Error('StellarGateway not configured. Inject STELLAR_GATEWAY token.');
+    if (!this.stellarGateway) {
+      throw new Error(
+        'StellarGateway not configured. Configure a STELLAR_GATEWAY implementation.',
+      );
+    }
+
+    const existing = this.inFlightSubmissions.get(params.payoutId);
+    if (existing) {
+      return existing;
+    }
+
+    const submission = this.submitOnce(params).finally(() =>
+      this.inFlightSubmissions.delete(params.payoutId),
+    );
+    this.inFlightSubmissions.set(params.payoutId, submission);
+    return submission;
+  }
+
+  private async submitOnce(params: {
+    destinationAddress: string;
+    amount: number;
+    asset: string;
+    payoutId: string;
+  }): Promise<string> {
+    const memo = `payout:${params.payoutId}`;
+
+    // Reconcile an earlier submission that may have landed before we lost the
+    // response (e.g. a timeout) so the retry does not create a second payment.
+    if (this.stellarGateway!.findPaymentByMemo) {
+      const reconciled = await this.stellarGateway!.findPaymentByMemo(memo);
+      if (reconciled) {
+        this.logger.warn(
+          `Payout ${params.payoutId} already submitted on Stellar (tx=${reconciled.transactionId}); reusing transaction instead of resubmitting.`,
+        );
+        return reconciled.transactionId;
+      }
+    }
+
+    const { transactionId } = await this.stellarGateway!.submitPayment({
+      destinationAddress: params.destinationAddress,
+      amount: params.amount,
+      asset: params.asset,
+      memo,
+      idempotencyKey: params.payoutId,
+    });
+
+    return transactionId;
   }
 
   private mapToDto(p: Payout): PayoutHistoryItemDto {

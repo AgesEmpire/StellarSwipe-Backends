@@ -7,8 +7,8 @@ import {
   MINIMUM_PAYOUT_THRESHOLD,
   RecordEarningInput,
 } from './provider-rewards.service';
-import { ProviderEarning } from '../entities/provider-earning.entity';
-import { Payout, PayoutStatus } from '../entities/payout.entity';
+import { ProviderEarning } from './provider-earning.entity';
+import { Payout, PayoutStatus } from './payout.entity';
 
 // ---------------------------------------------------------------------------
 // Helpers

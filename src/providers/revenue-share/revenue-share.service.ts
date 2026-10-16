@@ -3,6 +3,8 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  Inject,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
@@ -18,6 +20,42 @@ import {
 import { TierManagerService } from './tier-manager.service';
 import { ProviderStats } from '../../signals/entities/provider-stats.entity';
 import { User } from '../../users/entities/user.entity';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stellar payment gateway
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RevenueSharePaymentRequest {
+  destinationAddress: string;
+  amount: string;
+  asset: string;
+  memo?: string;
+  /**
+   * Stable key for the payment. Gateways that support it must treat a repeat
+   * of the same key as the same payment so a retry cannot pay twice.
+   */
+  idempotencyKey?: string;
+}
+
+export interface RevenueSharePaymentReceipt {
+  transactionHash: string;
+}
+
+/**
+ * Thin port over the existing Stellar payment integration (StellarModule /
+ * StellarService). Only the pieces the revenue-share path needs are exposed so
+ * the accounting logic stays testable and decoupled from the SDK.
+ */
+export interface RevenueSharePaymentGateway {
+  sendPayment(params: RevenueSharePaymentRequest): Promise<RevenueSharePaymentReceipt>;
+  /**
+   * Optional lookup used to reconcile a submission that timed out after the
+   * network accepted it — resolves to the original payment if one exists.
+   */
+  findPaymentByMemo?(memo: string): Promise<RevenueSharePaymentReceipt | null>;
+}
+
+export const REVENUE_SHARE_PAYMENT_GATEWAY = 'REVENUE_SHARE_PAYMENT_GATEWAY';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DTOs (inline – keep the module self-contained)
@@ -80,6 +118,9 @@ export interface MonthlyBatchResult {
 export class RevenueShareService {
   private readonly logger = new Logger(RevenueShareService.name);
 
+  /** In-flight on-chain dispatches keyed by payout id — prevents double payment under retries. */
+  private readonly inFlightPayments = new Map<string, Promise<void>>();
+
   constructor(
     @InjectRepository(ProviderRevenuePayout)
     private readonly payoutRepo: Repository<ProviderRevenuePayout>,
@@ -97,6 +138,10 @@ export class RevenueShareService {
     private readonly userRepo: Repository<User>,
 
     private readonly tierManager: TierManagerService,
+
+    @Optional()
+    @Inject(REVENUE_SHARE_PAYMENT_GATEWAY)
+    private readonly paymentGateway?: RevenueSharePaymentGateway,
   ) {}
 
   // ─── Revenue Share Calculation ─────────────────────────────────────────────
@@ -229,8 +274,11 @@ export class RevenueShareService {
   }
 
   /**
-   * Mark a payout as processing (escalation path for top-tier providers).
-   * In production this would trigger the Stellar payment pipeline.
+   * Mark a payout as processing and dispatch it on-chain.
+   *
+   * The DB row is the accounting record of origin: the Stellar transaction
+   * hash is written back onto it, so payment status and hash stay queryable
+   * through the existing history/reporting endpoints.
    */
   private async escalatePayout(payout: ProviderRevenuePayout): Promise<void> {
     payout.status = PayoutStatus.PROCESSING;
@@ -240,8 +288,141 @@ export class RevenueShareService {
       `Payout ${payout.id} auto-escalated to PROCESSING for ${payout.tierLevel} provider`,
     );
 
-    // ⚡ TODO: trigger Stellar payment here (StellarModule integration)
-    // e.g.: await this.stellarService.sendPayment({ ... })
+    await this.dispatchPayoutOnChain(payout);
+  }
+
+  /**
+   * Submit an approved payout through the Stellar integration.
+   *
+   * Guarantees at most one Stellar payment per accounting record:
+   *  - a completed payout (or one that already has a hash) is never re-sent;
+   *  - concurrent submissions for the same payout share one in-flight promise;
+   *  - when the gateway exposes `findPaymentByMemo`, a retry after a timeout
+   *    reuses the payment that actually landed instead of paying twice.
+   */
+  async dispatchPayoutOnChain(payout: ProviderRevenuePayout): Promise<void> {
+    if (!this.paymentGateway) {
+      this.logger.warn(
+        `No Stellar payment gateway configured — payout ${payout.id} left PROCESSING for manual dispatch.`,
+      );
+      return;
+    }
+
+    if (payout.status === PayoutStatus.COMPLETED || payout.stellarTxHash) {
+      this.logger.debug(`Payout ${payout.id} already paid on Stellar — skipping dispatch.`);
+      return;
+    }
+
+    const inFlight = this.inFlightPayments.get(payout.id);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const submission = this.submitPayout(payout).finally(() =>
+      this.inFlightPayments.delete(payout.id),
+    );
+    this.inFlightPayments.set(payout.id, submission);
+    return submission;
+  }
+
+  private async submitPayout(payout: ProviderRevenuePayout): Promise<void> {
+    const memo = `revenue-share:${payout.id}`;
+
+    try {
+      let receipt: RevenueSharePaymentReceipt | null = null;
+
+      // Reconcile an earlier attempt that may have landed before we lost the
+      // response (e.g. a timeout) so the retry does not create a second payment.
+      if (this.paymentGateway!.findPaymentByMemo) {
+        receipt = await this.paymentGateway!.findPaymentByMemo(memo);
+        if (receipt) {
+          this.logger.warn(
+            `Payout ${payout.id} already submitted on Stellar (tx=${receipt.transactionHash}); reusing transaction.`,
+          );
+        }
+      }
+
+      if (!receipt) {
+        receipt = await this.paymentGateway!.sendPayment({
+          destinationAddress: payout.providerWalletAddress,
+          amount: payout.totalPayout,
+          asset: payout.assetCode || 'USDC',
+          memo,
+          idempotencyKey: payout.id,
+        });
+      }
+
+      await this.payoutRepo.update(payout.id, {
+        status: PayoutStatus.COMPLETED,
+        stellarTxHash: receipt.transactionHash,
+        failureReason: null,
+        paidAt: new Date(),
+      });
+      payout.status = PayoutStatus.COMPLETED;
+      payout.stellarTxHash = receipt.transactionHash;
+      payout.paidAt = new Date();
+
+      this.logger.log(
+        `Payout ${payout.id} COMPLETED on Stellar (tx=${receipt.transactionHash}, ${payout.totalPayout} ${payout.assetCode})`,
+      );
+    } catch (error: any) {
+      const reason: string = error?.message ?? 'Unknown Stellar error';
+      await this.payoutRepo.update(payout.id, {
+        status: PayoutStatus.FAILED,
+        failureReason: reason,
+        retryCount: (payout.retryCount ?? 0) + 1,
+      });
+      payout.status = PayoutStatus.FAILED;
+      payout.failureReason = reason;
+      payout.retryCount = (payout.retryCount ?? 0) + 1;
+
+      this.logger.error(
+        `Payout ${payout.id} FAILED on Stellar: ${reason}`,
+        error?.stack,
+      );
+    }
+  }
+
+  /**
+   * Dispatch every payout still awaiting settlement (e.g. after a partial
+   * failure or a gateway outage). Safe to run on a schedule: completed and
+   * already-paid payouts are skipped.
+   */
+  async dispatchPendingPayouts(limit = 50): Promise<{
+    attempted: number;
+    completed: number;
+    failed: number;
+  }> {
+    const pending = await this.getPendingPayouts(limit);
+    let completed = 0;
+    let failed = 0;
+
+    for (const payout of pending) {
+      await this.dispatchPayoutOnChain(payout);
+      if (payout.status === PayoutStatus.COMPLETED) {
+        completed++;
+      } else if (payout.status === PayoutStatus.FAILED) {
+        failed++;
+      }
+    }
+
+    this.logger.log(
+      `Pending payout dispatch: ${completed} completed, ${failed} failed of ${pending.length} attempted`,
+    );
+
+    return { attempted: pending.length, completed, failed };
+  }
+
+  /**
+   * Fetch a single payout (accounting record) so callers can query its status
+   * and Stellar transaction hash after dispatch.
+   */
+  async getPayoutById(payoutId: string): Promise<ProviderRevenuePayout> {
+    const payout = await this.payoutRepo.findOne({ where: { id: payoutId } });
+    if (!payout) {
+      throw new NotFoundException(`Payout ${payoutId} not found`);
+    }
+    return payout;
   }
 
   // ─── Monthly Batch Payouts ─────────────────────────────────────────────────

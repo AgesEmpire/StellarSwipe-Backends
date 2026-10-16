@@ -3,6 +3,8 @@ import {
   Logger,
   BadRequestException,
   InternalServerErrorException,
+  Inject,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
@@ -23,6 +25,29 @@ import {
   FeeConfigDto,
   MonthlyRevenueReportDto,
 } from './dto/fee-summary.dto';
+
+/**
+ * Staking status as reported by the staking service.
+ */
+export interface StakingStatus {
+  /** Whether the stake is currently active. */
+  isActive: boolean;
+  /** When the stake expires; an expired stake is no longer eligible. */
+  expiresAt?: Date | string | null;
+  /** Optional tier/label the stake grants (e.g. 'VIP'). */
+  tier?: string;
+}
+
+/**
+ * Port over the user staking service. Injected so fee calculations do not bind
+ * to the concrete Soroban-backed implementation and can degrade gracefully
+ * when the staking service is unavailable.
+ */
+export interface StakingStatusService {
+  getStakingStatus(userId: string): Promise<StakingStatus | null>;
+}
+
+export const STAKING_STATUS_SERVICE = 'STAKING_STATUS_SERVICE';
 
 interface TradeDetails {
   userId: string;
@@ -56,6 +81,9 @@ export class FeesService {
     @InjectRepository(FeeTransaction)
     private readonly feeTransactionRepository: Repository<FeeTransaction>,
     private readonly configService: ConfigService,
+    @Optional()
+    @Inject(STAKING_STATUS_SERVICE)
+    private readonly stakingStatusService?: StakingStatusService,
   ) {
     // Initialize Stellar configuration
     this.networkPassphrase = this.configService.get<string>(
@@ -705,11 +733,58 @@ export class FeesService {
   }
 
   /**
-   * Check if user has VIP status (stub - integrate with user service)
+   * Determine whether the user currently holds an eligible, active stake that
+   * qualifies them for the configured VIP fee treatment.
+   *
+   * Staking status is read through the injected staking service. When the
+   * service is unavailable, or the stake is inactive/expired, the user simply
+   * falls back to the normal tier path — staking never bypasses the standard
+   * fee calculation, validation, or fee-transaction audit record.
    */
-  private async checkVIPStatus(_userId: string): Promise<boolean> {
-    // TODO: Integrate with user service to check staking status
-    return false;
+  private async checkVIPStatus(userId: string): Promise<boolean> {
+    const status = await this.getStakingStatus(userId);
+    const eligible = !!status && status.isActive === true && !this.isStakeExpired(status);
+
+    if (eligible) {
+      this.logger.log(
+        `Staking status eligible for user=${userId}${status?.tier ? ` (${status.tier})` : ''} — applying VIP fee treatment`,
+      );
+    }
+
+    return eligible;
+  }
+
+  private async getStakingStatus(userId: string): Promise<StakingStatus | null> {
+    if (!this.stakingStatusService) {
+      return null;
+    }
+
+    try {
+      return await this.stakingStatusService.getStakingStatus(userId);
+    } catch (error: any) {
+      // A staking outage must not change (or block) fee calculation: fall back
+      // to the standard tier path and log for audit purposes.
+      this.logger.warn(
+        `Staking status lookup failed for user=${userId}: ${error?.message ?? error}. Falling back to standard fee tier.`,
+      );
+      return null;
+    }
+  }
+
+  private isStakeExpired(status: StakingStatus): boolean {
+    if (!status.expiresAt) {
+      return false;
+    }
+
+    const expiresAt =
+      status.expiresAt instanceof Date ? status.expiresAt : new Date(status.expiresAt);
+
+    if (Number.isNaN(expiresAt.getTime())) {
+      // Unparseable expiry — treat as not eligible rather than granting a fee.
+      return true;
+    }
+
+    return expiresAt.getTime() <= Date.now();
   }
 
   /**

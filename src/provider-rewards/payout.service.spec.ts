@@ -2,11 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { BadRequestException, ConflictException, InternalServerErrorException } from '@nestjs/common';
-import { PayoutService } from './payout.service';
+import { PayoutService, STELLAR_GATEWAY } from './payout.service';
 import { ProviderRewardsService } from './provider-rewards.service';
-import { Payout, PayoutStatus } from '../entities/payout.entity';
-import { PayoutRequestDto } from '../dto/payout-request.dto';
-import { PayoutAsset } from '../dto/payout-request.dto';
+import { Payout, PayoutStatus } from './payout.entity';
+import { PayoutRequestDto } from './payout-request.dto';
+import { PayoutAsset } from './payout-request.dto';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -275,3 +275,135 @@ describe('PayoutService', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stellar gateway integration (issue #1186)
+// ---------------------------------------------------------------------------
+
+describe('PayoutService – Stellar gateway', () => {
+  let service: PayoutService;
+  let payoutRepo: jest.Mocked<Repository<Payout>>;
+  let rewardsService: jest.Mocked<ProviderRewardsService>;
+  let gateway: { submitPayment: jest.Mock; findPaymentByMemo: jest.Mock };
+
+  const buildModule = async (stellarGateway?: unknown) => {
+    const providers: any[] = [
+      PayoutService,
+      { provide: getRepositoryToken(Payout), useFactory: mockPayoutRepo },
+      { provide: ProviderRewardsService, useFactory: mockRewardsService },
+      { provide: DataSource, useFactory: mockDataSource },
+    ];
+    if (stellarGateway) {
+      providers.push({ provide: STELLAR_GATEWAY, useValue: stellarGateway });
+    }
+    return Test.createTestingModule({ providers }).compile();
+  };
+
+  beforeEach(async () => {
+    gateway = {
+      submitPayment: jest.fn(),
+      findPaymentByMemo: jest.fn().mockResolvedValue(null),
+    };
+
+    const module = await buildModule(gateway);
+    service = module.get(PayoutService);
+    payoutRepo = module.get(getRepositoryToken(Payout));
+    rewardsService = module.get(ProviderRewardsService);
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  it('submits a valid Stellar payment and persists the transaction hash', async () => {
+    rewardsService.getAvailableBalance.mockResolvedValue(50);
+    payoutRepo.findOne.mockResolvedValue(null);
+    const created = makePayout();
+    payoutRepo.create.mockReturnValue(created);
+    payoutRepo.save.mockResolvedValue(created);
+    payoutRepo.update.mockResolvedValue(undefined as any);
+    gateway.submitPayment.mockResolvedValue({ transactionId: 'tx-abc' });
+    payoutRepo.findOneOrFail.mockResolvedValue(
+      makePayout({ status: PayoutStatus.COMPLETED, stellarTransactionId: 'tx-abc' }),
+    );
+
+    const result = await service.requestPayout('provider-1', dto);
+
+    expect(gateway.submitPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationAddress: dto.destinationAddress,
+        amount: 50,
+        asset: dto.asset,
+        memo: `payout:${created.id}`,
+        idempotencyKey: created.id,
+      }),
+    );
+    expect(payoutRepo.update).toHaveBeenLastCalledWith(
+      created.id,
+      expect.objectContaining({
+        status: PayoutStatus.COMPLETED,
+        stellarTransactionId: 'tx-abc',
+      }),
+    );
+    expect(result.stellarTransactionId).toBe('tx-abc');
+  });
+
+  it('persists failures for reconciliation when submission fails', async () => {
+    rewardsService.getAvailableBalance.mockResolvedValue(50);
+    payoutRepo.findOne.mockResolvedValue(null);
+    const created = makePayout();
+    payoutRepo.create.mockReturnValue(created);
+    payoutRepo.save.mockResolvedValue(created);
+    payoutRepo.update.mockResolvedValue(undefined as any);
+    gateway.submitPayment.mockRejectedValue(new Error('horizon unavailable'));
+
+    await expect(service.requestPayout('provider-1', dto)).rejects.toThrow(
+      InternalServerErrorException,
+    );
+
+    expect(payoutRepo.update).toHaveBeenLastCalledWith(
+      created.id,
+      expect.objectContaining({
+        status: PayoutStatus.FAILED,
+        failureReason: 'horizon unavailable',
+      }),
+    );
+  });
+
+  it('reconciles a timed-out submission instead of paying twice on retry', async () => {
+    rewardsService.getAvailableBalance.mockResolvedValue(50);
+    payoutRepo.findOne.mockResolvedValue(null);
+    const created = makePayout();
+    payoutRepo.create.mockReturnValue(created);
+    payoutRepo.save.mockResolvedValue(created);
+    payoutRepo.update.mockResolvedValue(undefined as any);
+    // A previous attempt timed out after the network accepted the payment.
+    gateway.findPaymentByMemo.mockResolvedValue({ transactionId: 'tx-reconciled' });
+    payoutRepo.findOneOrFail.mockResolvedValue(
+      makePayout({ status: PayoutStatus.COMPLETED, stellarTransactionId: 'tx-reconciled' }),
+    );
+
+    const result = await service.requestPayout('provider-1', dto);
+
+    expect(gateway.findPaymentByMemo).toHaveBeenCalledWith(`payout:${created.id}`);
+    expect(gateway.submitPayment).not.toHaveBeenCalled();
+    expect(result.stellarTransactionId).toBe('tx-reconciled');
+  });
+
+  it('shares one in-flight submission between concurrent calls for the same payout', async () => {
+    gateway.submitPayment.mockResolvedValue({ transactionId: 'tx-1' });
+
+    const params = {
+      destinationAddress: dto.destinationAddress,
+      amount: 50,
+      asset: dto.asset,
+      payoutId: 'payout-1',
+    };
+    const submit = (service as any).submitStellarPayment.bind(service);
+
+    const [first, second] = await Promise.all([submit(params), submit(params)]);
+
+    expect(first).toBe('tx-1');
+    expect(second).toBe('tx-1');
+    expect(gateway.submitPayment).toHaveBeenCalledTimes(1);
+  });
+});
+

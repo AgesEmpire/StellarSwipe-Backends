@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
-import { FeesService } from './fees.service';
+import { FeesService, STAKING_STATUS_SERVICE } from './fees.service';
 import { FeeTransaction, FeeStatus, FeeTier } from './entities/fee-transaction.entity';
 
 describe('FeesService', () => {
@@ -407,5 +407,109 @@ describe('FeesService', () => {
       expect(result.feeAmount).toBeDefined();
       expect(parseFloat(result.feeAmount)).toBeGreaterThanOrEqual(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Staking status integration (issue #1188)
+// ---------------------------------------------------------------------------
+
+describe('FeesService – staking status', () => {
+  const tradeDetails = {
+    userId: 'staker-1',
+    tradeId: 'trade-stake',
+    tradeAmount: '1000',
+    assetCode: 'USDC',
+    assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+  };
+
+  const buildService = async (getStakingStatus: jest.Mock): Promise<FeesService> => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        FeesService,
+        { provide: getRepositoryToken(FeeTransaction), useValue: mockFeeRepository },
+        { provide: ConfigService, useValue: mockConfigService },
+        {
+          provide: STAKING_STATUS_SERVICE,
+          useValue: { getStakingStatus },
+        },
+      ],
+    }).compile();
+
+    return module.get<FeesService>(FeesService);
+  };
+
+  beforeEach(() => {
+    mockFeeRepository.find.mockResolvedValue([]);
+  });
+
+  it('applies the configured VIP treatment for an active, unexpired stake', async () => {
+    const service = await buildService(
+      jest.fn().mockResolvedValue({
+        isActive: true,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      }),
+    );
+
+    const result = await service.calculateFee(tradeDetails);
+
+    expect(result.feeTier).toBe(FeeTier.VIP);
+    expect(result.feeRate).toBe('0.0005');
+    expect(result.feeAmount).toBe('0.5000000');
+    expect(result.netAmount).toBe('999.5000000');
+  });
+
+  it('ignores an inactive stake and keeps the standard tier', async () => {
+    const service = await buildService(
+      jest.fn().mockResolvedValue({
+        isActive: false,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      }),
+    );
+
+    const result = await service.calculateFee(tradeDetails);
+
+    expect(result.feeTier).toBe(FeeTier.STANDARD);
+    expect(result.feeRate).toBe('0.001');
+  });
+
+  it('ignores an expired stake and keeps the standard tier', async () => {
+    const service = await buildService(
+      jest.fn().mockResolvedValue({
+        isActive: true,
+        expiresAt: new Date(Date.now() - 86_400_000),
+      }),
+    );
+
+    const result = await service.calculateFee(tradeDetails);
+
+    expect(result.feeTier).toBe(FeeTier.STANDARD);
+    expect(result.feeRate).toBe('0.001');
+  });
+
+  it('falls back to the standard tier when the staking service is unavailable', async () => {
+    const service = await buildService(
+      jest.fn().mockRejectedValue(new Error('staking service down')),
+    );
+
+    await expect(service.calculateFee(tradeDetails)).resolves.toMatchObject({
+      feeTier: FeeTier.STANDARD,
+      feeRate: '0.001',
+    });
+  });
+
+  it('proceeds without a staking service configured', async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        FeesService,
+        { provide: getRepositoryToken(FeeTransaction), useValue: mockFeeRepository },
+        { provide: ConfigService, useValue: mockConfigService },
+      ],
+    }).compile();
+    const service = module.get<FeesService>(FeesService);
+
+    const result = await service.calculateFee(tradeDetails);
+
+    expect(result.feeTier).toBe(FeeTier.STANDARD);
   });
 });

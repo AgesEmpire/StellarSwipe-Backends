@@ -5,13 +5,13 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ProviderEarning } from '../entities/provider-earning.entity';
-import { Payout, PayoutStatus } from '../entities/payout.entity';
+import { ProviderEarning } from './provider-earning.entity';
+import { Payout, PayoutStatus } from './payout.entity';
 import {
   EarningRecordDto,
   EarningsSummaryDto,
   PayoutHistoryItemDto,
-} from '../dto/earnings-summary.dto';
+} from './earnings-summary.dto';
 
 export const PROVIDER_FEE_RATE = 0.001; // 0.1%
 export const MINIMUM_PAYOUT_THRESHOLD = 10; // $10 USD equivalent
