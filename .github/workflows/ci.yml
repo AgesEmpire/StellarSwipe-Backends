@@ -35,6 +35,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -49,6 +51,11 @@ jobs:
 
       - name: Check for unguarded destructive migrations
         run: node scripts/check-destructive-migrations.js
+
+      - name: Review changed migrations for missing indexes
+        run: node scripts/check-migration-indexes.js
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
 
       - name: Run migrations (up)
         run: npm run migration:run
