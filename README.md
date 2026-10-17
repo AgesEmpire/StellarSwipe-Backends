@@ -642,3 +642,9 @@ MIT
 
 <!-- handsoff-issue-1276 -->
 - #1276: Add API key last-used tracking without excessive writes
+
+<!-- handsoff-issue-1297 -->
+- #1297: Add batch limits and validation to portfolio imports
+
+<!-- handsoff-issue-1298 -->
+- #1298: Implement asynchronous portfolio import processing
