@@ -606,3 +606,6 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-1281 -->
+- #1281: Prevent duplicate withdrawal submissions under concurrency
