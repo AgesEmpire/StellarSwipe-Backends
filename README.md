@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1293 -->
 - #1293: Add signal cancellation reason and audit metadata
+
+<!-- handsoff-issue-1294 -->
+- #1294: Prevent stale signal updates with version checks
