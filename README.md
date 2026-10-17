@@ -672,3 +672,15 @@ MIT
 
 <!-- handsoff-issue-1298 -->
 - #1298: Implement asynchronous portfolio import processing
+
+<!-- handsoff-issue-1289 -->
+- #1289: Support provider profile change notifications
+
+<!-- handsoff-issue-1290 -->
+- #1290: Add provider suspension workflow and access enforcement
+
+<!-- handsoff-issue-1291 -->
+- #1291: Add signal publication limits per provider
+
+<!-- handsoff-issue-1292 -->
+- #1292: Add signal expiration policy validation

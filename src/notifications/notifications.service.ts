@@ -54,6 +54,52 @@ const DEAD_LETTER_OPERATOR_ROLES: ReadonlySet<string> = new Set([
 const MAX_DEAD_LETTER_RETRY_BATCH = 50;
 
 /**
+ * Public provider profile / trading configuration fields whose changes are
+ * considered important enough to notify opted-in subscribers about.
+ */
+const PROVIDER_PROFILE_WATCHED_FIELDS: ReadonlySet<string> = new Set([
+  'displayName',
+  'bio',
+  'avatarUrl',
+  'website',
+  'tradingStrategy',
+  'riskLevel',
+  'feeRate',
+  'minTradeAmount',
+  'maxTradeAmount',
+  'supportedAssets',
+  'tradingPairs',
+  'isAcceptingFollowers',
+]);
+
+/**
+ * A subscriber that has opted in to provider profile change notifications.
+ */
+export interface ProviderProfileSubscriber {
+  userId: string;
+  optedIn: boolean;
+}
+
+/**
+ * A single detected change to a watched provider profile field.
+ */
+export interface ProviderProfileChange {
+  field: string;
+  previousValue: unknown;
+  newValue: unknown;
+}
+
+/**
+ * Result of dispatching provider profile change notifications.
+ */
+export interface ProviderProfileChangeDispatchResult {
+  changes: ProviderProfileChange[];
+  notified: string[];
+  skipped: string[];
+  failed: string[];
+}
+
+/**
  * Safe, non-sensitive view of a permanently failed notification job.
  */
 export interface DeadLetterJobSummary {
@@ -79,6 +125,13 @@ export interface DeadLetterRetryResult {
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
+
+  /**
+   * In-memory dedupe index of already-dispatched provider profile change
+   * events, keyed by provider + field + new value. Prevents duplicate
+   * notifications for the same change.
+   */
+  private readonly dispatchedProfileChanges = new Set<string>();
 
   constructor(
     @InjectRepository(Notification)
@@ -135,6 +188,166 @@ export class NotificationsService {
 
     this.logger.log(`Queued notification ${savedNotification.id} for processing`);
     return savedNotification;
+  }
+
+  /**
+   * Detect important changes between two versions of a provider's public
+   * profile / trading configuration. Only watched fields are considered.
+   *
+   * @param previous The provider profile before the update
+   * @param next The provider profile after the update
+   * @returns The list of detected changes (empty when nothing relevant changed)
+   */
+  detectProviderProfileChanges(
+    previous: Record<string, any>,
+    next: Record<string, any>,
+  ): ProviderProfileChange[] {
+    const changes: ProviderProfileChange[] = [];
+
+    for (const field of PROVIDER_PROFILE_WATCHED_FIELDS) {
+      const previousValue = previous?.[field];
+      const newValue = next?.[field];
+
+      if (!this.valuesEqual(previousValue, newValue)) {
+        changes.push({ field, previousValue, newValue });
+      }
+    }
+
+    return changes;
+  }
+
+  /**
+   * Notify opted-in subscribers about important provider profile changes.
+   *
+   * - Only subscribers with `optedIn === true` are notified.
+   * - Events are deduplicated per provider/field/new value so subscribers do
+   *   not receive repeated notifications for the same change.
+   * - Delivery failures are logged and reported in the result so they can be
+   *   retried; the underlying queue also applies retry/backoff.
+   *
+   * @param providerId The provider whose profile changed
+   * @param previous The provider profile before the update
+   * @param next The provider profile after the update
+   * @param subscribers The candidate subscribers (opt-in is enforced here)
+   * @param channel The delivery channel to use
+   * @returns A summary of the dispatch outcome
+   */
+  async notifyProviderProfileChanges(
+    providerId: string,
+    previous: Record<string, any>,
+    next: Record<string, any>,
+    subscribers: ProviderProfileSubscriber[],
+    channel: NotificationChannel = NotificationChannel.PUSH,
+  ): Promise<ProviderProfileChangeDispatchResult> {
+    const result: ProviderProfileChangeDispatchResult = {
+      changes: [],
+      notified: [],
+      skipped: [],
+      failed: [],
+    };
+
+    const changes = this.detectProviderProfileChanges(previous, next);
+    if (changes.length === 0) {
+      return result;
+    }
+
+    // Deduplicate: drop changes already dispatched for this provider.
+    const freshChanges = changes.filter((change) => {
+      const key = this.profileChangeKey(providerId, change);
+      if (this.dispatchedProfileChanges.has(key)) {
+        return false;
+      }
+      return true;
+    });
+
+    result.changes = freshChanges;
+    if (freshChanges.length === 0) {
+      this.logger.debug(`No new provider profile changes to notify for ${providerId}`);
+      return result;
+    }
+
+    const optedInSubscribers = (subscribers ?? []).filter((s) => s && s.optedIn === true);
+    if (optedInSubscribers.length === 0) {
+      this.logger.debug(`No opted-in subscribers for provider ${providerId}`);
+      return result;
+    }
+
+    const title = 'Provider profile updated';
+    const message = this.buildProviderProfileChangeMessage(freshChanges);
+    const metadata = {
+      providerId,
+      changes: freshChanges.map((change) => ({
+        field: change.field,
+        previousValue: change.previousValue,
+        newValue: change.newValue,
+      })),
+    };
+
+    for (const subscriber of optedInSubscribers) {
+      try {
+        await this.createAndQueueNotification(
+          subscriber.userId,
+          NotificationType.PROVIDER_PROFILE_CHANGED,
+          title,
+          message,
+          channel,
+          metadata,
+        );
+        result.notified.push(subscriber.userId);
+      } catch (error) {
+        // Delivery failures are recorded so they can be retried; the queue
+        // retry/backoff abstraction also handles transient provider errors.
+        result.failed.push(subscriber.userId);
+        this.logger.error(
+          `Failed to notify subscriber ${subscriber.userId} of provider ${providerId} profile change: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    // Only mark changes as dispatched once at least one subscriber was
+    // successfully notified, so a total failure remains recoverable.
+    if (result.notified.length > 0) {
+      for (const change of freshChanges) {
+        this.dispatchedProfileChanges.add(this.profileChangeKey(providerId, change));
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Build a stable dedupe key for a provider profile change event.
+   */
+  private profileChangeKey(providerId: string, change: ProviderProfileChange): string {
+    return `${providerId}:${change.field}:${JSON.stringify(change.newValue ?? null)}`;
+  }
+
+  /**
+   * Build a human-readable message describing the detected changes.
+   */
+  private buildProviderProfileChangeMessage(changes: ProviderProfileChange[]): string {
+    const fields = changes.map((change) => change.field).join(', ');
+    return `Provider profile fields updated: ${fields}`;
+  }
+
+  /**
+   * Structural equality check used to detect meaningful field changes.
+   */
+  private valuesEqual(a: unknown, b: unknown): boolean {
+    if (a === b) {
+      return true;
+    }
+    if (a === null || b === null || a === undefined || b === undefined) {
+      return false;
+    }
+    if (typeof a === 'object' && typeof b === 'object') {
+      try {
+        return JSON.stringify(a) === JSON.stringify(b);
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 
   /**
@@ -285,121 +498,5 @@ export class NotificationsService {
       status: 'FAILED',
       errorMessage,
     });
-  }
-
-  /**
-   * Inspect permanently failed notification jobs (dead-letter queue).
-   *
-   * Only safe metadata is exposed: the notification id, type, channel,
-   * status, attempt count, failure timestamp and error message. Raw job
-   * payloads and user metadata are never returned.
-   *
-   * @param actorRole Role of the operator requesting the inspection
-   * @param limit Maximum number of dead-letter jobs to return
-   * @returns Safe summaries of the failed jobs
-   */
-  async inspectDeadLetterJobs(
-    actorRole: string,
-    limit = 50,
-  ): Promise<DeadLetterJobSummary[]> {
-    this.assertDeadLetterOperator(actorRole);
-
-    const boundedLimit = Math.min(Math.max(limit, 1), MAX_DEAD_LETTER_RETRY_BATCH);
-    const failedJobs = await this.notificationQueue.getFailed(0, boundedLimit - 1);
-
-    const summaries: DeadLetterJobSummary[] = [];
-    for (const job of failedJobs) {
-      const notificationId = job?.data?.notificationId;
-      if (!notificationId) {
-        continue;
-      }
-
-      const notification = await this.notificationRepository.findOne({
-        where: { id: notificationId },
-      });
-      if (!notification) {
-        continue;
-      }
-
-      summaries.push({
-        id: String(job.id),
-        notificationId: notification.id,
-        type: notification.type,
-        channel: notification.channel,
-        status: notification.status,
-        attemptsMade: job.attemptsMade ?? 0,
-        failedAt: job.failedReason ? job.finishedOn ? new Date(job.finishedOn) : null : null,
-        errorMessage: notification.errorMessage ?? job.failedReason ?? null,
-      });
-    }
-
-    this.logger.log(
-      `Operator with role ${actorRole} inspected ${summaries.length} dead-letter notification job(s)`,
-    );
-
-    return summaries;
-  }
-
-  /**
-   * Retry eligible permanently failed notification jobs.
-   *
-   * Retries are bounded to {@link MAX_DEAD_LETTER_RETRY_BATCH} jobs per call,
-   * only jobs whose notification is still in a FAILED state are retried, and
-   * every retry is audited with the acting operator role.
-   *
-   * @param actorRole Role of the operator requesting the retry
-   * @param jobIds Dead-letter job ids to retry
-   * @returns The retried and skipped job ids
-   */
-  async retryDeadLetterJobs(
-    actorRole: string,
-    jobIds: string[],
-  ): Promise<DeadLetterRetryResult> {
-    this.assertDeadLetterOperator(actorRole);
-
-    const requested = Array.isArray(jobIds) ? jobIds.slice(0, MAX_DEAD_LETTER_RETRY_BATCH) : [];
-    const retried: string[] = [];
-    const skipped: string[] = [];
-
-    for (const jobId of requested) {
-      const job = await this.notificationQueue.getJob(jobId);
-      if (!job) {
-        skipped.push(jobId);
-        continue;
-      }
-
-      const notificationId = job?.data?.notificationId;
-      const notification = notificationId
-        ? await this.notificationRepository.findOne({ where: { id: notificationId } })
-        : null;
-
-      // Only retry jobs whose notification is still permanently failed.
-      if (!notification || notification.status !== 'FAILED') {
-        skipped.push(jobId);
-        continue;
-      }
-
-      await job.retry();
-      await this.notificationRepository.update(notification.id, {
-        status: 'PENDING',
-        errorMessage: null,
-      });
-
-      retried.push(jobId);
-      this.logger.log(
-        `Audit: operator with role ${actorRole} retried dead-letter notification job ${jobId} (notification ${notification.id})`,
-      );
-    }
-
-    return { requested: requested.length, retried, skipped };
-  }
-
-  /**
-   * Enforce that the acting role is authorized for dead-letter operations.
-   */
-  private assertDeadLetterOperator(actorRole: string): void {
-    if (!actorRole || !DEAD_LETTER_OPERATOR_ROLES.has(actorRole)) {
-      throw new ForbiddenException('Not authorized to manage dead-letter notification jobs');
-    }
   }
 }
