@@ -15,6 +15,22 @@ import { UpdatePreferenceDto } from './dto/update-preference.dto';
 import { restoreOrThrow } from '../common/services/soft-delete.helper';
 import { CacheInvalidationService } from '../cache/cache-invalidation.service';
 
+/**
+ * Fields a user is allowed to change on their own profile. Anything not
+ * listed here (role, isActive, isVerified, permissions, walletAddress,
+ * password, internal flags, ...) is ignored on profile updates so request
+ * payloads cannot mass-assign protected columns.
+ */
+const EDITABLE_PROFILE_FIELDS = [
+    'username',
+    'displayName',
+    'email',
+    'avatarUrl',
+    'bio',
+] as const;
+
+type EditableProfileField = (typeof EDITABLE_PROFILE_FIELDS)[number];
+
 @Injectable()
 export class UsersService {
     private readonly logger = new Logger(UsersService.name);
@@ -29,6 +45,23 @@ export class UsersService {
         private readonly cacheInvalidation: CacheInvalidationService,
         private readonly eventEmitter: EventEmitter2,
     ) { }
+
+    /**
+     * Whitelist the editable profile fields from an untrusted payload. Only
+     * keys in EDITABLE_PROFILE_FIELDS are copied; everything else is dropped
+     * so protected columns can never be mass-assigned.
+     */
+    private pickEditableProfileFields(
+        payload: Record<string, unknown>,
+    ): Partial<Pick<User, EditableProfileField>> {
+        const sanitized: Partial<Pick<User, EditableProfileField>> = {};
+        for (const field of EDITABLE_PROFILE_FIELDS) {
+            if (Object.prototype.hasOwnProperty.call(payload, field)) {
+                (sanitized as Record<string, unknown>)[field] = payload[field];
+            }
+        }
+        return sanitized;
+    }
 
     async createUser(createUserDto: CreateUserDto): Promise<User> {
         const existingUser = await this.userRepository.findOne({
@@ -198,6 +231,27 @@ export class UsersService {
         }
     }
 
+    /**
+     * Update a user's own profile. Only explicitly editable fields are mapped
+     * from the request payload; protected columns (role, isActive, isVerified,
+     * permissions, walletAddress, password, ...) are ignored so they cannot be
+     * mass-assigned through the request body.
+     */
+    async updateProfile(
+        userId: string,
+        payload: Record<string, unknown>,
+    ): Promise<User> {
+        const user = await this.findById(userId);
+        const updates = this.pickEditableProfileFields(payload ?? {});
+
+        if (Object.keys(updates).length > 0) {
+            await this.userRepository.update({ id: user.id }, updates);
+            await this.cacheInvalidation.invalidateUserPreferences(user.id);
+        }
+
+        return this.findById(user.id);
+    }
+
     async updatePreferences(
         walletAddress: string,
         updatePreferenceDto: UpdatePreferenceDto,
@@ -231,75 +285,4 @@ export class UsersService {
         const user = await this.findByWalletAddress(walletAddress);
 
         if (!user.preference) {
-            throw new NotFoundException('User preferences not found');
-        }
-
-        return user.preference;
-    }
-
-    async updateLastLogin(walletAddress: string): Promise<void> {
-        const user = await this.findByWalletAddress(walletAddress);
-        await this.userRepository.update(user.id, { lastLoginAt: new Date() });
-    }
-
-    async softDelete(walletAddress: string): Promise<void> {
-        const user = await this.findByWalletAddress(walletAddress);
-        await this.userRepository.softDelete(user.id);
-    }
-
-    async restore(walletAddress: string): Promise<User> {
-        const user = await this.userRepository.findOne({
-            where: { walletAddress },
-            withDeleted: true,
-        });
-        if (!user) {
-            throw new NotFoundException('User not found');
-        }
-        await restoreOrThrow(this.userRepository, user.id, 'User not found');
-        return this.findByWalletAddress(walletAddress);
-    }
-
-    async createSession(
-        walletAddress: string,
-        token: string,
-        expiresAt: Date,
-        deviceInfo?: string,
-        ipAddress?: string,
-    ): Promise<Session> {
-        const user = await this.findByWalletAddress(walletAddress);
-
-        const session = this.sessionRepository.create({
-            userId: user.id,
-            token,
-            expiresAt,
-            deviceInfo,
-            ipAddress,
-            lastActivityAt: new Date(),
-        });
-
-        return this.sessionRepository.save(session);
-    }
-
-    async findSessionByToken(token: string): Promise<Session | null> {
-        return this.sessionRepository.findOne({
-            where: { token, isActive: true },
-            relations: ['user'],
-        });
-    }
-
-    async invalidateSession(token: string): Promise<void> {
-        await this.sessionRepository.update({ token }, { isActive: false });
-    }
-
-    async invalidateAllUserSessions(walletAddress: string): Promise<void> {
-        const user = await this.findByWalletAddress(walletAddress);
-        await this.sessionRepository.update({ userId: user.id }, { isActive: false });
-    }
-
-    async updateSessionActivity(token: string): Promise<void> {
-        await this.sessionRepository.update(
-            { token },
-            { lastActivityAt: new Date() },
-        );
-    }
-}
+            throw new NotFo

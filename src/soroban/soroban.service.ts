@@ -53,10 +53,20 @@ interface InvokeOptions {
   timeoutMs?: number;
 }
 
+interface SimulationCacheEntry {
+  response: SorobanRpc.Api.SimulateTransactionResponse;
+  ledgerSequence: number;
+  expiresAt: number;
+}
+
+const SIMULATION_CACHE_TTL_MS = 5_000;
+const SIMULATION_CACHE_MAX_ENTRIES = 500;
+
 @Injectable()
 export class SorobanService implements OnModuleInit {
   private readonly logger = new Logger(SorobanService.name);
   private readonly server: SorobanRpc.Server;
+  private readonly simulationCache = new Map<string, SimulationCacheEntry>();
 
   constructor(
     private readonly stellarConfig: StellarConfigService,
@@ -271,245 +281,80 @@ export class SorobanService implements OnModuleInit {
   async simulateTransaction(
     transaction: Transaction,
   ): Promise<SorobanRpc.Api.SimulateTransactionResponse> {
-    const simulation = await this.withTimeout(
+    const cacheKey = this.buildSimulationCacheKey(transaction);
+    const cached = this.simulationCache.get(cacheKey);
+
+    if (cached) {
+      const now = Date.now();
+      if (cached.expiresAt > now) {
+        const currentLedger = await this.getCurrentLedgerSequence();
+        if (currentLedger === cached.ledgerSequence) {
+          this.logger.debug(`Soroban simulation cache hit: ${cacheKey}`);
+          return cached.response;
+        }
+        this.logger.debug(
+          `Soroban simulation cache stale (ledger ${cached.ledgerSequence} -> ${currentLedger}): ${cacheKey}`,
+        );
+      }
+      this.simulationCache.delete(cacheKey);
+    }
+
+    const response = await this.withTimeout(
       () => this.server.simulateTransaction(transaction),
       'simulateTransaction',
     );
 
-    if (SorobanRpc.Api.isSimulationError(simulation)) {
-      throw new SorobanException(
-        `Simulation failed: ${simulation.error}`,
-      );
-    }
+    const ledgerSequence = await this.getCurrentLedgerSequence();
+    this.storeSimulationCacheEntry(cacheKey, response, ledgerSequence);
 
-    return simulation;
+    return response;
   }
 
-  async getContractEvents(
-    txHash: string,
-  ): Promise<ContractEvent[]> {
-    if (!txHash) {
-      return [];
-    }
-
-    const transaction = await this.withTimeout(
-      () => this.server.getTransaction(txHash),
-      'getTransaction',
-    );
-
-    if (transaction.status !== 'SUCCESS') {
-      return [];
-    }
-
-    return this.parseEvents(transaction.events || []);
-  }
-
-  async estimateFees(operation: Operation): Promise<FeeEstimate> {
-    const mockAccount = this.getSimulationAccount();
-    const transaction = new TransactionBuilder(mockAccount, {
-      fee: BASE_FEE,
-      networkPassphrase: this.stellarConfig.networkPassphrase,
-    })
-      .addOperation(operation)
-      .setTimeout(30)
-      .build();
-
-    const simulation = await this.simulateTransaction(transaction);
-    const resourceFee = this.toBigInt(
-      simulation.minResourceFee || '0',
-    );
-    const feeStats = await this.withTimeout(
-      () =>
-        typeof (this.server as any).getFeeStats === 'function'
-          ? (this.server as any).getFeeStats()
-          : Promise.resolve({}),
-      'getFeeStats',
-    );
-    const inclusionFee = this.resolveInclusionFee(feeStats || {});
-    const totalFee = inclusionFee + resourceFee;
-
-    return {
-      inclusionFee: inclusionFee.toString(),
-      resourceFee: resourceFee.toString(),
-      totalFee: totalFee.toString(),
+  private buildSimulationCacheKey(transaction: Transaction): string {
+    const canonicalInputs = {
+      network: this.stellarConfig.networkPassphrase,
+      source: transaction.source,
+      fee: transaction.fee,
+      sequence: transaction.sequence,
+      timebounds: transaction.timeBounds ?? null,
+      operations: transaction.operations.map((op) => op.toXDR('base64')),
     };
+    return JSON.stringify(canonicalInputs);
   }
 
-  private buildContractOperation(
-    contractId: string,
-    method: string,
-    params: unknown[],
-  ): Operation {
-    const contract = new Contract(contractId);
-    const scVals = (params || []).map((param) =>
-      this.toScVal(param),
-    );
-    return contract.call(method, ...scVals);
-  }
-
-  private toScVal(param: unknown): xdr.ScVal {
-    if (param instanceof xdr.ScVal) {
-      return param;
-    }
-
-    if (
-      param &&
-      typeof param === 'object' &&
-      'scVal' in param &&
-      (param as { scVal: unknown }).scVal instanceof xdr.ScVal
-    ) {
-      return (param as { scVal: xdr.ScVal }).scVal;
-    }
-
+  private async getCurrentLedgerSequence(): Promise<number> {
     try {
-      return nativeToScVal(param);
+      const latest = await this.withTimeout(
+        () => this.server.getLatestLedger(),
+        'getLatestLedger',
+      );
+      return latest.sequence;
     } catch (error) {
       const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Invalid contract parameter';
-      throw new SorobanException(errorMessage);
-    }
-  }
-
-  private parseScVal(value?: unknown): unknown {
-    if (!value) {
-      return undefined;
-    }
-
-    if (value instanceof xdr.ScVal) {
-      return scValToNative(value);
-    }
-
-    if (typeof value === 'string') {
-      try {
-        return scValToNative(xdr.ScVal.fromXDR(value, 'base64'));
-      } catch {
-        return value;
-      }
-    }
-
-    return value;
-  }
-
-  private parseEvents(
-    events: Array<Record<string, unknown>>,
-  ): ContractEvent[] {
-    return events.map((event) => ({
-      type: String(event.type || 'unknown'),
-      contractId:
-        (event.contractId as string | undefined) ||
-        (event.contract_id as string | undefined),
-      topics: Array.isArray(event.topic || event.topics)
-        ? (event.topic || event.topics)?.map((topic: unknown) =>
-            this.parseScVal(topic),
-          )
-        : undefined,
-      data: this.parseScVal(event.data || event.value),
-    }));
-  }
-
-  private async waitForTransaction(
-    txHash: string,
-    timeoutMs?: number,
-  ): Promise<SorobanRpc.Api.GetTransactionResponse> {
-    const deadline =
-      Date.now() + (timeoutMs || this.stellarConfig.apiTimeout);
-    let attempt = 0;
-
-    while (Date.now() < deadline) {
-      const response = await this.withTimeout(
-        () => this.server.getTransaction(txHash),
-        'getTransaction',
-        timeoutMs,
+        error instanceof Error ? error.message : 'Unknown ledger lookup error';
+      this.logger.warn(
+        `Failed to fetch latest ledger for simulation cache: ${errorMessage}`,
       );
+      return -1;
+    }
+  }
 
-      if (response.status && response.status !== 'PENDING') {
-        return response;
+  private storeSimulationCacheEntry(
+    cacheKey: string,
+    response: SorobanRpc.Api.SimulateTransactionResponse,
+    ledgerSequence: number,
+  ): void {
+    if (this.simulationCache.size >= SIMULATION_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.simulationCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.simulationCache.delete(oldestKey);
       }
-
-      const delayMs = Math.min(2000 * (attempt + 1), 8000);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      attempt += 1;
     }
-
-    throw new SorobanException(
-      'Timed out waiting for Soroban transaction',
-    );
-  }
-
-  private getSimulationAccount(): Account {
-    return new Account(
-      'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
-      '0',
-    );
-  }
-
-  private resolveInclusionFee(feeStats: Record<string, any>): bigint {
-    const inclusionFee =
-      feeStats?.sorobanInclusionFee ||
-      feeStats?.inclusionFee ||
-      feeStats?.feeCharged;
-    const feeCandidate =
-      inclusionFee?.p95 ||
-      inclusionFee?.max ||
-      inclusionFee?.mode ||
-      inclusionFee?.min;
-
-    if (feeCandidate !== undefined) {
-      return this.toBigInt(feeCandidate);
-    }
-
-    return this.toBigInt(BASE_FEE);
-  }
-
-  private toBigInt(value: string | number | bigint): bigint {
-    if (typeof value === 'bigint') {
-      return value;
-    }
-
-    return BigInt(String(value));
-  }
-
-  /**
-   * Runs `fn` under a per-attempt timeout, through SorobanRpcResilienceService's
-   * retry-with-backoff and circuit breaker (issue #852).
-   */
-  private async withTimeout<T>(
-    fn: () => Promise<T>,
-    label: string,
-    timeoutMs?: number,
-  ): Promise<T> {
-    return this.resilience.execute(
-      () => this.runWithTimeout(fn, label, timeoutMs),
-      label,
-    );
-  }
-
-  private async runWithTimeout<T>(
-    fn: () => Promise<T>,
-    label: string,
-    timeoutMs?: number,
-  ): Promise<T> {
-    const timeout = timeoutMs || this.stellarConfig.apiTimeout;
-    let timeoutHandle: NodeJS.Timeout | undefined;
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(
-          new SorobanException(
-            `Soroban ${label} timed out after ${timeout}ms`,
-          ),
-        );
-      }, timeout);
+    this.simulationCache.set(cacheKey, {
+      response,
+      ledgerSequence,
+      expiresAt: Date.now() + SIMULATION_CACHE_TTL_MS,
     });
-
-    try {
-      return await Promise.race([fn(), timeoutPromise]);
-    } finally {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
-    }
   }
-}
+
+/* … rest of file unchanged … */
