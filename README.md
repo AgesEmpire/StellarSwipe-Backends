@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1281 -->
 - #1281: Prevent duplicate withdrawal submissions under concurrency
+
+<!-- handsoff-issue-1282 -->
+- #1282: Add withdrawal destination allowlist management
