@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-992 -->
 - #992: Implement a scheduled expiry job for stale, un-swiped Trade Signals
+
+<!-- handsoff-issue-1194 -->
+- #1194: Integrate slippage calculations with live market data
