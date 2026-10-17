@@ -27,6 +27,22 @@ export interface PaginatedSignalsDto {
   hasPrev: boolean;
 }
 
+export type SignalCancellationActor = 'provider' | 'administrator';
+
+export interface SignalCancellationMetadata {
+  reason: string;
+  actor: SignalCancellationActor;
+  actorId?: string;
+  cancelledAt: string;
+}
+
+export interface CancelSignalOptions {
+  reason: string;
+  actor: SignalCancellationActor;
+  actorId?: string;
+  currentVersion?: number;
+}
+
 @Injectable()
 export class SignalsService {
   private static readonly FEED_KEY = `${CachePrefix.SIGNAL}feed`;
@@ -258,17 +274,108 @@ export class SignalsService {
   }
 
   /**
-   * Fire an entity-change event without letting a listener failure (e.g. a
-   * search-index refresh error) break the write path that triggered it.
+   * Cancel a signal, persisting structured cancellation metadata exactly once.
+   *
+   * The first cancellation wins: if the signal is already cancelled, the
+   * existing metadata is preserved and returned unchanged (idempotent).
+   * Cancellation metadata is stored on the signal's `metadata` field under
+   * the `cancellation` key so it is only exposed through authorized reads
+   * (findOne / findByIds / findPaginated), never via public feed projections.
    */
-  private emitSafely(event: string, payload: unknown): void {
-    try {
-      this.eventEmitter.emit(event, payload);
-    } catch (error) {
-      this.logger.warn(
-        `Failed to emit '${event}' event`,
-        (error as Error).message,
+  async cancelSignal(
+    id: string,
+    options: CancelSignalOptions,
+  ): Promise<Signal | null> {
+    if (!options?.reason || !options.reason.trim()) {
+      throw new BadRequestException('A cancellation reason is required');
+    }
+    if (options.actor !== 'provider' && options.actor !== 'administrator') {
+      throw new BadRequestException(
+        'Cancellation actor must be provider or administrator',
       );
     }
+
+    const existing = await this.signalRepository.findOneBy({ id });
+    if (!existing) {
+      return null;
+    }
+
+    // Idempotent: first cancellation wins, preserve existing metadata.
+    if (existing.status === SignalStatus.CANCELLED) {
+      return existing;
+    }
+
+    const cancellation: SignalCancellationMetadata = {
+      reason: options.reason.trim(),
+      actor: options.actor,
+      actorId: options.actorId,
+      cancelledAt: new Date().toISOString(),
+    };
+
+    const metadata = {
+      ...(existing.metadata ?? {}),
+      cancellation,
+    };
+
+    const updatePayload: any = {
+      status: SignalStatus.CANCELLED,
+      metadata,
+    };
+
+    if (options.currentVersion !== undefined) {
+      updatePayload.version = options.currentVersion + 1;
+      const result = await this.signalRepository.update(
+        {
+          id,
+          version: options.currentVersion,
+          status: SignalStatus.ACTIVE,
+        },
+        updatePayload,
+      );
+      if (result.affected === 0) {
+        // Either a concurrent cancellation won (idempotent) or a version clash.
+        const current = await this.signalRepository.findOneBy({ id });
+        if (current?.status === SignalStatus.CANCELLED) {
+          return current;
+        }
+        throw new ConflictException(
+          'Signal was updated by another request. Please retry with the latest version.',
+        );
+      }
+    } else {
+      // Guard on ACTIVE status so only the first cancellation persists metadata.
+      const result = await this.signalRepository.update(
+        { id, status: SignalStatus.ACTIVE },
+        updatePayload,
+      );
+      if (result.affected === 0) {
+        const current = await this.signalRepository.findOneBy({ id });
+        return current;
+      }
+    }
+
+    await Promise.all([
+      this.cacheService.del(`${CachePrefix.SIGNAL}${id}`),
+      this.cacheService.del(SignalsService.FEED_KEY),
+    ]);
+
+    const updated = await this.signalRepository.findOneBy({ id });
+    if (updated) this.emitSafely('signal.updated', updated);
+    return updated;
   }
-}
+
+  /**
+   * Read cancellation metadata for a signal. Callers must enforce
+   * authorization before invoking this method.
+   */
+  async getCancellationMetadata(
+    id: string,
+  ): Promise<SignalCancellationMetadata | null> {
+    const signal = await this.findOne(id);
+    if (!signal) return null;
+    const cancellation = (signal.metadata as any)?.cancellation;
+    return cancellation ?? null;
+  }
+
+  /**
+   * Fire an enti
