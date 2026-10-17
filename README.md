@@ -606,3 +606,6 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-1289 -->
+- #1289: Support provider profile change notifications
