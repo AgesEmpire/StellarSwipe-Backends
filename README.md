@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1274 -->
 - #1274: Add API key rotation with overlap window
+
+<!-- handsoff-issue-1275 -->
+- #1275: Enforce API key expiration during authentication
