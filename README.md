@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1214 -->
 - #1214: Redact sensitive fields from audit event payloads
+
+<!-- handsoff-issue-1216 -->
+- #1216: Enforce tenant context propagation in asynchronous jobs
