@@ -606,3 +606,15 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-992 -->
+- #992: Implement a scheduled expiry job for stale, un-swiped Trade Signals
+
+<!-- handsoff-issue-1194 -->
+- #1194: Integrate slippage calculations with live market data
+
+<!-- handsoff-issue-1198 -->
+- #1198: Add retry and dead-letter handling to search indexing
+
+<!-- handsoff-issue-1199 -->
+- #1199: Add idempotency keys to payout endpoints
