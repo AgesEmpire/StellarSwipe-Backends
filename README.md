@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1200 -->
 - #1200: Add contract tests for generated OpenAPI and SDK types
+
+<!-- handsoff-issue-1204 -->
+- #1204: Add wallet ownership verification before signing requests
