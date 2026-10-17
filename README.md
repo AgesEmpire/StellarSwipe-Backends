@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1278 -->
 - #1278: Add API key revocation audit history
+
+<!-- handsoff-issue-1279 -->
+- #1279: Implement user consent version tracking
