@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inject } from '@nestjs/common';
@@ -10,13 +14,62 @@ import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
 
+const DEFAULT_MAX_ACTIVE_KEYS = 10;
+
+export interface ApiKeyRevocationRecord {
+  id: string;
+  apiKeyId: string;
+  userId: string;
+  revokedBy: string;
+  revokedAt: Date;
+  reason: string | null;
+}
+
 @Injectable()
 export class ApiKeysService {
+  private readonly maxActiveKeys: number;
+  private readonly revocationHistory: ApiKeyRevocationRecord[] = [];
+
   constructor(
     @InjectRepository(ApiKey)
     private readonly apiKeyRepo: Repository<ApiKey>,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
-  ) {}
+  ) {
+    const configured = Number(process.env.MAX_ACTIVE_API_KEYS);
+    this.maxActiveKeys =
+      Number.isFinite(configured) && configured > 0
+        ? Math.floor(configured)
+        : DEFAULT_MAX_ACTIVE_KEYS;
+  }
+
+  /**
+   * Atomically enforce the per-account active key limit and persist a new key.
+   * Uses a pessimistic write lock on the account's active keys so concurrent
+   * creations cannot both observe a below-limit count. Revoked keys are
+   * excluded from the count.
+   */
+  private async saveWithActiveKeyLimit(
+    apiKey: ApiKey,
+  ): Promise<ApiKey> {
+    return this.apiKeyRepo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(ApiKey);
+
+      const activeCount = await repo
+        .createQueryBuilder('apiKey')
+        .setLock('pessimistic_write')
+        .where('apiKey.userId = :userId', { userId: apiKey.userId })
+        .andWhere('apiKey.revokedAt IS NULL')
+        .getCount();
+
+      if (activeCount >= this.maxActiveKeys) {
+        throw new ConflictException(
+          `Active API key limit of ${this.maxActiveKeys} reached for this account`,
+        );
+      }
+
+      return repo.save(apiKey);
+    });
+  }
 
   async create(
     userId: string,
@@ -34,7 +87,7 @@ export class ApiKeysService {
       expiresAt: dto.expiresAt,
     });
 
-    const saved = await this.apiKeyRepo.save(apiKey);
+    const saved = await this.saveWithActiveKeyLimit(apiKey);
 
     return {
       id: saved.id,
@@ -175,11 +228,40 @@ export class ApiKeysService {
     };
   }
 
-  async revoke(userId: string, keyId: string): Promise<void> {
+  async revoke(
+    userId: string,
+    keyId: string,
+    revokedBy: string = userId,
+    reason?: string,
+  ): Promise<void> {
+    const revokedAt = new Date();
     await this.apiKeyRepo.update(
       { id: keyId, userId },
-      { revokedAt: new Date(), previousKeyHash: null, overlapUntil: null },
+      { revokedAt, previousKeyHash: null, overlapUntil: null },
     );
+
+    // Append-only audit record. Never store key hashes, raw keys, or tokens.
+    this.revocationHistory.push({
+      id: crypto.randomUUID(),
+      apiKeyId: keyId,
+      userId,
+      revokedBy,
+      revokedAt,
+      reason: reason ? reason.slice(0, 500) : null,
+    });
+  }
+
+  /**
+   * Return immutable revocation audit records for a key, scoped to the
+   * owning account. Callers must be authorized for `userId`.
+   */
+  async getRevocationHistory(
+    userId: string,
+    keyId: string,
+  ): Promise<ApiKeyRevocationRecord[]> {
+    return this.revocationHistory
+      .filter((record) => record.userId === userId && record.apiKeyId === keyId)
+      .map((record) => ({ ...record }));
   }
 
   async list(userId: string): Promise<ApiKey[]> {

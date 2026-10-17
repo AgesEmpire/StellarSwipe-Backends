@@ -606,3 +606,15 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-1277 -->
+- #1277: Add account-level limits for active API keys
+
+<!-- handsoff-issue-1278 -->
+- #1278: Add API key revocation audit history
+
+<!-- handsoff-issue-1279 -->
+- #1279: Implement user consent version tracking
+
+<!-- handsoff-issue-1280 -->
+- #1280: Add withdrawal risk review workflow
