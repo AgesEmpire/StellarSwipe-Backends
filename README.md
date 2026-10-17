@@ -607,6 +607,18 @@ MIT
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
 
+<!-- handsoff-issue-1207 -->
+- #1207: Add Soroban simulation result caching with ledger-aware invalidation
+
+<!-- handsoff-issue-1208 -->
+- #1208: Persist Horizon cursor checkpoints for resumable ingestion
+
+<!-- handsoff-issue-1214 -->
+- #1214: Redact sensitive fields from audit event payloads
+
+<!-- handsoff-issue-1216 -->
+- #1216: Enforce tenant context propagation in asynchronous jobs
+
 <!-- handsoff-issue-992 -->
 - #992: Implement a scheduled expiry job for stale, un-swiped Trade Signals
 
