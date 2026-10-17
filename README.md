@@ -607,6 +607,30 @@ MIT
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
 
+<!-- handsoff-issue-992 -->
+- #992: Implement a scheduled expiry job for stale, un-swiped Trade Signals
+
+<!-- handsoff-issue-1194 -->
+- #1194: Integrate slippage calculations with live market data
+
+<!-- handsoff-issue-1198 -->
+- #1198: Add retry and dead-letter handling to search indexing
+
+<!-- handsoff-issue-1199 -->
+- #1199: Add idempotency keys to payout endpoints
+
+<!-- handsoff-issue-1217 -->
+- #1217: Add request-level authorization tests for admin mutations
+
+<!-- handsoff-issue-1218 -->
+- #1218: Prevent mass assignment in user profile updates
+
+<!-- handsoff-issue-1271 -->
+- #1271: Implement provider onboarding state machine
+
+<!-- handsoff-issue-1272 -->
+- #1272: Add provider compliance document expiry tracking
+
 <!-- handsoff-issue-1273 -->
 - #1273: Require verified email before API key creation
 

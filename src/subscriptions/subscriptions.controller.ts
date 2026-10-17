@@ -199,6 +199,28 @@ export class SubscriptionsController {
     return this.subscriptionsService.renewSubscription(subscriptionId, dto);
   }
 
+  @Patch(':subscriptionId/pause')
+  @ApiOperation({ summary: "Pause a subscription's auto-renewal" })
+  @ApiParam({ name: 'subscriptionId' })
+  @ApiQuery({ name: 'userId', description: 'Subscriber UUID (auth stub)' })
+  async pauseSubscription(
+    @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string,
+    @Query('userId') userId: string,
+  ) {
+    return this.subscriptionsService.pauseSubscription(subscriptionId, userId);
+  }
+
+  @Patch(':subscriptionId/resume')
+  @ApiOperation({ summary: 'Resume a paused subscription' })
+  @ApiParam({ name: 'subscriptionId' })
+  @ApiQuery({ name: 'userId', description: 'Subscriber UUID (auth stub)' })
+  async resumeSubscription(
+    @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string,
+    @Query('userId') userId: string,
+  ) {
+    return this.subscriptionsService.resumeSubscription(subscriptionId, userId);
+  }
+
   // ─────────────────────────────────────────────────────────────
   //  ACCESS CONTROL
   // ─────────────────────────────────────────────────────────────

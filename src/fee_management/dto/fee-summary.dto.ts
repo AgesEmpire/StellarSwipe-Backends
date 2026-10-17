@@ -91,6 +91,24 @@ export class FeeCalculationDto {
 
   @ApiProperty({ description: 'Asset code' })
   assetCode!: string;
+
+  @ApiPropertyOptional({ description: 'Explicit promotion breakdown when a discount was applied' })
+  promotionApplied?: {
+    /** The promotion's redemption code. */
+    promoCode: string;
+    /** The promotion id (used for redemption/audit). */
+    promotionId?: string;
+    /** Human-readable promotion name. */
+    promotionName?: string;
+    /** Fee before any discount. */
+    originalFee: string;
+    /** Absolute amount discounted. */
+    discount: string;
+    /** Fee actually charged. */
+    discountedFee: string;
+    /** Whether the promotion's `maxDiscount` cap limited the discount. */
+    capped: boolean;
+  };
 }
 
 export class GetFeeHistoryDto {
