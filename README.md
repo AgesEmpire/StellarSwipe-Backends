@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1205 -->
 - #1205: Implement wallet unlinking with active-position safeguards
+
+<!-- handsoff-issue-1206 -->
+- #1206: Validate Stellar network selection across transaction endpoints
