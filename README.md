@@ -607,6 +607,18 @@ MIT
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
 
+<!-- handsoff-issue-1281 -->
+- #1281: Prevent duplicate withdrawal submissions under concurrency
+
+<!-- handsoff-issue-1282 -->
+- #1282: Add withdrawal destination allowlist management
+
+<!-- handsoff-issue-1283 -->
+- #1283: Add transaction memo policy validation by operation type
+
+<!-- handsoff-issue-1284 -->
+- #1284: Handle Stellar transaction fee changes before submission
+
 <!-- handsoff-issue-1200 -->
 - #1200: Add contract tests for generated OpenAPI and SDK types
 
