@@ -630,3 +630,15 @@ MIT
 
 <!-- handsoff-issue-1272 -->
 - #1272: Add provider compliance document expiry tracking
+
+<!-- handsoff-issue-1273 -->
+- #1273: Require verified email before API key creation
+
+<!-- handsoff-issue-1274 -->
+- #1274: Add API key rotation with overlap window
+
+<!-- handsoff-issue-1275 -->
+- #1275: Enforce API key expiration during authentication
+
+<!-- handsoff-issue-1276 -->
+- #1276: Add API key last-used tracking without excessive writes
