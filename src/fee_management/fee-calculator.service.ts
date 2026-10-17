@@ -11,7 +11,6 @@ import {
 import { FeeManagerService } from './fee-manager.service';
 import {
   FeePromotion,
-  PromotionType,
   FeePromotionRedemption,
 } from './entities/fee-promotion.entity';
 
@@ -146,52 +145,21 @@ export class FeeCalculatorService {
 
       if (eligibility.eligible && eligibility.promotion) {
         const promo = eligibility.promotion;
-        let discountedFee = roundedFeeAmount;
 
-        if (
-          promo.promotionType === PromotionType.PERCENTAGE_DISCOUNT &&
-          promo.discountPercentage
-        ) {
-          const discount = new Big(roundedFeeAmount)
-            .times(new Big(promo.discountPercentage))
-            .div(100);
+        // Single, bounded discount – promotions never stack and can never
+        // discount more than the base fee (see FeeManagerService).
+        const computed = this.feeManager.computePromotionalDiscount(
+          roundedFeeAmount,
+          tradeDetails.tradeAmount,
+          promo,
+        );
 
-          // Apply max discount cap if specified
-          if (promo.maxDiscount) {
-            const maxDiscount = new Big(promo.maxDiscount);
-            if (discount.gt(maxDiscount)) {
-              discountedFee = new Big(roundedFeeAmount)
-                .minus(maxDiscount)
-                .toFixed(7);
-            } else {
-              discountedFee = new Big(roundedFeeAmount)
-                .minus(discount)
-                .toFixed(7);
-            }
-          } else {
-            discountedFee = new Big(roundedFeeAmount)
-              .minus(discount)
-              .toFixed(7);
-          }
-        } else if (
-          promo.promotionType === PromotionType.FIXED_FEE &&
-          promo.fixedFeeRate
-        ) {
-          discountedFee = promo.fixedFeeRate;
-        } else if (promo.promotionType === PromotionType.FEE_WAIVER) {
-          discountedFee = '0.0000000';
-        }
-
-        const savings = new Big(roundedFeeAmount)
-          .minus(discountedFee)
-          .toFixed(7);
-
-        result.feeAmount = discountedFee;
+        result.feeAmount = computed.discountedFee;
         result.promotionApplied = {
           promoCode: options.promoCode,
           originalFee: roundedFeeAmount,
-          discountedFee,
-          savings,
+          discountedFee: computed.discountedFee,
+          savings: computed.discount,
         };
       }
     }

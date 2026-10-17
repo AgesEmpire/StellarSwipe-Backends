@@ -7,14 +7,16 @@ import {
   SubscriptionStatus,
 } from '../entities/user-subscription.entity';
 import { SubscriptionsService } from '../subscriptions.service';
+import { SubscriptionNotificationService } from './subscription-notification.service';
 
 /**
  * SubscriptionRenewalJob
  *
  * Runs on a daily schedule to:
  *   1. Expire subscriptions whose periodEnd has passed (and auto-renew is off)
- *   2. Emit "renewal due soon" notifications (stub – hook to notifications service)
+ *   2. Emit "renewal due soon" notifications (reminder emission pending a template)
  *   3. Mark suspended subscriptions as expired after grace period
+ *   4. Emit payment-failure notifications for suspended subscriptions
  */
 @Injectable()
 export class SubscriptionRenewalJob {
@@ -24,6 +26,7 @@ export class SubscriptionRenewalJob {
     @InjectRepository(UserSubscription)
     private readonly subscriptionRepo: Repository<UserSubscription>,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly notificationService: SubscriptionNotificationService,
   ) {}
 
   /**
@@ -137,7 +140,7 @@ export class SubscriptionRenewalJob {
   }
 
   // ─────────────────────────────────────────────────────────────
-  //  STUBS  – replace with actual notification implementations
+  //  NOTIFICATIONS
   // ─────────────────────────────────────────────────────────────
 
   private async sendRenewalNotification(sub: UserSubscription): Promise<void> {
@@ -145,7 +148,7 @@ export class SubscriptionRenewalJob {
       `[NOTIFY] Renewal due for user ${sub.userId} – tier: ${sub.tier?.name}, ` +
         `amount: ${sub.amountPaid} USDC, renews at: ${sub.renewsAt?.toISOString()}`,
     );
-    // TODO: emit to notifications service / email
+    // TODO: emit the pre-renewal reminder once a dedicated template lands
   }
 
   private async notifyPaymentFailure(sub: UserSubscription): Promise<void> {
@@ -153,6 +156,13 @@ export class SubscriptionRenewalJob {
       `[NOTIFY] Payment failure for user ${sub.userId} – subscription ${sub.id} is suspended. ` +
         `Failure count: ${sub.paymentFailureCount}`,
     );
-    // TODO: emit to notifications service / email
+
+    // Emits one (deduplicated) notification per failed attempt; content and
+    // metadata exclude payment secrets. Notification errors never fail the job.
+    await this.notificationService.notifyPaymentFailed(sub, {
+      tierName: sub.tier?.name,
+      attempt: sub.paymentFailureCount,
+      suspended: true,
+    });
   }
 }
