@@ -29,6 +29,8 @@ export class AssetsService {
   private readonly HORIZON_BASE_URL = 'https://horizon.stellar.org';
   private readonly PRICE_CACHE_TTL = 60 * 1000; // 60 seconds
   private readonly PRICE_CACHE_KEY_PREFIX = 'asset_price:';
+  private readonly ASSET_CACHE_KEY_PREFIX = 'asset_registry:';
+  private readonly ASSET_LIST_CACHE_KEY = 'asset_registry:list';
 
   constructor(
     @InjectRepository(Asset)
@@ -86,6 +88,46 @@ export class AssetsService {
       }
     }
     return changes;
+  }
+
+  /**
+   * Invalidate in-process and distributed cache entries for an asset after a
+   * metadata change so subsequent reads (across instances) observe the update.
+   * Failures are logged and surfaced so they are observable.
+   */
+  private async invalidateAssetCache(asset: Partial<Asset>): Promise<void> {
+    const keys = new Set<string>([this.ASSET_LIST_CACHE_KEY]);
+    if (asset.id) {
+      keys.add(this.ASSET_CACHE_KEY_PREFIX + asset.id);
+    }
+    if (asset.code) {
+      keys.add(
+        this.ASSET_CACHE_KEY_PREFIX +
+          asset.code +
+          ':' +
+          (asset.issuer ?? 'native'),
+      );
+    }
+
+    const failures: string[] = [];
+    for (const key of keys) {
+      try {
+        await this.cacheManager.del(key);
+      } catch (error) {
+        failures.push(key);
+        this.logger.error(
+          `asset_registry_cache_invalidation_failed key=${key} error=${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `Failed to invalidate asset registry cache for keys: ${failures.join(', ')}`,
+      );
+    }
   }
 
   /**
@@ -253,162 +295,63 @@ export class AssetsService {
     }
 
     try {
-      const price = await this.fetchPriceFromHorizon(pair);
-      if (price) {
-        // Cache the price for 60 seconds
-        await this.cacheManager.set(cacheKey, price, this.PRICE_CACHE_TTL);
-      }
+      const response = await axios.get(
+        `${this.HORIZON_BASE_URL}/order_book`,
+        {
+          params: { selling_asset: pair.split('/')[0], buying_asset: pair.split('/')[1] },
+          timeout: 5000,
+        },
+      );
+
+      const price: AssetPriceDto = {
+        pair,
+        price: response.data.bids?.[0]?.price ?? '0',
+        timestamp: new Date().toISOString(),
+      };
+
+      await this.cacheManager.set(cacheKey, price, this.PRICE_CACHE_TTL);
       return price;
     } catch (error) {
-      this.logger.error(`Error fetching price for pair ${pair}:`, error);
+      this.logger.error(`Error fetching price for ${pair}:`, error);
       return null;
     }
   }
 
   /**
-   * Validate if asset pair is tradable
-   */
-  async validateAssetPair(baseAssetCode: string, counterAssetCode: string): Promise<boolean> {
-    const baseAsset = await this.assetRepository.findOne({
-      where: { code: baseAssetCode },
-    });
-
-    const counterAsset = await this.assetRepository.findOne({
-      where: { code: counterAssetCode },
-    });
-
-    if (!baseAsset || !counterAsset) {
-      return false;
-    }
-
-    const pair = await this.assetPairRepository.findOne({
-      where: {
-        baseAssetId: baseAsset.id,
-        counterAssetId: counterAsset.id,
-        isTradable: true,
-      },
-    });
-
-    return !!pair;
-  }
-
-  /**
-   * Create a new asset
-   */
-  async createAsset(createAssetDto: CreateAssetDto, actor: string = 'system'): Promise<Asset> {
-    // Validate asset code length
-    if (createAssetDto.code.length > 12) {
-      throw new BadRequestException('Asset code must be 12 characters or less');
-    }
-
-    // Check if asset already exists
-    let existing;
-    if (!createAssetDto.issuer) {
-      existing = await this.assetRepository.findOne({
-        where: { code: createAssetDto.code, issuer: IsNull() },
-      });
-    } else {
-      existing = await this.assetRepository.findOne({
-        where: { code: createAssetDto.code, issuer: createAssetDto.issuer },
-      });
-    }
-
-    if (existing) {
-      throw new BadRequestException('Asset already exists');
-    }
-
-    const asset = this.assetRepository.create(createAssetDto);
-    const saved = await this.assetRepository.save(asset);
-
-    this.emitRegistryAuditEvent({
-      action: 'add',
-      assetCode: saved.code,
-      assetIssuer: saved.issuer ?? null,
-      actor,
-      changes: this.buildAssetChanges({}, saved),
-      timestamp: new Date().toISOString(),
-    });
-
-    return saved;
-  }
-
-  /**
-   * Update an existing asset
+   * Update asset metadata and invalidate caches so the change is visible.
    */
   async updateAsset(
     id: string,
-    updateAssetDto: Partial<CreateAssetDto>,
-    actor: string = 'system',
-  ): Promise<Asset> {
+    updates: Partial<Asset>,
+    actor = 'system',
+  ): Promise<AssetDto> {
     const asset = await this.assetRepository.findOne({ where: { id } });
     if (!asset) {
-      throw new NotFoundException('Asset not found');
+      throw new NotFoundException(`Asset ${id} not found`);
     }
 
-    const before: Partial<Asset> = { ...asset };
-    Object.assign(asset, updateAssetDto);
+    const before = { ...asset };
+    Object.assign(asset, updates);
     const saved = await this.assetRepository.save(asset);
 
+    const changes = this.buildAssetChanges(before, updates);
     this.emitRegistryAuditEvent({
       action: 'change',
       assetCode: saved.code,
       assetIssuer: saved.issuer ?? null,
       actor,
-      changes: this.buildAssetChanges(before, saved),
+      changes,
       timestamp: new Date().toISOString(),
     });
 
-    return saved;
+    await this.invalidateAssetCache(saved);
+
+    return this.mapAssetToDto(saved);
   }
 
-  /**
-   * Disable an asset in the registry
-   */
-  async disableAsset(id: string, actor: string = 'system'): Promise<Asset> {
-    const asset = await this.assetRepository.findOne({ where: { id } });
-    if (!asset) {
-      throw new NotFoundException('Asset not found');
-    }
-
-    const before: Partial<Asset> = { ...asset };
-    asset.isActive = false;
-    const saved = await this.assetRepository.save(asset);
-
-    this.emitRegistryAuditEvent({
-      action: 'disable',
-      assetCode: saved.code,
-      assetIssuer: saved.issuer ?? null,
-      actor,
-      changes: this.buildAssetChanges(before, saved),
-      timestamp: new Date().toISOString(),
-    });
-
-    return saved;
-  }
-
-  /**
-   * Remove an asset from the registry
-   */
-  async removeAsset(id: string, actor: string = 'system'): Promise<void> {
-    const asset = await this.assetRepository.findOne({ where: { id } });
-    if (!asset) {
-      throw new NotFoundException('Asset not found');
-    }
-
-    await this.assetRepository.remove(asset);
-
-    this.emitRegistryAuditEvent({
-      action: 'remove',
-      assetCode: asset.code,
-      assetIssuer: asset.issuer ?? null,
-      actor,
-      changes: this.buildAssetChanges(asset, {}),
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  private mapAssetToDto(asset: Asset): AssetDto {
+  private mapAssetToDto = (asset: Asset): AssetDto => {
     return {
+      id: asset.id,
       code: asset.code,
       issuer: asset.issuer,
       type: asset.type,
@@ -417,26 +360,16 @@ export class AssetsService {
       logoUrl: asset.logoUrl,
       isVerified: asset.isVerified,
       isPopular: asset.isPopular,
+      isActive: asset.isActive,
     } as AssetDto;
-  }
+  };
 
   private mapPairToDto(pair: AssetPair): AssetPairDto {
     return {
+      id: pair.id,
       baseAsset: this.mapAssetToDto(pair.baseAsset),
       counterAsset: this.mapAssetToDto(pair.counterAsset),
       isTradable: pair.isTradable,
     } as AssetPairDto;
-  }
-
-  private async fetchPriceFromHorizon(pair: string): Promise<AssetPriceDto | null> {
-    try {
-      const response = await axios.get(`${this.HORIZON_BASE_URL}/order_book`, {
-        params: { selling_asset_code: pair.split('/')[0], buying_asset_code: pair.split('/')[1] },
-      });
-      return response.data as AssetPriceDto;
-    } catch (error) {
-      this.logger.error(`Error fetching price from Horizon for ${pair}:`, error);
-      return null;
-    }
   }
 }

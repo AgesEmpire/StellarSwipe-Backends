@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1287 -->
 - #1287: Add Stellar asset registry change audit events
+
+<!-- handsoff-issue-1288 -->
+- #1288: Add asset registry cache invalidation on updates
