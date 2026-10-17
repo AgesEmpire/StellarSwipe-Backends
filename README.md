@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1289 -->
 - #1289: Support provider profile change notifications
+
+<!-- handsoff-issue-1290 -->
+- #1290: Add provider suspension workflow and access enforcement
