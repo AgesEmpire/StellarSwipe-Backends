@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1207 -->
 - #1207: Add Soroban simulation result caching with ledger-aware invalidation
+
+<!-- handsoff-issue-1208 -->
+- #1208: Persist Horizon cursor checkpoints for resumable ingestion
