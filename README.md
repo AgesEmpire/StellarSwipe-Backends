@@ -607,6 +607,18 @@ MIT
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
 
+<!-- handsoff-issue-1200 -->
+- #1200: Add contract tests for generated OpenAPI and SDK types
+
+<!-- handsoff-issue-1204 -->
+- #1204: Add wallet ownership verification before signing requests
+
+<!-- handsoff-issue-1205 -->
+- #1205: Implement wallet unlinking with active-position safeguards
+
+<!-- handsoff-issue-1206 -->
+- #1206: Validate Stellar network selection across transaction endpoints
+
 <!-- handsoff-issue-1207 -->
 - #1207: Add Soroban simulation result caching with ledger-aware invalidation
 
