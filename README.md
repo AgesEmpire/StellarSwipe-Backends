@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1271 -->
 - #1271: Implement provider onboarding state machine
+
+<!-- handsoff-issue-1272 -->
+- #1272: Add provider compliance document expiry tracking
