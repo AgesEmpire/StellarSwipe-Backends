@@ -606,3 +606,6 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-1277 -->
+- #1277: Add account-level limits for active API keys

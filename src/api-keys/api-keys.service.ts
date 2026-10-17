@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inject } from '@nestjs/common';
@@ -10,13 +14,52 @@ import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
 
+const DEFAULT_MAX_ACTIVE_KEYS = 10;
+
 @Injectable()
 export class ApiKeysService {
+  private readonly maxActiveKeys: number;
+
   constructor(
     @InjectRepository(ApiKey)
     private readonly apiKeyRepo: Repository<ApiKey>,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
-  ) {}
+  ) {
+    const configured = Number(process.env.MAX_ACTIVE_API_KEYS);
+    this.maxActiveKeys =
+      Number.isFinite(configured) && configured > 0
+        ? Math.floor(configured)
+        : DEFAULT_MAX_ACTIVE_KEYS;
+  }
+
+  /**
+   * Atomically enforce the per-account active key limit and persist a new key.
+   * Uses a pessimistic write lock on the account's active keys so concurrent
+   * creations cannot both observe a below-limit count. Revoked keys are
+   * excluded from the count.
+   */
+  private async saveWithActiveKeyLimit(
+    apiKey: ApiKey,
+  ): Promise<ApiKey> {
+    return this.apiKeyRepo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(ApiKey);
+
+      const activeCount = await repo
+        .createQueryBuilder('apiKey')
+        .setLock('pessimistic_write')
+        .where('apiKey.userId = :userId', { userId: apiKey.userId })
+        .andWhere('apiKey.revokedAt IS NULL')
+        .getCount();
+
+      if (activeCount >= this.maxActiveKeys) {
+        throw new ConflictException(
+          `Active API key limit of ${this.maxActiveKeys} reached for this account`,
+        );
+      }
+
+      return repo.save(apiKey);
+    });
+  }
 
   async create(
     userId: string,
@@ -34,7 +77,7 @@ export class ApiKeysService {
       expiresAt: dto.expiresAt,
     });
 
-    const saved = await this.apiKeyRepo.save(apiKey);
+    const saved = await this.saveWithActiveKeyLimit(apiKey);
 
     return {
       id: saved.id,
