@@ -606,3 +606,6 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-1217 -->
+- #1217: Add request-level authorization tests for admin mutations
