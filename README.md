@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1204 -->
 - #1204: Add wallet ownership verification before signing requests
+
+<!-- handsoff-issue-1205 -->
+- #1205: Implement wallet unlinking with active-position safeguards
