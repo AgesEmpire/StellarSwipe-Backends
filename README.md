@@ -619,6 +619,18 @@ MIT
 <!-- handsoff-issue-1284 -->
 - #1284: Handle Stellar transaction fee changes before submission
 
+<!-- handsoff-issue-1285 -->
+- #1285: Add configurable maximum age for Stellar transaction envelopes
+
+<!-- handsoff-issue-1286 -->
+- #1286: Validate Soroban authorization expiration before submission
+
+<!-- handsoff-issue-1287 -->
+- #1287: Add Stellar asset registry change audit events
+
+<!-- handsoff-issue-1288 -->
+- #1288: Add asset registry cache invalidation on updates
+
 <!-- handsoff-issue-1200 -->
 - #1200: Add contract tests for generated OpenAPI and SDK types
 
