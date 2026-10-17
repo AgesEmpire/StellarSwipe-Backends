@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1217 -->
 - #1217: Add request-level authorization tests for admin mutations
+
+<!-- handsoff-issue-1218 -->
+- #1218: Prevent mass assignment in user profile updates
