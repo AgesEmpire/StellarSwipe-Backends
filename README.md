@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1275 -->
 - #1275: Enforce API key expiration during authentication
+
+<!-- handsoff-issue-1276 -->
+- #1276: Add API key last-used tracking without excessive writes

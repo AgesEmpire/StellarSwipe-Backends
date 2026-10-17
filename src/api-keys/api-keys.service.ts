@@ -11,9 +11,12 @@ import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
 
 const MAX_OVERLAP_MS = 3_600_000;
+const LAST_USED_THROTTLE_MS = 60_000;
 
 @Injectable()
 export class ApiKeysService {
+  private readonly lastUsedInFlight = new Map<string, Promise<void>>();
+
   constructor(
     @InjectRepository(ApiKey)
     private readonly apiKeyRepo: Repository<ApiKey>,
@@ -94,12 +97,42 @@ export class ApiKeysService {
         if (key.expiresAt && key.expiresAt < new Date()) {
           throw new UnauthorizedException('API key expired');
         }
-        await this.apiKeyRepo.update(key.id, { lastUsed: new Date() });
+        await this.touchLastUsed(key);
         return key;
       }
     }
 
     throw new UnauthorizedException('Invalid API key');
+  }
+
+  /**
+   * Records last-used time at a bounded interval instead of on every request.
+   * Concurrent requests for the same key share a single in-flight write, and
+   * writes are skipped when the stored timestamp is still fresh.
+   */
+  private async touchLastUsed(key: ApiKey): Promise<void> {
+    const now = Date.now();
+    if (key.lastUsed && now - key.lastUsed.getTime() < LAST_USED_THROTTLE_MS) {
+      return;
+    }
+
+    const inFlight = this.lastUsedInFlight.get(key.id);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const write = this.apiKeyRepo
+      .update(key.id, { lastUsed: new Date(now) })
+      .then(() => {
+        key.lastUsed = new Date(now);
+      })
+      .finally(() => {
+        this.lastUsedInFlight.delete(key.id);
+      });
+
+    this.lastUsedInFlight.set(key.id, write);
+    await write;
   }
 
   async checkRateLimit(keyId: string, limit: number): Promise<boolean> {
