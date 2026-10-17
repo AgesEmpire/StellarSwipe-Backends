@@ -606,3 +606,6 @@ MIT
 
 <!-- handsoff-issue-1306 -->
 - #1306: Add HTTP request timeout handling for long-running endpoints
+
+<!-- handsoff-issue-992 -->
+- #992: Implement a scheduled expiry job for stale, un-swiped Trade Signals
