@@ -15,5 +15,17 @@
     "PAYMENT_SCHEDULED": "Votre paiement a été programmé pour le {date}",
     "PAYMENT_EXECUTED": "Votre paiement programmé a été exécuté",
     "PAYMENT_CANCELLED": "Votre paiement programmé a été annulé",
-    "PAYMENT_REMINDER": "Rappel : Vous avez un paiement programmé pour le {date}"
+    "PAYMENT_REMINDER": "Rappel : Vous avez un paiement programmé pour le {date}",
+    "SUBSCRIPTION_CREATED_TITLE": "Abonnement activé",
+    "SUBSCRIPTION_CREATED_MESSAGE": "Votre abonnement à {tier} est désormais actif.",
+    "SUBSCRIPTION_CANCELLED_TITLE": "Abonnement annulé",
+    "SUBSCRIPTION_CANCELLED_MESSAGE": "Votre abonnement à {tier} a été annulé.",
+    "SUBSCRIPTION_PAUSED_TITLE": "Abonnement en pause",
+    "SUBSCRIPTION_PAUSED_MESSAGE": "Le renouvellement automatique de votre abonnement à {tier} est en pause. L'accès continue jusqu'au {date}.",
+    "SUBSCRIPTION_RESUMED_TITLE": "Abonnement repris",
+    "SUBSCRIPTION_RESUMED_MESSAGE": "Le renouvellement automatique de votre abonnement à {tier} a repris.",
+    "SUBSCRIPTION_RENEWED_TITLE": "Abonnement renouvelé",
+    "SUBSCRIPTION_RENEWED_MESSAGE": "Votre abonnement à {tier} a été renouvelé jusqu'au {date}.",
+    "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Échec du paiement du renouvellement",
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "Nous n'avons pas pu renouveler votre abonnement à {tier} (tentative {attempt}). Veuillez mettre à jour votre moyen de paiement."
 }

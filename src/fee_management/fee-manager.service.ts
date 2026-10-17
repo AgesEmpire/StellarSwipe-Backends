@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
+import Big from 'big.js';
 import { FeeTier, FeeTierType } from './entities/fee-tier.entity';
 import {
   FeePromotion,
@@ -44,6 +45,18 @@ export interface UserPromotionEligibility {
   eligible: boolean;
   reason?: string;
   promotion?: PromotionInfo;
+}
+
+/**
+ * The bounded, explicit outcome of applying a single promotion to a base fee.
+ */
+export interface PromotionDiscount {
+  /** Absolute amount removed from the base fee (never negative). */
+  discount: string;
+  /** Fee payable after the discount (never negative, never above the base fee). */
+  discountedFee: string;
+  /** Whether `maxDiscount` reduced the discount below its raw value. */
+  capped: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -475,6 +488,91 @@ export class FeeManagerService implements OnModuleInit {
       }
       throw error;
     }
+  }
+
+  /**
+   * Compute the bounded discount for a single eligible promotion.
+   *
+   * Promotions never stack and can never discount more than the base fee:
+   *   - percentage discounts are clamped to 0–100%
+   *   - fixed-fee promotions can never raise the fee above the base rate
+   *   - `maxDiscount` caps the absolute discount
+   *   - fee waivers are capped by `maxDiscount` when one is configured
+   *
+   * The result is fully explicit so fee calculations can be audited.
+   */
+  computePromotionalDiscount(
+    baseFee: string,
+    tradeAmount: string,
+    promotion: PromotionInfo,
+  ): PromotionDiscount {
+    const zero = new Big(0);
+    const base = new Big(baseFee);
+
+    if (base.lte(zero)) {
+      return { discount: zero.toFixed(7), discountedFee: base.toFixed(7), capped: false };
+    }
+
+    let discount: Big;
+
+    switch (promotion.promotionType) {
+      case PromotionType.PERCENTAGE_DISCOUNT: {
+        const rawPct = promotion.discountPercentage
+          ? new Big(promotion.discountPercentage)
+          : zero;
+        // Clamp to a sane 0–100% range so a bad config cannot over-discount.
+        const pct = this.clamp(rawPct, zero, new Big(100));
+        discount = base.times(pct).div(100);
+        break;
+      }
+      case PromotionType.FIXED_FEE: {
+        // `fixedFeeRate` is the promotional *rate* applied to the trade amount.
+        if (!promotion.fixedFeeRate) {
+          discount = zero;
+          break;
+        }
+        const fixedFee = new Big(tradeAmount)
+          .times(new Big(promotion.fixedFeeRate))
+          .abs();
+        discount = base.minus(fixedFee);
+        break;
+      }
+      case PromotionType.FEE_WAIVER:
+        discount = base;
+        break;
+      default:
+        discount = zero;
+    }
+
+    // Never discount below zero or above the base fee.
+    discount = this.clamp(discount, zero, base);
+
+    // Apply the absolute cap, if configured.
+    let capped = false;
+    if (promotion.maxDiscount) {
+      const maxDiscount = new Big(promotion.maxDiscount);
+      if (maxDiscount.lt(zero)) {
+        discount = zero;
+        capped = true;
+      } else if (discount.gt(maxDiscount)) {
+        discount = maxDiscount;
+        capped = true;
+      }
+    }
+
+    discount = this.clamp(discount, zero, base);
+
+    return {
+      discount: discount.toFixed(7),
+      discountedFee: base.minus(discount).toFixed(7),
+      capped,
+    };
+  }
+
+  private clamp(value: Big, min: Big, max: Big): Big {
+    if (value.lt(min)) return min;
+    if (value.gt(max)) return max;
+    return value;
   }
 
   /**

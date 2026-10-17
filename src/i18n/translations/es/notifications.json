@@ -15,5 +15,17 @@
     "PAYMENT_SCHEDULED": "Su pago ha sido programado para {date}",
     "PAYMENT_EXECUTED": "Su pago programado ha sido ejecutado",
     "PAYMENT_CANCELLED": "Su pago programado ha sido cancelado",
-    "PAYMENT_REMINDER": "Recordatorio: Tiene un pago programado para {date}"
+    "PAYMENT_REMINDER": "Recordatorio: Tiene un pago programado para {date}",
+    "SUBSCRIPTION_CREATED_TITLE": "Suscripción activada",
+    "SUBSCRIPTION_CREATED_MESSAGE": "Tu suscripción a {tier} ya está activa.",
+    "SUBSCRIPTION_CANCELLED_TITLE": "Suscripción cancelada",
+    "SUBSCRIPTION_CANCELLED_MESSAGE": "Tu suscripción a {tier} ha sido cancelada.",
+    "SUBSCRIPTION_PAUSED_TITLE": "Suscripción en pausa",
+    "SUBSCRIPTION_PAUSED_MESSAGE": "La renovación automática de tu suscripción a {tier} está en pausa. El acceso continúa hasta {date}.",
+    "SUBSCRIPTION_RESUMED_TITLE": "Suscripción reanudada",
+    "SUBSCRIPTION_RESUMED_MESSAGE": "La renovación automática de tu suscripción a {tier} se ha reanudado.",
+    "SUBSCRIPTION_RENEWED_TITLE": "Suscripción renovada",
+    "SUBSCRIPTION_RENEWED_MESSAGE": "Tu suscripción a {tier} se ha renovado hasta {date}.",
+    "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Falló el pago de renovación",
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "No pudimos renovar tu suscripción a {tier} (intento {attempt}). Actualiza tu método de pago."
 }
