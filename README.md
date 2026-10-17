@@ -618,3 +618,15 @@ MIT
 
 <!-- handsoff-issue-1199 -->
 - #1199: Add idempotency keys to payout endpoints
+
+<!-- handsoff-issue-1217 -->
+- #1217: Add request-level authorization tests for admin mutations
+
+<!-- handsoff-issue-1218 -->
+- #1218: Prevent mass assignment in user profile updates
+
+<!-- handsoff-issue-1271 -->
+- #1271: Implement provider onboarding state machine
+
+<!-- handsoff-issue-1272 -->
+- #1272: Add provider compliance document expiry tracking
