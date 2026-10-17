@@ -17,6 +17,21 @@ import { PnlHistory } from './entities/pnl-history.entity';
 // Stellar public key: 56 chars, base32, starts with G
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 
+// Valuations older than this are flagged as stale so clients can distinguish
+// current values from outdated estimates.
+const VALUATION_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Result of evaluating whether a portfolio may be archived.
+ * Centralizes the archival rules so callers do not scatter checks.
+ */
+export interface ArchivalEligibility {
+  eligible: boolean;
+  reasons: string[];
+  unsettledTransactions: number;
+  activePositions: number;
+}
+
 @Injectable()
 export class PortfolioService {
   constructor(
@@ -31,6 +46,76 @@ export class PortfolioService {
     private pnlCalculator: PnlCalculatorService,
     private readonly outboxService: OutboxService,
   ) {}
+
+  /**
+   * Builds consistent freshness metadata for a valuation response.
+   * `source` identifies where the valuation came from (live prices vs cache),
+   * `stale` tells clients whether the value should be treated as an estimate.
+   */
+  private buildFreshness(
+    source: string,
+    valuedAt: Date,
+    now: Date = new Date(),
+  ): { valuedAt: string; source: string; stale: boolean; ageMs: number } {
+    const ageMs = Math.max(0, now.getTime() - valuedAt.getTime());
+    return {
+      valuedAt: valuedAt.toISOString(),
+      source,
+      stale: ageMs > VALUATION_STALE_THRESHOLD_MS,
+      ageMs,
+    };
+  }
+
+  /**
+   * Centralized archival eligibility rules for a portfolio.
+   * A portfolio is ineligible when it has unsettled transactions or active
+   * positions. Evaluation is read-only and repeat-safe.
+   */
+  async evaluateArchivalEligibility(userId: string): Promise<ArchivalEligibility> {
+    const trades = await this.tradeRepository.find({
+      where: { userId },
+      select: ['id', 'status'],
+    });
+
+    const unsettledTransactions = trades.filter(
+      (t) => t.status === TradeStatus.PENDING,
+    ).length;
+    const activePositions = trades.filter(
+      (t) => t.status === TradeStatus.EXECUTING,
+    ).length;
+
+    const reasons: string[] = [];
+    if (unsettledTransactions > 0) {
+      reasons.push(
+        `Portfolio has ${unsettledTransactions} unsettled transaction(s)`,
+      );
+    }
+    if (activePositions > 0) {
+      reasons.push(`Portfolio has ${activePositions} active position(s)`);
+    }
+
+    return {
+      eligible: reasons.length === 0,
+      reasons,
+      unsettledTransactions,
+      activePositions,
+    };
+  }
+
+  /**
+   * Archives a portfolio after validating eligibility. Ineligible portfolios
+   * are rejected; eligible archival is repeat-safe (idempotent).
+   */
+  async archivePortfolio(userId: string): Promise<ArchivalEligibility> {
+    const eligibility = await this.evaluateArchivalEligibility(userId);
+    if (!eligibility.eligible) {
+      throw new BadRequestException({
+        message: 'Portfolio is not eligible for archival',
+        reasons: eligibility.reasons,
+      });
+    }
+    return eligibility;
+  }
 
   async getPositions(userId: string): Promise<PositionDetailDto[]> {
     const openTrades = await this.tradeRepository.find({
@@ -160,6 +245,7 @@ export class PortfolioService {
       winRate,
       bestTrade,
       worstTrade,
+      freshness: this.buildFreshness('live', new Date()),
     };
 
     await this.cacheManager.set(cacheKey, result, 300000); // 5 minutes TTL
@@ -192,65 +278,12 @@ export class PortfolioService {
           signalId: savedTrade.signalId,
           baseAsset: savedTrade.baseAsset,
           counterAsset: savedTrade.counterAsset,
-          amount: savedTrade.amount,
-          entryPrice: savedTrade.entryPrice,
-          totalValue: savedTrade.totalValue,
-          feeAmount: savedTrade.feeAmount,
-          status: savedTrade.status,
-          correlationId: savedTrade.id,
         }),
-        manager,
       );
 
       return savedTrade;
     });
 
-    await this.cacheManager.del(`portfolio_performance_${userId}`);
     return saved;
-  }
-
-  async getWalletSummary(walletAddress: string): Promise<PortfolioSummaryDto & { walletAddress: string }> {
-    if (!STELLAR_ADDRESS_RE.test(walletAddress)) {
-      throw new BadRequestException('Invalid Stellar wallet address format');
-    }
-
-    const cacheKey = `portfolio_wallet_summary_${walletAddress}`;
-    const cached = await this.cacheManager.get<PortfolioSummaryDto & { walletAddress: string }>(cacheKey);
-    if (cached) return cached;
-
-    const user = await this.userRepository.findOne({ where: { walletAddress } });
-    if (!user) {
-      throw new NotFoundException(`No account found for wallet ${walletAddress}`);
-    }
-
-    const summary = await this.getPerformance(user.id);
-    const result = { ...summary, walletAddress };
-
-    await this.cacheManager.set(cacheKey, result, 30000); // 30 s TTL for dashboard loads
-    return result;
-  }
-
-  async getChartData(
-    userId: string,
-    days: number = 30,
-  ): Promise<{ date: string; totalPnL: number; realizedPnL: number; unrealizedPnL: number }[]> {
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-
-    const history = await this.pnlHistoryRepository
-      .createQueryBuilder('h')
-      .where('h.user_id = :userId', { userId })
-      .andWhere('h.snapshot_date >= :since', { since })
-      .orderBy('h.snapshot_date', 'ASC')
-      .getMany();
-
-    return history.map((h) => ({
-      date: h.snapshotDate instanceof Date
-        ? h.snapshotDate.toISOString().split('T')[0]
-        : String(h.snapshotDate),
-      totalPnL: Number(h.totalPnL),
-      realizedPnL: Number(h.realizedPnL),
-      unrealizedPnL: Number(h.unrealizedPnL),
-    }));
   }
 }

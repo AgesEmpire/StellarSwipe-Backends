@@ -27,6 +27,22 @@ export interface PaginatedSignalsDto {
   hasPrev: boolean;
 }
 
+export type SignalCancellationActor = 'provider' | 'administrator';
+
+export interface SignalCancellationMetadata {
+  reason: string;
+  actor: SignalCancellationActor;
+  actorId?: string;
+  cancelledAt: string;
+}
+
+export interface CancelSignalOptions {
+  reason: string;
+  actor: SignalCancellationActor;
+  actorId?: string;
+  currentVersion?: number;
+}
+
 @Injectable()
 export class SignalsService {
   private static readonly FEED_KEY = `${CachePrefix.SIGNAL}feed`;
@@ -248,26 +264,59 @@ export class SignalsService {
     } else {
       await this.signalRepository.update(id, { status });
     }
-    await Promise.all([
-      this.cacheService.del(`${CachePrefix.SIGNAL}${id}`),
-      this.cacheService.del(SignalsService.FEED_KEY),
-    ]);
+
+    await this.cacheService.del(`${CachePrefix.SIGNAL}${id}`);
     const updated = await this.signalRepository.findOneBy({ id });
-    if (updated) this.emitSafely('signal.updated', updated);
+    if (updated) {
+      this.emitSafely('signal.updated', updated);
+    }
     return updated;
   }
 
   /**
-   * Fire an entity-change event without letting a listener failure (e.g. a
-   * search-index refresh error) break the write path that triggered it.
+   * Apply a partial update to a signal's mutable fields, guarded by an
+   * optimistic version check. Clients must supply the version they last
+   * observed; if the stored version has advanced, the update is rejected
+   * with a ConflictException and no data is overwritten.
    */
+  async updateSignalFields(
+    id: string,
+    changes: Partial<Signal>,
+    currentVersion: number,
+  ): Promise<Signal> {
+    if (currentVersion === undefined || currentVersion === null) {
+      throw new BadRequestException(
+        'currentVersion is required when editing signal fields',
+      );
+    }
+
+    const result = await this.signalRepository.update(
+      { id, version: currentVersion },
+      { ...changes, version: currentVersion + 1 } as any,
+    );
+
+    if (result.affected === 0) {
+      throw new ConflictException(
+        'Signal was updated by another request. Please retry with the latest version.',
+      );
+    }
+
+    await this.cacheService.del(`${CachePrefix.SIGNAL}${id}`);
+    const updated = await this.signalRepository.findOneBy({ id });
+    if (!updated) {
+      throw new BadRequestException('Signal not found');
+    }
+    this.emitSafely('signal.updated', updated);
+    return updated;
+  }
+
   private emitSafely(event: string, payload: unknown): void {
     try {
       this.eventEmitter.emit(event, payload);
     } catch (error) {
-      this.logger.warn(
-        `Failed to emit '${event}' event`,
-        (error as Error).message,
+      this.logger.error(
+        `Failed to emit ${event}: ${(error as Error).message}`,
+        (error as Error).stack,
       );
     }
   }
