@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inject } from '@nestjs/common';
@@ -10,8 +10,13 @@ import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
 
+const MAX_OVERLAP_MS = 3_600_000;
+const LAST_USED_THROTTLE_MS = 60_000;
+
 @Injectable()
 export class ApiKeysService {
+  private readonly lastUsedInFlight = new Map<string, Promise<void>>();
+
   constructor(
     @InjectRepository(ApiKey)
     private readonly apiKeyRepo: Repository<ApiKey>,
@@ -22,6 +27,8 @@ export class ApiKeysService {
     userId: string,
     dto: CreateApiKeyDto,
   ): Promise<ApiKeyResponseDto> {
+    await this.assertEmailVerified(userId);
+
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
 
@@ -45,6 +52,22 @@ export class ApiKeysService {
       rateLimit: saved.rateLimit,
       createdAt: saved.createdAt,
     };
+  }
+
+  private async assertEmailVerified(userId: string): Promise<void> {
+    const user = await this.apiKeyRepo.manager
+      .getRepository('User')
+      .findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (!user.emailVerified) {
+      throw new ForbiddenException(
+        'A verified email is required to create an API key',
+      );
+    }
   }
 
   async verify(rawKey: string): Promise<ApiKey> {
@@ -74,12 +97,42 @@ export class ApiKeysService {
         if (key.expiresAt && key.expiresAt < new Date()) {
           throw new UnauthorizedException('API key expired');
         }
-        await this.apiKeyRepo.update(key.id, { lastUsed: new Date() });
+        await this.touchLastUsed(key);
         return key;
       }
     }
 
     throw new UnauthorizedException('Invalid API key');
+  }
+
+  /**
+   * Records last-used time at a bounded interval instead of on every request.
+   * Concurrent requests for the same key share a single in-flight write, and
+   * writes are skipped when the stored timestamp is still fresh.
+   */
+  private async touchLastUsed(key: ApiKey): Promise<void> {
+    const now = Date.now();
+    if (key.lastUsed && now - key.lastUsed.getTime() < LAST_USED_THROTTLE_MS) {
+      return;
+    }
+
+    const inFlight = this.lastUsedInFlight.get(key.id);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const write = this.apiKeyRepo
+      .update(key.id, { lastUsed: new Date(now) })
+      .then(() => {
+        key.lastUsed = new Date(now);
+      })
+      .finally(() => {
+        this.lastUsedInFlight.delete(key.id);
+      });
+
+    this.lastUsedInFlight.set(key.id, write);
+    await write;
   }
 
   async checkRateLimit(keyId: string, limit: number): Promise<boolean> {
@@ -153,15 +206,21 @@ export class ApiKeysService {
       throw new UnauthorizedException('API key not found');
     }
 
+    if (existing.revokedAt) {
+      throw new UnauthorizedException('API key has been revoked');
+    }
+
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
+
+    const boundedOverlapMs = Number.isFinite(overlapMs)
+      ? Math.max(0, Math.min(overlapMs, MAX_OVERLAP_MS))
+      : 0;
 
     await this.apiKeyRepo.update(keyId, {
       previousKeyHash: existing.keyHash,
       keyHash,
-      overlapUntil: new Date(
-        Date.now() + Math.max(0, Math.min(overlapMs, 3_600_000)),
-      ),
+      overlapUntil: new Date(Date.now() + boundedOverlapMs),
     });
 
     return {

@@ -15,5 +15,17 @@
     "PAYMENT_SCHEDULED": "An tsara biyan kuɗi naka don {date}",
     "PAYMENT_EXECUTED": "An aiwatar da biyan kuɗi da aka tsara",
     "PAYMENT_CANCELLED": "An soke biyan kuɗi da aka tsara",
-    "PAYMENT_REMINDER": "Tunawa: Kana da biyan kuɗi da aka tsara don {date}"
+    "PAYMENT_REMINDER": "Tunawa: Kana da biyan kuɗi da aka tsara don {date}",
+    "SUBSCRIPTION_CREATED_TITLE": "An kunna biyan kuɗi",
+    "SUBSCRIPTION_CREATED_MESSAGE": "Biyan kuɗin ku na {tier} yana aiki yanzu.",
+    "SUBSCRIPTION_CANCELLED_TITLE": "An soke biyan kuɗi",
+    "SUBSCRIPTION_CANCELLED_MESSAGE": "An soke biyan kuɗin ku na {tier}.",
+    "SUBSCRIPTION_PAUSED_TITLE": "An dakatar da biyan kuɗi",
+    "SUBSCRIPTION_PAUSED_MESSAGE": "An dakatar da sabuntawar atomatik na biyan kuɗin ku na {tier}. Samun dama zai ci gaba har zuwa {date}.",
+    "SUBSCRIPTION_RESUMED_TITLE": "An dawo da biyan kuɗi",
+    "SUBSCRIPTION_RESUMED_MESSAGE": "An dawo da sabuntawar atomatik na biyan kuɗin ku na {tier}.",
+    "SUBSCRIPTION_RENEWED_TITLE": "An sabunta biyan kuɗi",
+    "SUBSCRIPTION_RENEWED_MESSAGE": "An sabunta biyan kuɗin ku na {tier} har zuwa {date}.",
+    "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Biyan sabuntawa ya kasa",
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "Ba mu iya sabunta biyan kuɗin ku na {tier} ba (ƙoƙari {attempt}). Da fatan za a sabunta hanyar biyan kuɗi."
 }
