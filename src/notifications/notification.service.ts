@@ -89,6 +89,33 @@ export class NotificationService implements OnModuleInit {
     return template.body.replace(TEMPLATE_VARIABLE_PATTERN, (_match, name: string) => variables[name] ?? '');
   }
 
+  /**
+   * Send a notification at most once for a given dedupe key.
+   *
+   * Idempotency is persisted in the notification's metadata so duplicate
+   * lifecycle events (e.g. a repeated renewal webhook) do not deliver the
+   * same notification twice.
+   */
+  async sendOnce(dedupeKey: string, dto: SendNotificationDto): Promise<Notification> {
+    const existing = await this.notificationRepository
+      .createQueryBuilder('notification')
+      .where('notification.userId = :userId', { userId: dto.userId })
+      .andWhere("notification.metadata ->> 'dedupeKey' = :dedupeKey", { dedupeKey })
+      .getOne();
+
+    if (existing) {
+      this.logger.debug(
+        `Notification with dedupe key "${dedupeKey}" already exists (${existing.id}); skipping`,
+      );
+      return existing;
+    }
+
+    return this.send({
+      ...dto,
+      metadata: { ...(dto.metadata ?? {}), dedupeKey },
+    });
+  }
+
   async send(dto: SendNotificationDto): Promise<Notification> {
     const channel = dto.channel ?? NotificationChannel.IN_APP;
 
@@ -203,6 +230,12 @@ export class NotificationService implements OnModuleInit {
       SIGNAL_CLOSED: 'signalPerformance',
       RISK_ALERT: 'systemAlerts',
       PRICE_ALERT: 'systemAlerts',
+      SUBSCRIPTION_CREATED: 'systemAlerts',
+      SUBSCRIPTION_CANCELLED: 'systemAlerts',
+      SUBSCRIPTION_PAUSED: 'systemAlerts',
+      SUBSCRIPTION_RESUMED: 'systemAlerts',
+      SUBSCRIPTION_RENEWED: 'systemAlerts',
+      SUBSCRIPTION_PAYMENT_FAILED: 'systemAlerts',
     };
     return map[type] ?? null;
   }
