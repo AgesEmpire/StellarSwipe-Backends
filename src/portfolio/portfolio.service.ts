@@ -17,6 +17,26 @@ import { PnlHistory } from './entities/pnl-history.entity';
 // Stellar public key: 56 chars, base32, starts with G
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 
+// Portfolio import batch limits and validation
+const MAX_IMPORT_BATCH_SIZE = 500;
+const MAX_IMPORT_PRECISION = 8;
+const MAX_IMPORT_SCALE = 8;
+const ASSET_CODE_RE = /^[A-Z0-9]{1,12}$/;
+
+interface PortfolioImportRow {
+  baseAsset: string;
+  counterAsset: string;
+  amount: number | string;
+  entryPrice: number | string;
+  feeAmount?: number | string;
+}
+
+interface PortfolioImportRowError {
+  row: number;
+  field: string;
+  message: string;
+}
+
 @Injectable()
 export class PortfolioService {
   constructor(
@@ -209,6 +229,136 @@ export class PortfolioService {
     return saved;
   }
 
+  /**
+   * Import a batch of portfolio transactions.
+   *
+   * All rows are validated up front (batch size, asset identifiers, numeric
+   * precision) before any writes occur, so a validation failure never leaves
+   * partial records behind. Errors are reported per-row with safe messages
+   * that do not leak internal details.
+   */
+  async importTransactions(userId: string, rows: PortfolioImportRow[]): Promise<Trade[]> {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new BadRequestException('Import batch must contain at least one row');
+    }
+
+    if (rows.length > MAX_IMPORT_BATCH_SIZE) {
+      throw new BadRequestException(
+        `Import batch exceeds maximum size of ${MAX_IMPORT_BATCH_SIZE} rows`,
+      );
+    }
+
+    const errors: PortfolioImportRowError[] = [];
+
+    rows.forEach((row, index) => {
+      const rowNumber = index + 1;
+
+      if (!row || typeof row !== 'object') {
+        errors.push({ row: rowNumber, field: 'row', message: 'Row must be an object' });
+        return;
+      }
+
+      if (!this.isValidAssetIdentifier(row.baseAsset)) {
+        errors.push({ row: rowNumber, field: 'baseAsset', message: 'Invalid asset identifier' });
+      }
+
+      if (!this.isValidAssetIdentifier(row.counterAsset)) {
+        errors.push({ row: rowNumber, field: 'counterAsset', message: 'Invalid asset identifier' });
+      }
+
+      if (!this.isValidPrecision(row.amount)) {
+        errors.push({ row: rowNumber, field: 'amount', message: 'Invalid amount precision' });
+      }
+
+      if (!this.isValidPrecision(row.entryPrice)) {
+        errors.push({ row: rowNumber, field: 'entryPrice', message: 'Invalid entry price precision' });
+      }
+
+      if (row.feeAmount !== undefined && !this.isValidPrecision(row.feeAmount)) {
+        errors.push({ row: rowNumber, field: 'feeAmount', message: 'Invalid fee amount precision' });
+      }
+    });
+
+    if (errors.length > 0) {
+      throw new BadRequestException({
+        message: 'Portfolio import validation failed',
+        errors,
+      });
+    }
+
+    const saved = await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
+      const created: Trade[] = [];
+
+      for (const row of rows) {
+        const amount = Number(row.amount);
+        const entryPrice = Number(row.entryPrice);
+        const feeAmount = row.feeAmount !== undefined ? Number(row.feeAmount) : 0;
+
+        const trade = manager.create(Trade, {
+          userId,
+          signalId: '00000000-0000-0000-0000-000000000000',
+          side: undefined as any,
+          baseAsset: row.baseAsset,
+          counterAsset: row.counterAsset,
+          amount: String(amount),
+          entryPrice: String(entryPrice),
+          totalValue: String(amount * entryPrice),
+          feeAmount: String(feeAmount),
+          status: TradeStatus.PENDING,
+        });
+
+        const savedTrade = await manager.save(trade);
+
+        await this.outboxService.enqueue(
+          new PortfolioTransactionCreatedEvent({
+            tradeId: savedTrade.id,
+            userId,
+            signalId: savedTrade.signalId,
+            baseAsset: savedTrade.baseAsset,
+            counterAsset: savedTrade.counterAsset,
+            amount: savedTrade.amount,
+            entryPrice: savedTrade.entryPrice,
+            totalValue: savedTrade.totalValue,
+            feeAmount: savedTrade.feeAmount,
+            status: savedTrade.status,
+            correlationId: savedTrade.id,
+          }),
+          manager,
+        );
+
+        created.push(savedTrade);
+      }
+
+      return created;
+    });
+
+    await this.cacheManager.del(`portfolio_performance_${userId}`);
+    return saved;
+  }
+
+  private isValidAssetIdentifier(value: unknown): boolean {
+    return typeof value === 'string' && ASSET_CODE_RE.test(value);
+  }
+
+  private isValidPrecision(value: unknown): boolean {
+    if (value === null || value === undefined || value === '') {
+      return false;
+    }
+
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return false;
+    }
+
+    const [integerPart, fractionalPart = ''] = String(value).split('.');
+    if (fractionalPart.length > MAX_IMPORT_SCALE) {
+      return false;
+    }
+
+    const significantDigits = integerPart.replace(/^0+/, '').length + fractionalPart.length;
+    return significantDigits <= MAX_IMPORT_PRECISION + MAX_IMPORT_SCALE;
+  }
+
   async getWalletSummary(walletAddress: string): Promise<PortfolioSummaryDto & { walletAddress: string }> {
     if (!STELLAR_ADDRESS_RE.test(walletAddress)) {
       throw new BadRequestException('Invalid Stellar wallet address format');
@@ -218,39 +368,25 @@ export class PortfolioService {
     const cached = await this.cacheManager.get<PortfolioSummaryDto & { walletAddress: string }>(cacheKey);
     if (cached) return cached;
 
-    const user = await this.userRepository.findOne({ where: { walletAddress } });
-    if (!user) {
-      throw new NotFoundException(`No account found for wallet ${walletAddress}`);
-    }
+    const trades = await this.tradeRepository.find({
+      where: { userId: walletAddress },
+      order: { createdAt: 'DESC' },
+    });
 
-    const summary = await this.getPerformance(user.id);
-    const result = { ...summary, walletAddress };
+    const summary = this.pnlCalculator.calculatePortfolioPnl(trades, {});
 
-    await this.cacheManager.set(cacheKey, result, 30000); // 30 s TTL for dashboard loads
+    const result: PortfolioSummaryDto & { walletAddress: string } = {
+      totalValue: 0,
+      unrealizedPnL: summary.unrealizedPnL,
+      realizedPnL: summary.realizedPnL,
+      openPositions: trades.filter(
+        (t) => t.status === TradeStatus.EXECUTING || t.status === TradeStatus.PENDING,
+      ).length,
+      winRate: 0,
+      walletAddress,
+    };
+
+    await this.cacheManager.set(cacheKey, result, 300000);
     return result;
-  }
-
-  async getChartData(
-    userId: string,
-    days: number = 30,
-  ): Promise<{ date: string; totalPnL: number; realizedPnL: number; unrealizedPnL: number }[]> {
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-
-    const history = await this.pnlHistoryRepository
-      .createQueryBuilder('h')
-      .where('h.user_id = :userId', { userId })
-      .andWhere('h.snapshot_date >= :since', { since })
-      .orderBy('h.snapshot_date', 'ASC')
-      .getMany();
-
-    return history.map((h) => ({
-      date: h.snapshotDate instanceof Date
-        ? h.snapshotDate.toISOString().split('T')[0]
-        : String(h.snapshotDate),
-      totalPnL: Number(h.totalPnL),
-      realizedPnL: Number(h.realizedPnL),
-      unrealizedPnL: Number(h.unrealizedPnL),
-    }));
   }
 }
