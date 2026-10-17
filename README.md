@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1285 -->
 - #1285: Add configurable maximum age for Stellar transaction envelopes
+
+<!-- handsoff-issue-1286 -->
+- #1286: Validate Soroban authorization expiration before submission
