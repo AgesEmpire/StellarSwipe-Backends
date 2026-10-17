@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1290 -->
 - #1290: Add provider suspension workflow and access enforcement
+
+<!-- handsoff-issue-1291 -->
+- #1291: Add signal publication limits per provider
