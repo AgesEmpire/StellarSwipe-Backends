@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1198 -->
 - #1198: Add retry and dead-letter handling to search indexing
+
+<!-- handsoff-issue-1199 -->
+- #1199: Add idempotency keys to payout endpoints
