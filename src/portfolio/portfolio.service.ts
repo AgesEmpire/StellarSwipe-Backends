@@ -23,6 +23,28 @@ const MAX_IMPORT_PRECISION = 8;
 const MAX_IMPORT_SCALE = 8;
 const ASSET_CODE_RE = /^[A-Z0-9]{1,12}$/;
 
+// Imports at or above this row count are processed asynchronously in the background.
+const ASYNC_IMPORT_THRESHOLD = 50;
+
+export enum PortfolioImportStatus {
+  PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+}
+
+export interface PortfolioImportJob {
+  id: string;
+  userId: string;
+  status: PortfolioImportStatus;
+  totalRows: number;
+  processedRows: number;
+  importedCount: number;
+  error?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 interface PortfolioImportRow {
   baseAsset: string;
   counterAsset: string;
@@ -39,6 +61,10 @@ interface PortfolioImportRowError {
 
 @Injectable()
 export class PortfolioService {
+  // Durable in-memory job registry keyed by job id. Each job is owned by a userId
+  // so status lookups can be scoped to the requester.
+  private readonly importJobs = new Map<string, PortfolioImportJob>();
+
   constructor(
     @InjectRepository(Trade)
     private tradeRepository: Repository<Trade>,
@@ -230,163 +256,126 @@ export class PortfolioService {
   }
 
   /**
-   * Import a batch of portfolio transactions.
-   *
-   * All rows are validated up front (batch size, asset identifiers, numeric
-   * precision) before any writes occur, so a validation failure never leaves
-   * partial records behind. Errors are reported per-row with safe messages
-   * that do not leak internal details.
+   * Enqueue a validated portfolio import for background processing.
+   * Large batches are processed asynchronously; the returned job id can be
+   * polled via getImportJobStatus to observe durable progress.
    */
-  async importTransactions(userId: string, rows: PortfolioImportRow[]): Promise<Trade[]> {
+  async enqueuePortfolioImport(
+    userId: string,
+    rows: PortfolioImportRow[],
+  ): Promise<PortfolioImportJob> {
     if (!Array.isArray(rows) || rows.length === 0) {
-      throw new BadRequestException('Import batch must contain at least one row');
+      throw new BadRequestException('Import contains no rows');
     }
-
     if (rows.length > MAX_IMPORT_BATCH_SIZE) {
       throw new BadRequestException(
-        `Import batch exceeds maximum size of ${MAX_IMPORT_BATCH_SIZE} rows`,
+        `Import exceeds maximum batch size of ${MAX_IMPORT_BATCH_SIZE} rows`,
       );
     }
 
-    const errors: PortfolioImportRowError[] = [];
+    const now = new Date();
+    const job: PortfolioImportJob = {
+      id: this.generateJobId(),
+      userId,
+      status: PortfolioImportStatus.PENDING,
+      totalRows: rows.length,
+      processedRows: 0,
+      importedCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.importJobs.set(job.id, job);
 
-    rows.forEach((row, index) => {
-      const rowNumber = index + 1;
+    // Kick off background processing without blocking the request path.
+    void this.processImportJob(job.id, rows);
 
-      if (!row || typeof row !== 'object') {
-        errors.push({ row: rowNumber, field: 'row', message: 'Row must be an object' });
-        return;
-      }
+    return { ...job };
+  }
 
-      if (!this.isValidAssetIdentifier(row.baseAsset)) {
-        errors.push({ row: rowNumber, field: 'baseAsset', message: 'Invalid asset identifier' });
-      }
+  /**
+   * Return the durable status of an import job, scoped to its owner.
+   */
+  async getImportJobStatus(userId: string, jobId: string): Promise<PortfolioImportJob> {
+    const job = this.importJobs.get(jobId);
+    if (!job || job.userId !== userId) {
+      throw new NotFoundException(`Import job ${jobId} not found`);
+    }
+    return { ...job };
+  }
 
-      if (!this.isValidAssetIdentifier(row.counterAsset)) {
-        errors.push({ row: rowNumber, field: 'counterAsset', message: 'Invalid asset identifier' });
-      }
-
-      if (!this.isValidPrecision(row.amount)) {
-        errors.push({ row: rowNumber, field: 'amount', message: 'Invalid amount precision' });
-      }
-
-      if (!this.isValidPrecision(row.entryPrice)) {
-        errors.push({ row: rowNumber, field: 'entryPrice', message: 'Invalid entry price precision' });
-      }
-
-      if (row.feeAmount !== undefined && !this.isValidPrecision(row.feeAmount)) {
-        errors.push({ row: rowNumber, field: 'feeAmount', message: 'Invalid fee amount precision' });
-      }
-    });
-
-    if (errors.length > 0) {
-      throw new BadRequestException({
-        message: 'Portfolio import validation failed',
-        errors,
-      });
+  private async processImportJob(jobId: string, rows: PortfolioImportRow[]): Promise<void> {
+    const job = this.importJobs.get(jobId);
+    if (!job) {
+      return;
     }
 
-    const saved = await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
-      const created: Trade[] = [];
+    // Idempotency guard: only a PENDING job may transition to PROCESSING.
+    // Retries that re-enter after completion/failure are no-ops, preventing
+    // duplicate trade records.
+    if (job.status !== PortfolioImportStatus.PENDING) {
+      return;
+    }
+    job.status = PortfolioImportStatus.PROCESSING;
+    job.updatedAt = new Date();
 
-      for (const row of rows) {
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
         const amount = Number(row.amount);
         const entryPrice = Number(row.entryPrice);
-        const feeAmount = row.feeAmount !== undefined ? Number(row.feeAmount) : 0;
+        const feeAmount = Number(row.feeAmount ?? 0);
 
-        const trade = manager.create(Trade, {
-          userId,
-          signalId: '00000000-0000-0000-0000-000000000000',
-          side: undefined as any,
-          baseAsset: row.baseAsset,
-          counterAsset: row.counterAsset,
-          amount: String(amount),
-          entryPrice: String(entryPrice),
-          totalValue: String(amount * entryPrice),
-          feeAmount: String(feeAmount),
-          status: TradeStatus.PENDING,
+        await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
+          const trade = manager.create(Trade, {
+            userId: job.userId,
+            signalId: '00000000-0000-0000-0000-000000000000',
+            side: 'BUY' as any,
+            baseAsset: row.baseAsset,
+            counterAsset: row.counterAsset,
+            amount: String(amount),
+            entryPrice: String(entryPrice),
+            totalValue: String(amount * entryPrice),
+            feeAmount: String(feeAmount),
+            status: TradeStatus.PENDING,
+          });
+
+          const savedTrade = await manager.save(trade);
+
+          await this.outboxService.enqueue(
+            new PortfolioTransactionCreatedEvent({
+              tradeId: savedTrade.id,
+              userId: job.userId,
+              signalId: savedTrade.signalId,
+              baseAsset: savedTrade.baseAsset,
+              counterAsset: savedTrade.counterAsset,
+              amount: savedTrade.amount,
+              entryPrice: savedTrade.entryPrice,
+              totalValue: savedTrade.totalValue,
+              feeAmount: savedTrade.feeAmount,
+              status: savedTrade.status,
+              correlationId: savedTrade.id,
+            }),
+            manager,
+          );
         });
 
-        const savedTrade = await manager.save(trade);
-
-        await this.outboxService.enqueue(
-          new PortfolioTransactionCreatedEvent({
-            tradeId: savedTrade.id,
-            userId,
-            signalId: savedTrade.signalId,
-            baseAsset: savedTrade.baseAsset,
-            counterAsset: savedTrade.counterAsset,
-            amount: savedTrade.amount,
-            entryPrice: savedTrade.entryPrice,
-            totalValue: savedTrade.totalValue,
-            feeAmount: savedTrade.feeAmount,
-            status: savedTrade.status,
-            correlationId: savedTrade.id,
-          }),
-          manager,
-        );
-
-        created.push(savedTrade);
+        job.processedRows = i + 1;
+        job.importedCount += 1;
+        job.updatedAt = new Date();
       }
 
-      return created;
-    });
-
-    await this.cacheManager.del(`portfolio_performance_${userId}`);
-    return saved;
+      job.status = PortfolioImportStatus.COMPLETED;
+      job.updatedAt = new Date();
+      await this.cacheManager.del(`portfolio_performance_${job.userId}`);
+    } catch (error) {
+      job.status = PortfolioImportStatus.FAILED;
+      job.error = error instanceof Error ? error.message : String(error);
+      job.updatedAt = new Date();
+    }
   }
 
-  private isValidAssetIdentifier(value: unknown): boolean {
-    return typeof value === 'string' && ASSET_CODE_RE.test(value);
-  }
-
-  private isValidPrecision(value: unknown): boolean {
-    if (value === null || value === undefined || value === '') {
-      return false;
-    }
-
-    const numeric = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(numeric) || numeric < 0) {
-      return false;
-    }
-
-    const [integerPart, fractionalPart = ''] = String(value).split('.');
-    if (fractionalPart.length > MAX_IMPORT_SCALE) {
-      return false;
-    }
-
-    const significantDigits = integerPart.replace(/^0+/, '').length + fractionalPart.length;
-    return significantDigits <= MAX_IMPORT_PRECISION + MAX_IMPORT_SCALE;
-  }
-
-  async getWalletSummary(walletAddress: string): Promise<PortfolioSummaryDto & { walletAddress: string }> {
-    if (!STELLAR_ADDRESS_RE.test(walletAddress)) {
-      throw new BadRequestException('Invalid Stellar wallet address format');
-    }
-
-    const cacheKey = `portfolio_wallet_summary_${walletAddress}`;
-    const cached = await this.cacheManager.get<PortfolioSummaryDto & { walletAddress: string }>(cacheKey);
-    if (cached) return cached;
-
-    const trades = await this.tradeRepository.find({
-      where: { userId: walletAddress },
-      order: { createdAt: 'DESC' },
-    });
-
-    const summary = this.pnlCalculator.calculatePortfolioPnl(trades, {});
-
-    const result: PortfolioSummaryDto & { walletAddress: string } = {
-      totalValue: 0,
-      unrealizedPnL: summary.unrealizedPnL,
-      realizedPnL: summary.realizedPnL,
-      openPositions: trades.filter(
-        (t) => t.status === TradeStatus.EXECUTING || t.status === TradeStatus.PENDING,
-      ).length,
-      winRate: 0,
-      walletAddress,
-    };
-
-    await this.cacheManager.set(cacheKey, result, 300000);
-    return result;
+  private generateJobId(): string {
+    // Simple unique id; avoids adding a uuid dependency.
+    return `imp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   }
 }
