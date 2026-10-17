@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1194 -->
 - #1194: Integrate slippage calculations with live market data
+
+<!-- handsoff-issue-1198 -->
+- #1198: Add retry and dead-letter handling to search indexing
