@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inject } from '@nestjs/common';
@@ -9,6 +9,8 @@ import * as bcrypt from 'bcrypt';
 import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
+
+const MAX_OVERLAP_MS = 3_600_000;
 
 @Injectable()
 export class ApiKeysService {
@@ -22,6 +24,8 @@ export class ApiKeysService {
     userId: string,
     dto: CreateApiKeyDto,
   ): Promise<ApiKeyResponseDto> {
+    await this.assertEmailVerified(userId);
+
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
 
@@ -45,6 +49,22 @@ export class ApiKeysService {
       rateLimit: saved.rateLimit,
       createdAt: saved.createdAt,
     };
+  }
+
+  private async assertEmailVerified(userId: string): Promise<void> {
+    const user = await this.apiKeyRepo.manager
+      .getRepository('User')
+      .findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (!user.emailVerified) {
+      throw new ForbiddenException(
+        'A verified email is required to create an API key',
+      );
+    }
   }
 
   async verify(rawKey: string): Promise<ApiKey> {
@@ -153,15 +173,21 @@ export class ApiKeysService {
       throw new UnauthorizedException('API key not found');
     }
 
+    if (existing.revokedAt) {
+      throw new UnauthorizedException('API key has been revoked');
+    }
+
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
+
+    const boundedOverlapMs = Number.isFinite(overlapMs)
+      ? Math.max(0, Math.min(overlapMs, MAX_OVERLAP_MS))
+      : 0;
 
     await this.apiKeyRepo.update(keyId, {
       previousKeyHash: existing.keyHash,
       keyHash,
-      overlapUntil: new Date(
-        Date.now() + Math.max(0, Math.min(overlapMs, 3_600_000)),
-      ),
+      overlapUntil: new Date(Date.now() + boundedOverlapMs),
     });
 
     return {

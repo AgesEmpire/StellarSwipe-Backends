@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1273 -->
 - #1273: Require verified email before API key creation
+
+<!-- handsoff-issue-1274 -->
+- #1274: Add API key rotation with overlap window
