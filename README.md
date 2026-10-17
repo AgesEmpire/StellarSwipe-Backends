@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1282 -->
 - #1282: Add withdrawal destination allowlist management
+
+<!-- handsoff-issue-1283 -->
+- #1283: Add transaction memo policy validation by operation type
