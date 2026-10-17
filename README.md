@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1279 -->
 - #1279: Implement user consent version tracking
+
+<!-- handsoff-issue-1280 -->
+- #1280: Add withdrawal risk review workflow
