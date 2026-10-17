@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1283 -->
 - #1283: Add transaction memo policy validation by operation type
+
+<!-- handsoff-issue-1284 -->
+- #1284: Handle Stellar transaction fee changes before submission
