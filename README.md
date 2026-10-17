@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1291 -->
 - #1291: Add signal publication limits per provider
+
+<!-- handsoff-issue-1292 -->
+- #1292: Add signal expiration policy validation
