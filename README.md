@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1286 -->
 - #1286: Validate Soroban authorization expiration before submission
+
+<!-- handsoff-issue-1287 -->
+- #1287: Add Stellar asset registry change audit events
