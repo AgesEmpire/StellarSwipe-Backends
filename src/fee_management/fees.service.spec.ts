@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { FeesService } from './fees.service';
 import { FeeTransaction, FeeStatus, FeeTier } from './entities/fee-transaction.entity';
+import { FeeManagerService } from './fee-manager.service';
 
 describe('FeesService', () => {
   let service: FeesService;
@@ -28,7 +29,16 @@ describe('FeesService', () => {
     }),
   };
 
+  const mockFeeManager = {
+    checkPromotionEligibility: jest.fn(),
+    getActivePromotions: jest.fn(),
+    computePromotionalDiscount: jest.fn(),
+    redeemPromotion: jest.fn(),
+  };
+
   beforeEach(async () => {
+    mockFeeManager.getActivePromotions.mockResolvedValue([]);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FeesService,
@@ -39,6 +49,10 @@ describe('FeesService', () => {
         {
           provide: ConfigService,
           useValue: mockConfigService,
+        },
+        {
+          provide: FeeManagerService,
+          useValue: mockFeeManager,
         },
       ],
     }).compile();
@@ -406,6 +420,110 @@ describe('FeesService', () => {
       // Even tiny amounts should have valid fee calculation
       expect(result.feeAmount).toBeDefined();
       expect(parseFloat(result.feeAmount)).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('promotion eligibility', () => {
+    const tradeDetails = {
+      userId: 'user123',
+      tradeId: 'trade456',
+      tradeAmount: '1000',
+      assetCode: 'USDC',
+      assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    };
+
+    it('applies an explicit, auditable discount for an eligible promotion', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.checkPromotionEligibility.mockResolvedValue({
+        eligible: true,
+        promotion: {
+          id: 'promo-1',
+          promoCode: 'SAVE10',
+          name: 'Save 10%',
+          promotionType: 'PERCENTAGE_DISCOUNT',
+          discountPercentage: '10',
+        },
+      });
+      mockFeeManager.computePromotionalDiscount.mockReturnValue({
+        discount: '0.1000000',
+        discountedFee: '0.9000000',
+        capped: false,
+      });
+
+      const result = await service.calculateFee({
+        ...tradeDetails,
+        promoCode: 'SAVE10',
+      });
+
+      expect(result.feeAmount).toBe('0.9000000');
+      expect(result.netAmount).toBe('999.1000000');
+      expect(result.promotionApplied).toEqual({
+        promoCode: 'SAVE10',
+        promotionId: 'promo-1',
+        promotionName: 'Save 10%',
+        originalFee: '1.0000000',
+        discount: '0.1000000',
+        discountedFee: '0.9000000',
+        capped: false,
+      });
+    });
+
+    it('ignores expired or ineligible promotions and keeps the base fee', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.checkPromotionEligibility.mockResolvedValue({
+        eligible: false,
+        reason: 'Promotion has expired',
+      });
+
+      const result = await service.calculateFee({
+        ...tradeDetails,
+        promoCode: 'EXPIRED',
+      });
+
+      expect(result.feeAmount).toBe('1.0000000');
+      expect(result.promotionApplied).toBeUndefined();
+    });
+
+    it('never stacks conflicting automatic promotions; the largest bounded discount wins', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.getActivePromotions.mockResolvedValue([
+        { promoCode: 'AUTO5', requiresCode: false },
+        { promoCode: 'AUTO20', requiresCode: false },
+      ]);
+      mockFeeManager.checkPromotionEligibility.mockImplementation((code: string) =>
+        Promise.resolve({
+          eligible: true,
+          promotion: {
+            id: code,
+            promoCode: code,
+            name: code,
+            promotionType: 'PERCENTAGE_DISCOUNT',
+          },
+        }),
+      );
+      mockFeeManager.computePromotionalDiscount.mockImplementation(
+        (_baseFee: string, _amount: string, promotion: any) =>
+          promotion.promoCode === 'AUTO20'
+            ? { discount: '0.2000000', discountedFee: '0.8000000', capped: false }
+            : { discount: '0.0500000', discountedFee: '0.9500000', capped: false },
+      );
+
+      const result = await service.calculateFee(tradeDetails);
+
+      expect(result.promotionApplied?.promoCode).toBe('AUTO20');
+      expect(result.feeAmount).toBe('0.8000000');
+    });
+
+    it('falls back to the base fee when the promotions provider fails', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.getActivePromotions.mockRejectedValue(
+        new Error('promotions service unavailable'),
+      );
+
+      const result = await service.calculateFee(tradeDetails);
+
+      expect(result.feeAmount).toBe('1.0000000');
+      expect(result.promotionApplied).toBeUndefined();
     });
   });
 });
