@@ -615,3 +615,6 @@ MIT
 
 <!-- handsoff-issue-1295 -->
 - #1295: Add portfolio valuation freshness metadata
+
+<!-- handsoff-issue-1296 -->
+- #1296: Add portfolio archival eligibility validation

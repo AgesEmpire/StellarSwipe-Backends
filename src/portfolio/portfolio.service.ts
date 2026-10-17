@@ -21,6 +21,17 @@ const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 // current values from outdated estimates.
 const VALUATION_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
+/**
+ * Result of evaluating whether a portfolio may be archived.
+ * Centralizes the archival rules so callers do not scatter checks.
+ */
+export interface ArchivalEligibility {
+  eligible: boolean;
+  reasons: string[];
+  unsettledTransactions: number;
+  activePositions: number;
+}
+
 @Injectable()
 export class PortfolioService {
   constructor(
@@ -53,6 +64,57 @@ export class PortfolioService {
       stale: ageMs > VALUATION_STALE_THRESHOLD_MS,
       ageMs,
     };
+  }
+
+  /**
+   * Centralized archival eligibility rules for a portfolio.
+   * A portfolio is ineligible when it has unsettled transactions or active
+   * positions. Evaluation is read-only and repeat-safe.
+   */
+  async evaluateArchivalEligibility(userId: string): Promise<ArchivalEligibility> {
+    const trades = await this.tradeRepository.find({
+      where: { userId },
+      select: ['id', 'status'],
+    });
+
+    const unsettledTransactions = trades.filter(
+      (t) => t.status === TradeStatus.PENDING,
+    ).length;
+    const activePositions = trades.filter(
+      (t) => t.status === TradeStatus.EXECUTING,
+    ).length;
+
+    const reasons: string[] = [];
+    if (unsettledTransactions > 0) {
+      reasons.push(
+        `Portfolio has ${unsettledTransactions} unsettled transaction(s)`,
+      );
+    }
+    if (activePositions > 0) {
+      reasons.push(`Portfolio has ${activePositions} active position(s)`);
+    }
+
+    return {
+      eligible: reasons.length === 0,
+      reasons,
+      unsettledTransactions,
+      activePositions,
+    };
+  }
+
+  /**
+   * Archives a portfolio after validating eligibility. Ineligible portfolios
+   * are rejected; eligible archival is repeat-safe (idempotent).
+   */
+  async archivePortfolio(userId: string): Promise<ArchivalEligibility> {
+    const eligibility = await this.evaluateArchivalEligibility(userId);
+    if (!eligibility.eligible) {
+      throw new BadRequestException({
+        message: 'Portfolio is not eligible for archival',
+        reasons: eligibility.reasons,
+      });
+    }
+    return eligibility;
   }
 
   async getPositions(userId: string): Promise<PositionDetailDto[]> {
@@ -216,48 +278,12 @@ export class PortfolioService {
           signalId: savedTrade.signalId,
           baseAsset: savedTrade.baseAsset,
           counterAsset: savedTrade.counterAsset,
-          amount: savedTrade.amount,
-          entryPrice: savedTrade.entryPrice,
-          totalValue: savedTrade.totalValue,
-          feeAmount: savedTrade.feeAmount,
-          status: savedTrade.status,
-          correlationId: savedTrade.id,
         }),
-        manager,
       );
 
       return savedTrade;
     });
 
-    await this.cacheManager.del(`portfolio_performance_${userId}`);
     return saved;
-  }
-
-  async getWalletSummary(walletAddress: string): Promise<PortfolioSummaryDto & { walletAddress: string }> {
-    if (!STELLAR_ADDRESS_RE.test(walletAddress)) {
-      throw new BadRequestException('Invalid Stellar wallet address format');
-    }
-
-    const cacheKey = `portfolio_wallet_summary_${walletAddress}`;
-    const cached = await this.cacheManager.get<PortfolioSummaryDto & { walletAddress: string }>(cacheKey);
-    if (cached) {
-      // Cached valuations are re-stamped so clients can see they came from
-      // cache and whether the underlying estimate has gone stale.
-      const valuedAt = cached.freshness?.valuedAt ? new Date(cached.freshness.valuedAt) : new Date();
-      return {
-        ...cached,
-        freshness: this.buildFreshness('cache', valuedAt),
-      };
-    }
-
-    const summary = await this.getPerformance(walletAddress);
-    const result = {
-      ...summary,
-      walletAddress,
-      freshness: this.buildFreshness('live', new Date()),
-    };
-
-    await this.cacheManager.set(cacheKey, result, 300000);
-    return result;
   }
 }
