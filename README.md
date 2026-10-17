@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1218 -->
 - #1218: Prevent mass assignment in user profile updates
+
+<!-- handsoff-issue-1271 -->
+- #1271: Implement provider onboarding state machine
