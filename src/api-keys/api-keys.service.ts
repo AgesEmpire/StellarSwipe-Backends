@@ -16,9 +16,19 @@ import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
 
 const DEFAULT_MAX_ACTIVE_KEYS = 10;
 
+export interface ApiKeyRevocationRecord {
+  id: string;
+  apiKeyId: string;
+  userId: string;
+  revokedBy: string;
+  revokedAt: Date;
+  reason: string | null;
+}
+
 @Injectable()
 export class ApiKeysService {
   private readonly maxActiveKeys: number;
+  private readonly revocationHistory: ApiKeyRevocationRecord[] = [];
 
   constructor(
     @InjectRepository(ApiKey)
@@ -218,11 +228,40 @@ export class ApiKeysService {
     };
   }
 
-  async revoke(userId: string, keyId: string): Promise<void> {
+  async revoke(
+    userId: string,
+    keyId: string,
+    revokedBy: string = userId,
+    reason?: string,
+  ): Promise<void> {
+    const revokedAt = new Date();
     await this.apiKeyRepo.update(
       { id: keyId, userId },
-      { revokedAt: new Date(), previousKeyHash: null, overlapUntil: null },
+      { revokedAt, previousKeyHash: null, overlapUntil: null },
     );
+
+    // Append-only audit record. Never store key hashes, raw keys, or tokens.
+    this.revocationHistory.push({
+      id: crypto.randomUUID(),
+      apiKeyId: keyId,
+      userId,
+      revokedBy,
+      revokedAt,
+      reason: reason ? reason.slice(0, 500) : null,
+    });
+  }
+
+  /**
+   * Return immutable revocation audit records for a key, scoped to the
+   * owning account. Callers must be authorized for `userId`.
+   */
+  async getRevocationHistory(
+    userId: string,
+    keyId: string,
+  ): Promise<ApiKeyRevocationRecord[]> {
+    return this.revocationHistory
+      .filter((record) => record.userId === userId && record.apiKeyId === keyId)
+      .map((record) => ({ ...record }));
   }
 
   async list(userId: string): Promise<ApiKey[]> {

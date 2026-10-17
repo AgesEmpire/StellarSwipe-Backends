@@ -609,3 +609,6 @@ MIT
 
 <!-- handsoff-issue-1277 -->
 - #1277: Add account-level limits for active API keys
+
+<!-- handsoff-issue-1278 -->
+- #1278: Add API key revocation audit history
