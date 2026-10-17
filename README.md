@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1294 -->
 - #1294: Prevent stale signal updates with version checks
+
+<!-- handsoff-issue-1295 -->
+- #1295: Add portfolio valuation freshness metadata

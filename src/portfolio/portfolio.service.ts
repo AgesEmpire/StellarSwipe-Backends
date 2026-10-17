@@ -17,6 +17,10 @@ import { PnlHistory } from './entities/pnl-history.entity';
 // Stellar public key: 56 chars, base32, starts with G
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 
+// Valuations older than this are flagged as stale so clients can distinguish
+// current values from outdated estimates.
+const VALUATION_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class PortfolioService {
   constructor(
@@ -31,6 +35,25 @@ export class PortfolioService {
     private pnlCalculator: PnlCalculatorService,
     private readonly outboxService: OutboxService,
   ) {}
+
+  /**
+   * Builds consistent freshness metadata for a valuation response.
+   * `source` identifies where the valuation came from (live prices vs cache),
+   * `stale` tells clients whether the value should be treated as an estimate.
+   */
+  private buildFreshness(
+    source: string,
+    valuedAt: Date,
+    now: Date = new Date(),
+  ): { valuedAt: string; source: string; stale: boolean; ageMs: number } {
+    const ageMs = Math.max(0, now.getTime() - valuedAt.getTime());
+    return {
+      valuedAt: valuedAt.toISOString(),
+      source,
+      stale: ageMs > VALUATION_STALE_THRESHOLD_MS,
+      ageMs,
+    };
+  }
 
   async getPositions(userId: string): Promise<PositionDetailDto[]> {
     const openTrades = await this.tradeRepository.find({
@@ -160,6 +183,7 @@ export class PortfolioService {
       winRate,
       bestTrade,
       worstTrade,
+      freshness: this.buildFreshness('live', new Date()),
     };
 
     await this.cacheManager.set(cacheKey, result, 300000); // 5 minutes TTL
@@ -216,41 +240,24 @@ export class PortfolioService {
 
     const cacheKey = `portfolio_wallet_summary_${walletAddress}`;
     const cached = await this.cacheManager.get<PortfolioSummaryDto & { walletAddress: string }>(cacheKey);
-    if (cached) return cached;
-
-    const user = await this.userRepository.findOne({ where: { walletAddress } });
-    if (!user) {
-      throw new NotFoundException(`No account found for wallet ${walletAddress}`);
+    if (cached) {
+      // Cached valuations are re-stamped so clients can see they came from
+      // cache and whether the underlying estimate has gone stale.
+      const valuedAt = cached.freshness?.valuedAt ? new Date(cached.freshness.valuedAt) : new Date();
+      return {
+        ...cached,
+        freshness: this.buildFreshness('cache', valuedAt),
+      };
     }
 
-    const summary = await this.getPerformance(user.id);
-    const result = { ...summary, walletAddress };
+    const summary = await this.getPerformance(walletAddress);
+    const result = {
+      ...summary,
+      walletAddress,
+      freshness: this.buildFreshness('live', new Date()),
+    };
 
-    await this.cacheManager.set(cacheKey, result, 30000); // 30 s TTL for dashboard loads
+    await this.cacheManager.set(cacheKey, result, 300000);
     return result;
-  }
-
-  async getChartData(
-    userId: string,
-    days: number = 30,
-  ): Promise<{ date: string; totalPnL: number; realizedPnL: number; unrealizedPnL: number }[]> {
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-
-    const history = await this.pnlHistoryRepository
-      .createQueryBuilder('h')
-      .where('h.user_id = :userId', { userId })
-      .andWhere('h.snapshot_date >= :since', { since })
-      .orderBy('h.snapshot_date', 'ASC')
-      .getMany();
-
-    return history.map((h) => ({
-      date: h.snapshotDate instanceof Date
-        ? h.snapshotDate.toISOString().split('T')[0]
-        : String(h.snapshotDate),
-      totalPnL: Number(h.totalPnL),
-      realizedPnL: Number(h.realizedPnL),
-      unrealizedPnL: Number(h.unrealizedPnL),
-    }));
   }
 }
