@@ -612,3 +612,6 @@ MIT
 
 <!-- handsoff-issue-1208 -->
 - #1208: Persist Horizon cursor checkpoints for resumable ingestion
+
+<!-- handsoff-issue-1214 -->
+- #1214: Redact sensitive fields from audit event payloads
