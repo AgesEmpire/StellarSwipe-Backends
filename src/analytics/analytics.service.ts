@@ -5,6 +5,7 @@ import { QueryFailedError, Repository, DataSource } from 'typeorm';
 import { MetricSnapshot, MetricPeriod } from './entities/metric-snapshot.entity';
 import { UserEvent, UserEventType } from './entities/user-event.entity';
 import { ReplicaLagService } from './replica-lag.service';
+import { sanitizeAndEscapeCsvCell } from '../common/utils/csv-sanitizer.util';
 
 export interface TrackEventInput {
   eventType: UserEventType;
@@ -172,21 +173,21 @@ export class AnalyticsService {
     const rows = snapshots.map(snapshot => {
       const activeUsers = this.resolveActiveUsers(snapshot);
       return [
-        snapshot.period,
-        snapshot.periodStart.toISOString(),
-        snapshot.periodEnd.toISOString(),
-        snapshot.timezone,
-        activeUsers,
-        snapshot.avgSessionSeconds,
-        snapshot.swipeToTradeConversion,
-        snapshot.mauRetention,
-        snapshot.avgEventsPerUser,
-        snapshot.totalSwipesRight,
-        snapshot.totalSwipesLeft,
-        snapshot.totalTrades,
-        snapshot.totalSignalViews,
-        snapshot.totalRevenue,
-        snapshot.revenuePerUser,
+        sanitizeAndEscapeCsvCell(snapshot.period),
+        sanitizeAndEscapeCsvCell(snapshot.periodStart.toISOString()),
+        sanitizeAndEscapeCsvCell(snapshot.periodEnd.toISOString()),
+        sanitizeAndEscapeCsvCell(snapshot.timezone),
+        sanitizeAndEscapeCsvCell(activeUsers),
+        sanitizeAndEscapeCsvCell(snapshot.avgSessionSeconds),
+        sanitizeAndEscapeCsvCell(snapshot.swipeToTradeConversion),
+        sanitizeAndEscapeCsvCell(snapshot.mauRetention),
+        sanitizeAndEscapeCsvCell(snapshot.avgEventsPerUser),
+        sanitizeAndEscapeCsvCell(snapshot.totalSwipesRight),
+        sanitizeAndEscapeCsvCell(snapshot.totalSwipesLeft),
+        sanitizeAndEscapeCsvCell(snapshot.totalTrades),
+        sanitizeAndEscapeCsvCell(snapshot.totalSignalViews),
+        sanitizeAndEscapeCsvCell(snapshot.totalRevenue),
+        sanitizeAndEscapeCsvCell(snapshot.revenuePerUser),
       ].join(',');
     });
 

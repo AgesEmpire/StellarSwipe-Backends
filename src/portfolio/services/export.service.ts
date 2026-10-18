@@ -13,6 +13,7 @@ import { RateLimitService } from '../../common/services/rate-limit.service';
 import { NotificationService } from '../../common/services/notification.service';
 import { User } from '../../users/entities/user.entity';
 import { PositionArchiveService } from './position-archive.service';
+import { sanitizeCsvCell } from '../../common/utils/csv-sanitizer.util';
 
 interface PositionExportData {
   date: Date;
@@ -159,15 +160,15 @@ export class ExportService {
 
             positions.forEach((pos) => {
                 csvStream.write({
-                    Date: pos.date.toISOString(),
-                    Asset: pos.asset,
-                    Action: pos.action.toUpperCase(),
-                    'Entry Price': pos.entryPrice,
-                    'Exit Price': pos.exitPrice || 'N/A',
-                    Quantity: pos.quantity,
-                    Fees: pos.fees,
-                    'P&L': pos.profitLoss || '0.00',
-                    Status: pos.status,
+                    Date: sanitizeCsvCell(pos.date.toISOString()),
+                    Asset: sanitizeCsvCell(pos.asset),
+                    Action: sanitizeCsvCell(pos.action.toUpperCase()),
+                    'Entry Price': sanitizeCsvCell(pos.entryPrice),
+                    'Exit Price': sanitizeCsvCell(pos.exitPrice || 'N/A'),
+                    Quantity: sanitizeCsvCell(pos.quantity),
+                    Fees: sanitizeCsvCell(pos.fees),
+                    'P&L': sanitizeCsvCell(pos.profitLoss || '0.00'),
+                    Status: sanitizeCsvCell(pos.status),
                 });
             });
             csvStream.end();

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PassThrough } from 'stream';
 import { Trade } from './entities/trade.entity';
+import { sanitizeCsvCell } from '../common/utils/csv-sanitizer.util';
 
 export interface TradeExportQueryDto {
   startDate?: string;
@@ -13,11 +14,11 @@ const CSV_COLUMNS = ['date', 'asset', 'side', 'quantity', 'price', 'fee', 'statu
 const BATCH_SIZE = 100;
 
 function escapeCsvCell(value: string | number | Date | null | undefined): string {
-  const str = value === null || value === undefined ? '' : String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
+  const safe = sanitizeCsvCell(value);
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return str;
+  return safe;
 }
 
 function tradeToRow(trade: Trade): string {

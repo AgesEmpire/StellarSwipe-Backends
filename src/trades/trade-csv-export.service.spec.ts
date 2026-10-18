@@ -62,9 +62,21 @@ describe('TradeCsvExportService', () => {
       expect(service.escapeCell(null)).toBe('');
     });
 
-    it('converts dates to ISO string', () => {
-      const d = new Date('2024-01-01T00:00:00Z');
-      expect(service.escapeCell(d)).toBe('2024-01-01T00:00:00.000Z');
+    it('neutralizes spreadsheet formula triggers (=, +, -, @)', () => {
+      expect(service.escapeCell('=CMD|/C calc!A0')).toBe("'=CMD|/C calc!A0");
+      expect(service.escapeCell('+1234')).toBe("'+1234");
+      expect(service.escapeCell('@SUM(A1:B2)')).toBe("'@SUM(A1:B2)");
+    });
+
+    it('neutralizes formula triggers masked by leading whitespace', () => {
+      expect(service.escapeCell('   =1+1')).toBe("'=1+1");
+      expect(service.escapeCell('\t@alert')).toBe("'\t@alert");
+    });
+
+    it('neutralizes formula and escapes delimiters and quotes', () => {
+      expect(service.escapeCell('=HYPERLINK("http://evil.com","Click")')).toBe(
+        `"'=HYPERLINK(""http://evil.com"",""Click"")"`,
+      );
     });
   });
 

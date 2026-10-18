@@ -1,5 +1,6 @@
 import { AuditLog } from '../../../audit-log/entities/audit-log.entity';
 import { AuditExportFormat } from '../dto/export-request.dto';
+import { sanitizeCsvCell } from '../../../common/utils/csv-sanitizer.util';
 
 export interface FormattedExport {
   content: string;
@@ -140,10 +141,11 @@ function formatAsPdf(logs: AuditLog[]): FormattedExport {
 }
 
 function escapeCsv(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const safe = sanitizeCsvCell(value);
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return value;
+  return safe;
 }
 
 function escapeHtml(value: string): string {
