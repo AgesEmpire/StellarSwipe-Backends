@@ -2,8 +2,10 @@ import { Body, Controller, HttpCode, HttpStatus, Post, ValidationPipe } from '@n
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { BatchOrderDto, BatchOrderResponseDto } from './dto/batch-order.dto';
 import { BatchOrderService } from './batch-order.service';
+import { RejectDuplicateJsonKeys } from '../common/decorators/reject-duplicate-json-keys.decorator';
 
 @ApiTags('trades')
+@RejectDuplicateJsonKeys()
 @Controller('trades/batch')
 export class BatchOrderController {
   constructor(private readonly batchOrderService: BatchOrderService) {}

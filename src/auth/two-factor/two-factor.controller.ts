@@ -19,12 +19,14 @@ import {
   RateLimit,
   RateLimitTier,
 } from '../../common/decorators/rate-limit.decorator';
+import { RejectDuplicateJsonKeys } from '../../common/decorators/reject-duplicate-json-keys.decorator';
 
 interface AuthenticatedRequest extends Request {
   user: { id: string; email: string };
 }
 
 @Controller('auth/2fa')
+@RejectDuplicateJsonKeys()
 @UseGuards(JwtAuthGuard)
 export class TwoFactorController {
   constructor(

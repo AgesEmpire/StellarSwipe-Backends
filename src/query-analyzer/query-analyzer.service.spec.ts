@@ -248,7 +248,39 @@ describe('QueryAnalyzerService', () => {
 
       const result = await service.submitBulk(dto);
       expect(result.submitted).toBe(2);
+      expect(result.failed).toBe(0);
       expect(result.ids).toHaveLength(2);
+      expect(result.results).toEqual([
+        { index: 0, status: 'submitted', id: 'sq-1' },
+        { index: 1, status: 'submitted', id: 'sq-2' },
+      ]);
+    });
+
+    it('isolates a failing query and reports it at its own index (#1382) instead of dropping it', async () => {
+      slowQueryRepo.findOne.mockResolvedValue(null);
+      slowQueryRepo.save
+        .mockResolvedValueOnce(makeSlowQuery({ id: 'sq-1' }))
+        .mockRejectedValueOnce(new Error('query text exceeds maximum length'))
+        .mockResolvedValueOnce(makeSlowQuery({ id: 'sq-3' }));
+
+      const dto: BulkQueryIngestionDto = {
+        queries: [
+          { query: 'SELECT 1', executionTime: 100 },
+          { query: 'SELECT 2', executionTime: 200 },
+          { query: 'SELECT 3', executionTime: 300 },
+        ],
+      };
+
+      const result = await service.submitBulk(dto);
+
+      expect(result.submitted).toBe(2);
+      expect(result.failed).toBe(1);
+      expect(result.ids).toEqual(['sq-1', 'sq-3']);
+      expect(result.results).toEqual([
+        { index: 0, status: 'submitted', id: 'sq-1' },
+        { index: 1, status: 'failed', error: 'query text exceeds maximum length' },
+        { index: 2, status: 'submitted', id: 'sq-3' },
+      ]);
     });
   });
 

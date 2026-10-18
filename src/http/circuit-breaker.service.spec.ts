@@ -137,6 +137,123 @@ describe('CircuitBreakerService', () => {
     });
   });
 
+  describe('HALF_OPEN probe concurrency limit (#1375)', () => {
+    async function openCircuit(name: string, opts: any) {
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
+      for (let i = 0; i < opts.failureThreshold; i++) {
+        await expect(service.execute(name, fn, opts)).rejects.toThrow();
+      }
+      // Backdate so the next call is eligible to probe.
+      const circuit = (service as any).circuits.get(name);
+      circuit.openedAt = new Date(Date.now() - opts.recoveryTimeMs - 1000);
+    }
+
+    it('rejects extra concurrent probes beyond halfOpenMaxProbes', async () => {
+      const opts = { failureThreshold: 2, recoveryTimeMs: 1000, halfOpenMaxProbes: 1 };
+      await openCircuit('svc', opts);
+
+      let releaseFirstProbe: () => void;
+      const firstProbe = new Promise<string>((resolve) => {
+        releaseFirstProbe = () => resolve('first-ok');
+      });
+      const slowFn = jest.fn().mockReturnValue(firstProbe);
+
+      // First call transitions OPEN → HALF_OPEN and occupies the single probe slot.
+      const firstCall = service.execute('svc', slowFn, opts);
+
+      // A second concurrent call arrives while the first probe is still in flight.
+      const fastFn = jest.fn().mockResolvedValue('second');
+      await expect(service.execute('svc', fastFn, opts)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(fastFn).not.toHaveBeenCalled();
+
+      releaseFirstProbe();
+      await expect(firstCall).resolves.toBe('first-ok');
+    });
+
+    it('allows up to halfOpenMaxProbes concurrent probes', async () => {
+      const opts = { failureThreshold: 2, recoveryTimeMs: 1000, halfOpenMaxProbes: 2 };
+      await openCircuit('svc2', opts);
+
+      let resolveA: () => void;
+      let resolveB: () => void;
+      const probeA = new Promise<string>((r) => (resolveA = () => r('a')));
+      const probeB = new Promise<string>((r) => (resolveB = () => r('b')));
+
+      const callA = service.execute('svc2', () => probeA, opts);
+      const callB = service.execute('svc2', () => probeB, opts);
+
+      // A third concurrent call should now be rejected.
+      const thirdFn = jest.fn().mockResolvedValue('c');
+      await expect(service.execute('svc2', thirdFn, opts)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(thirdFn).not.toHaveBeenCalled();
+
+      resolveA();
+      resolveB();
+      await expect(callA).resolves.toBe('a');
+      await expect(callB).resolves.toBe('b');
+    });
+
+    it('frees the probe slot after a probe fails, allowing the next probe through', async () => {
+      const opts = { failureThreshold: 2, recoveryTimeMs: 1000, halfOpenMaxProbes: 1, successThreshold: 1 };
+      await openCircuit('svc3', opts);
+
+      const failingProbe = jest.fn().mockRejectedValue(new Error('still down'));
+      await expect(service.execute('svc3', failingProbe, opts)).rejects.toThrow('still down');
+      expect(service.getState('svc3')).toBe(CircuitState.OPEN);
+
+      // Backdate again so a fresh probe is eligible.
+      const circuit = (service as any).circuits.get('svc3');
+      circuit.openedAt = new Date(Date.now() - opts.recoveryTimeMs - 1000);
+
+      const recoveringFn = jest.fn().mockResolvedValue('ok');
+      await expect(service.execute('svc3', recoveringFn, opts)).resolves.toBe('ok');
+      expect(service.getState('svc3')).toBe(CircuitState.CLOSED);
+    });
+  });
+
+  describe('manual reset audit trail (#1375)', () => {
+    it('records the actor and previous state on manual reset', async () => {
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
+      for (let i = 0; i < 5; i++) {
+        await expect(service.execute('svc-audit', fn)).rejects.toThrow();
+      }
+      expect(service.getState('svc-audit')).toBe(CircuitState.OPEN);
+
+      service.reset('svc-audit', 'admin-123');
+
+      const log = service.getAuditLog('svc-audit');
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({
+        circuit: 'svc-audit',
+        action: 'MANUAL_RESET',
+        actor: 'admin-123',
+        previousState: CircuitState.OPEN,
+      });
+      expect(log[0].at).toBeInstanceOf(Date);
+    });
+
+    it('defaults actor to "unknown" when not provided', () => {
+      service.reset('svc-audit-2');
+      expect(service.getAuditLog('svc-audit-2')[0].actor).toBe('unknown');
+    });
+
+    it('returns entries most-recent-first and filters by circuit name', () => {
+      service.reset('svc-x', 'alice');
+      service.reset('svc-y', 'bob');
+      service.reset('svc-x', 'carol');
+
+      const all = service.getAuditLog();
+      expect(all[0]).toMatchObject({ circuit: 'svc-x', actor: 'carol' });
+
+      const xOnly = service.getAuditLog('svc-x');
+      expect(xOnly.map((e) => e.actor)).toEqual(['carol', 'alice']);
+    });
+  });
+
   describe('getAllStats', () => {
     it('returns stats for all circuits', async () => {
       const fn = jest.fn().mockResolvedValue('ok');

@@ -15,6 +15,7 @@ import { HorizonStreamService } from './services/horizon-stream.service';
 import { EventProcessorService } from './services/event-processor.service';
 import { StellarIntegrationService } from './services/stellar-integration.service';
 import { StellarProviderService } from './services/stellar-provider.service';
+import { HorizonEndpointSelectorService } from './services/horizon-endpoint-selector.service';
 import { WalletBalanceSyncJob } from './jobs/wallet-balance-sync.job';
 import { User } from '../users/entities/user.entity';
 import { OnChainEvent } from './entities/on-chain-event.entity';
@@ -60,6 +61,7 @@ import { HttpRetryModule } from '../http/http.module';
     EventProcessorService,
     StellarIntegrationService,
     StellarProviderService,
+    HorizonEndpointSelectorService,
     WalletBalanceSyncJob,
     OnChainSyncService,
     OnChainSyncJob,
@@ -77,6 +79,7 @@ import { HttpRetryModule } from '../http/http.module';
     EventProcessorService,
     StellarIntegrationService,
     StellarProviderService,
+    HorizonEndpointSelectorService,
     WalletBalanceSyncJob,
     OnChainSyncService,
     TransactionAttemptService,

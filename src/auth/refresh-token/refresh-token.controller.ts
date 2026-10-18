@@ -1,5 +1,6 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { RefreshTokenService } from './refresh-token.service';
+import { RejectDuplicateJsonKeys } from '../../common/decorators/reject-duplicate-json-keys.decorator';
 
 class IssueTokenDto {
   userId: string;
@@ -14,6 +15,7 @@ class RevokeTokenDto {
 }
 
 @Controller('auth/refresh-token')
+@RejectDuplicateJsonKeys()
 export class RefreshTokenController {
   constructor(private readonly refreshTokenService: RefreshTokenService) {}
 

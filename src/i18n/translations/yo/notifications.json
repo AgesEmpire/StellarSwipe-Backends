@@ -21,5 +21,17 @@
     "PAYMENT_SCHEDULED": "Isanwo rẹ ti ṣeto fun {date}",
     "PAYMENT_EXECUTED": "Isanwo ti ṣeto rẹ ti ṣe",
     "PAYMENT_CANCELLED": "Isanwo ti ṣeto rẹ ti fagile",
-    "PAYMENT_REMINDER": "Iranti: O ni isanwo ti ṣeto fun {date}"
+    "PAYMENT_REMINDER": "Iranti: O ni isanwo ti ṣeto fun {date}",
+    "SUBSCRIPTION_CREATED_TITLE": "Ṣiṣe alabapin ti ṣiṣẹ",
+    "SUBSCRIPTION_CREATED_MESSAGE": "Alabapin rẹ si {tier} ti bẹrẹ ṣiṣẹ.",
+    "SUBSCRIPTION_CANCELLED_TITLE": "Alabapin ti fagile",
+    "SUBSCRIPTION_CANCELLED_MESSAGE": "Alabapin rẹ si {tier} ti fagile.",
+    "SUBSCRIPTION_PAUSED_TITLE": "Alabapin ti da duro",
+    "SUBSCRIPTION_PAUSED_MESSAGE": "Isọdọtun alabapin rẹ si {tier} ti da duro. Wiwọle yoo tẹsiwaju titi di {date}.",
+    "SUBSCRIPTION_RESUMED_TITLE": "Alabapin ti pada bẹrẹ",
+    "SUBSCRIPTION_RESUMED_MESSAGE": "Isọdọtun alabapin rẹ si {tier} ti pada bẹrẹ.",
+    "SUBSCRIPTION_RENEWED_TITLE": "Alabapin ti sọdọtun",
+    "SUBSCRIPTION_RENEWED_MESSAGE": "Alabapin rẹ si {tier} ti sọdọtun titi di {date}.",
+    "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Isanwo isọdọtun kuna",
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "A ko le sọdọtun alabapin rẹ si {tier} (igbiyanju {attempt}). Jọwọ ṣe imudojuiwọn ọna isanwo rẹ."
 }

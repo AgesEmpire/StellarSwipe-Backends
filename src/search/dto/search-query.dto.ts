@@ -4,13 +4,16 @@ import {
   IsArray,
   IsInt,
   IsEnum,
+  IsDateString,
   Min,
   Max,
+  ArrayMaxSize,
   ValidateNested,
   IsNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { MAX_FILTER_VALUES_PER_FIELD } from '../utils/search-filter-validator';
 
 export enum SearchSortType {
   RELEVANCE = 'relevance',
@@ -20,11 +23,11 @@ export enum SearchSortType {
 
 export class DateRangeDto {
   @ApiProperty({ example: '2026-01-01' })
-  @IsString()
+  @IsDateString()
   from: string;
 
   @ApiProperty({ example: '2026-01-31' })
-  @IsString()
+  @IsDateString()
   to: string;
 }
 
@@ -35,6 +38,7 @@ export class SearchFiltersDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(MAX_FILTER_VALUES_PER_FIELD)
   @IsString({ each: true })
   assetPair?: string[];
 
@@ -63,6 +67,7 @@ export class SearchFiltersDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(MAX_FILTER_VALUES_PER_FIELD)
   @IsString({ each: true })
   action?: string[];
 
@@ -72,6 +77,7 @@ export class SearchFiltersDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(MAX_FILTER_VALUES_PER_FIELD)
   @IsString({ each: true })
   providerId?: string[];
 }

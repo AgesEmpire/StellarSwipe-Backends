@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { SignatureGeneratorService, WebhookSecretState } from './signature-generator.service';
+import {
+  SignatureGeneratorService,
+  WebhookSecretState,
+  parseVersionedSignature,
+} from './signature-generator.service';
 
 describe('SignatureGeneratorService', () => {
   let service: SignatureGeneratorService;
@@ -126,6 +130,73 @@ describe('SignatureGeneratorService', () => {
       const isValid = service.verifyWebhookSignature(payload, webhook, wrongSignature);
 
       expect(isValid).toBe(false);
+    });
+  });
+
+  describe('signing algorithm version negotiation', () => {
+    it('tags the outbound header with the current signing version', () => {
+      const payload = { event: 'test.event' };
+      const secret = service.generateSecret();
+
+      const header = service.generateVersionedSignatureHeader(payload, secret);
+
+      expect(header).toMatch(/^v1=[a-f0-9]+$/);
+    });
+
+    it('verifies a v1 (sha256) versioned signature', () => {
+      const payload = { event: 'test.event' };
+      const secret = service.generateSecret();
+
+      const header = service.generateVersionedSignatureHeader(payload, secret, 'v1');
+
+      expect(service.verifySignature(payload, secret, header)).toBe(true);
+    });
+
+    it('verifies a v2 (sha512) versioned signature', () => {
+      const payload = { event: 'test.event' };
+      const secret = service.generateSecret();
+
+      const header = service.generateVersionedSignatureHeader(payload, secret, 'v2');
+
+      expect(header).toMatch(/^v2=[a-f0-9]+$/);
+      expect(service.verifySignature(payload, secret, header)).toBe(true);
+    });
+
+    it('verifies the legacy unversioned sha256=<hex> format as v1', () => {
+      const payload = { event: 'test.event' };
+      const secret = service.generateSecret();
+      const legacySignature = `sha256=${service.generateSignature(payload, secret, 'v1')}`;
+
+      expect(service.verifySignature(payload, secret, legacySignature)).toBe(true);
+    });
+
+    it('fails safely (returns false, does not throw) for an unsupported version', () => {
+      const payload = { event: 'test.event' };
+      const secret = service.generateSecret();
+      const unsupportedVersionHeader = `v99=${service.generateSignature(payload, secret, 'v1')}`;
+
+      expect(() => service.verifySignature(payload, secret, unsupportedVersionHeader)).not.toThrow();
+      expect(service.verifySignature(payload, secret, unsupportedVersionHeader)).toBe(false);
+    });
+
+    it('fails safely for a malformed signature value', () => {
+      expect(() => service.verifySignature({ a: 1 }, 'secret', 'not-a-signature!!')).not.toThrow();
+      expect(service.verifySignature({ a: 1 }, 'secret', 'not-a-signature!!')).toBe(false);
+      expect(service.verifySignature({ a: 1 }, 'secret', '')).toBe(false);
+    });
+
+    it('rejects a v2 signature when verified against a v1-generated digest', () => {
+      const payload = { event: 'test.event' };
+      const secret = service.generateSecret();
+      const v1Digest = service.generateSignature(payload, secret, 'v1');
+      const mislabeledAsV2 = `v2=${v1Digest}`;
+
+      expect(service.verifySignature(payload, secret, mislabeledAsV2)).toBe(false);
+    });
+
+    it('parseVersionedSignature rejects unknown versions', () => {
+      expect(parseVersionedSignature('v3=abcdef12')).toBeNull();
+      expect(parseVersionedSignature('v1=abcdef12')).toEqual({ version: 'v1', hex: 'abcdef12' });
     });
   });
 

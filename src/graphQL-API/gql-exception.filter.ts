@@ -54,6 +54,7 @@ function httpStatusToGqlCode(status: number): string {
     401: 'UNAUTHENTICATED',
     403: 'FORBIDDEN',
     404: 'NOT_FOUND',
+    408: 'REQUEST_TIMEOUT',
     409: 'CONFLICT',
     422: 'UNPROCESSABLE_ENTITY',
     429: 'RATE_LIMITED',
