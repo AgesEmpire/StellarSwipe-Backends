@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
-import { FeesService } from './fees.service';
+import { FeesService, STAKING_STATUS_SERVICE } from './fees.service';
 import { FeeTransaction, FeeStatus, FeeTier } from './entities/fee-transaction.entity';
 import { FeeManagerService } from './fee-manager.service';
 
