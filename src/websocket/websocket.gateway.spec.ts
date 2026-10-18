@@ -16,6 +16,7 @@ describe('WebsocketGateway', () => {
     getUserRoom: jest.Mock;
     registerClient: jest.Mock;
     unregisterClient: jest.Mock;
+    enforceConnectionLimit: jest.Mock;
   };
 
   beforeEach(() => {
@@ -31,6 +32,7 @@ describe('WebsocketGateway', () => {
       getUserRoom: jest.fn((userId: string) => `user:${userId}`),
       registerClient: jest.fn(),
       unregisterClient: jest.fn(),
+      enforceConnectionLimit: jest.fn().mockResolvedValue(true),
     };
 
     gateway = new WebsocketGateway(
@@ -71,6 +73,10 @@ describe('WebsocketGateway', () => {
     await gateway.handleConnection(client);
 
     expect(wsJwtGuard.validateSocket).toHaveBeenCalledWith(client);
+    expect(socketManager.enforceConnectionLimit).toHaveBeenCalledWith(
+      'user-1',
+      client,
+    );
     expect(socketManager.getUserRoom).toHaveBeenCalledWith('user-1');
     expect(client.join).toHaveBeenNthCalledWith(1, 'user:user-1');
     expect(client.join).toHaveBeenNthCalledWith(2, SocketRoom.SIGNALS_FEED);
@@ -96,6 +102,24 @@ describe('WebsocketGateway', () => {
     expect(socketManager.registerClient).not.toHaveBeenCalled();
     expect(client.disconnect).not.toHaveBeenCalled();
     expect(client.emit).not.toHaveBeenCalled();
+  });
+
+  it('closes the socket with 4008 when the account is at its connection cap (issue #1386)', async () => {
+    const client = makeSocket();
+    socketManager.enforceConnectionLimit.mockResolvedValue(false);
+
+    await gateway.handleConnection(client);
+
+    expect(socketManager.enforceConnectionLimit).toHaveBeenCalledWith(
+      'user-1',
+      client,
+    );
+    expect(client.rawClose).toHaveBeenCalledWith(
+      4008,
+      'Connection limit exceeded',
+    );
+    expect(client.join).not.toHaveBeenCalled();
+    expect(socketManager.registerClient).not.toHaveBeenCalled();
   });
 
   it('falls back to Socket.IO disconnect when the raw websocket is unavailable', async () => {

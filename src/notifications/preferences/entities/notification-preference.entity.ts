@@ -60,6 +60,22 @@ export class NotificationPreference {
   @Column({ name: 'thresholds', type: 'jsonb', nullable: true })
   thresholds?: Partial<Record<'tradeUpdates' | 'signalPerformance' | 'systemAlerts' | 'marketing', number>>;
 
+  // Scheduled digest for low-priority notifications (signal/price updates, marketing).
+  // Urgent notifications (trades, KYC, risk/balance alerts) always bypass the digest.
+  @Column({ name: 'digest_enabled', default: true })
+  digestEnabled: boolean;
+
+  @Column({ name: 'digest_frequency', type: 'varchar', length: 10, default: 'daily' })
+  digestFrequency: 'hourly' | 'daily';
+
+  // Hour of day (0-23), in `timezone`, at which a 'daily' digest is sent. Ignored for 'hourly'.
+  @Column({ name: 'digest_hour', type: 'int', default: 9 })
+  digestHour: number;
+
+  // Locale used to render digest (and other templated) notification content.
+  @Column({ name: 'locale', type: 'varchar', length: 10, default: 'en' })
+  locale: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

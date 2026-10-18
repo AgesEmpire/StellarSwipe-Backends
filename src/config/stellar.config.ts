@@ -15,6 +15,16 @@ export const stellarConfig = registerAs(
       (isPublic
         ? 'https://horizon.stellar.org'
         : 'https://horizon-testnet.stellar.org');
+
+    // #1373 — Additional Horizon endpoints to fail over to when the primary
+    // is unhealthy, e.g. "https://horizon-2.example.org,https://horizon-3.example.org".
+    // `horizonUrl` is always the first candidate so existing single-endpoint
+    // deployments keep working unchanged.
+    const extraHorizonUrls = (process.env.STELLAR_HORIZON_URLS || '')
+      .split(',')
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0 && url !== horizonUrl);
+    const horizonUrls = [horizonUrl, ...extraHorizonUrls];
     const sorobanRpcUrl =
       process.env.STELLAR_SOROBAN_RPC_URL ||
       (isPublic
@@ -29,6 +39,7 @@ export const stellarConfig = registerAs(
     return {
       network,
       horizonUrl,
+      horizonUrls,
       sorobanRpcUrl,
       networkPassphrase,
       apiTimeout: parseInt(process.env.STELLAR_API_TIMEOUT || '30000', 10),

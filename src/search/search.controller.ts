@@ -20,6 +20,7 @@ import { SignalIndexerService } from './indexers/signal-indexer.service';
 import { ProviderIndexerService } from './indexers/provider-indexer.service';
 import { ContentIndexerService } from './indexers/content-indexer.service';
 import { SearchAnalyticsService } from './services/search-analytics.service';
+import { BulkIndexResult } from './utils/bulk-index-result.util';
 import {
   SearchQueryDto,
   AutocompleteQueryDto,
@@ -74,33 +75,40 @@ export class SearchController {
   @ApiOperation({ summary: 'Reindex all signals' })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Signals reindexed successfully',
+    description: 'Per-document signal reindex outcome (partial failures are reported, not swallowed)',
   })
-  async reindexSignals(): Promise<{ message: string }> {
-    await this.signalIndexerService.reindexAll();
-    return { message: 'Signals reindexed successfully' };
+  async reindexSignals(): Promise<{ message: string } & BulkIndexResult> {
+    const result = await this.signalIndexerService.reindexAll();
+    return { message: this.describeReindexOutcome(result), ...result };
   }
 
   @Post('reindex/providers')
   @ApiOperation({ summary: 'Reindex all providers' })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Providers reindexed successfully',
+    description: 'Per-document provider reindex outcome (partial failures are reported, not swallowed)',
   })
-  async reindexProviders(): Promise<{ message: string }> {
-    await this.providerIndexerService.reindexAll();
-    return { message: 'Providers reindexed successfully' };
+  async reindexProviders(): Promise<{ message: string } & BulkIndexResult> {
+    const result = await this.providerIndexerService.reindexAll();
+    return { message: this.describeReindexOutcome(result), ...result };
   }
 
   @Post('reindex/content')
   @ApiOperation({ summary: 'Reindex all content' })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Content reindexed successfully',
+    description: 'Per-document content reindex outcome (partial failures are reported, not swallowed)',
   })
-  async reindexContent(): Promise<{ message: string }> {
-    await this.contentIndexerService.reindexAll();
-    return { message: 'Content reindexed successfully' };
+  async reindexContent(): Promise<{ message: string } & BulkIndexResult> {
+    const result = await this.contentIndexerService.reindexAll();
+    return { message: this.describeReindexOutcome(result), ...result };
+  }
+
+  private describeReindexOutcome(result: BulkIndexResult): string {
+    if (result.failed.length === 0) {
+      return `Reindexed ${result.succeeded.length}/${result.total} document(s) successfully`;
+    }
+    return `Reindexed ${result.succeeded.length}/${result.total} document(s); ${result.failed.length} failed`;
   }
 
   @Get('analytics/popular')

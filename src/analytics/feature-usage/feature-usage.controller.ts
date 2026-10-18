@@ -3,6 +3,7 @@ import { FeatureTrackerService } from './feature-tracker.service';
 import {
   TrackFeatureUsageDto,
   BulkTrackFeatureUsageDto,
+  BulkTrackFeatureUsageResponseDto,
   GetFeatureMetricsDto,
   GetFeatureRankingDto,
 } from './dto/feature-metrics.dto';
@@ -37,7 +38,7 @@ export class FeatureUsageController {
   @Post('track/bulk')
   async trackBulk(
     @Body() dto: BulkTrackFeatureUsageDto,
-  ): Promise<{ tracked: number }> {
+  ): Promise<BulkTrackFeatureUsageResponseDto> {
     return this.featureTrackerService.trackBulk(dto);
   }
 

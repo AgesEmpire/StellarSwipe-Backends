@@ -9,8 +9,10 @@ import { RateLimit, RateLimitTier } from '../../common/decorators/rate-limit.dec
 import { SwipeService } from './swipe.service';
 import { SwipeIntentDto } from './dto/swipe-intent.dto';
 import { OrchestratorResult } from '../services/trade-execution-orchestrator.service';
+import { RejectDuplicateJsonKeys } from '../../common/decorators/reject-duplicate-json-keys.decorator';
 
 @Controller('trades/swipe')
+@RejectDuplicateJsonKeys()
 export class SwipeController {
   constructor(private readonly swipeService: SwipeService) {}
 

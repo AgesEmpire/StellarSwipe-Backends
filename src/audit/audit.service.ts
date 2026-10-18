@@ -44,6 +44,16 @@ export const SENSITIVE_AUDIT_FIELDS: readonly string[] = [
   'x-csrf-token',
   'x-xsrf-token',
   'proxy-authorization',
+  // Personal data
+  'ssn',
+  'socialsecuritynumber',
+  'social_security_number',
+  'creditcard',
+  'credit_card',
+  'cardnumber',
+  'card_number',
+  'cvv',
+  'cvc',
 ];
 
 const REDACTED = '[REDACTED]';
@@ -62,6 +72,8 @@ export function isSensitiveAuditField(field: string): boolean {
 /**
  * Recursively redacts sensitive fields from arbitrary audit payloads.
  * Nested objects and arrays are traversed; primitives are returned as-is.
+ * Non-sensitive context fields and the overall structure are preserved so
+ * audit events remain useful.
  */
 export function redactAuditPayload<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -193,8 +205,13 @@ export class AuditService {
     return saved;
   }
 
+  /**
+   * Returns all audit events with sensitive payload fields redacted so that
+   * exported/returned data never leaks secrets or personal data.
+   */
   async findAll(): Promise<AuditEvent[]> {
-    return this.auditRepository.find();
+    const events = await this.auditRepository.find();
+    return events.map((event) => this.redactEvent(event));
   }
 
   /**
@@ -225,10 +242,25 @@ export class AuditService {
 
     const rows = await qb.getMany();
     const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
+    const items = (hasMore ? rows.slice(0, limit) : rows).map((event) =>
+      this.redactEvent(event),
+    );
     const nextCursor =
       hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]) : null;
 
     return { items, nextCursor, hasMore };
+  }
+
+  /**
+   * Applies the redaction policy to a persisted audit event's payloads so
+   * that reads and exports never surface sensitive fields.
+   */
+  private redactEvent(event: AuditEvent): AuditEvent {
+    return {
+      ...event,
+      request: redactAuditPayload(event.request),
+      entity: redactAuditPayload(event.entity),
+      metadata: redactAuditPayload(event.metadata),
+    };
   }
 }

@@ -116,6 +116,47 @@ Limits are read per provider name (upper-cased, non-alphanumerics replaced with
 A warning is logged on every rejection, and `ProviderConcurrencyService.getAllMetrics()`
 reports active, queued and rejected counts per provider.
 
+## Shared Retry Budgets (Issue #1376)
+
+Per-call `maxAttempts` bounds how many times *one* request retries, but it does not
+stop many independent callers from each retrying at the same time against a degraded
+provider — that pile-up is a retry storm. `RetryBudgetService`
+(`src/http/retry-budget.service.ts`) adds a shared token-bucket budget on top of
+`maxAttempts`, keyed by `provider` (or `"default"` when no provider is set), so the
+*rate* of retries against a given dependency is bounded across every caller sharing it:
+
+```typescript
+await this.httpRetry.get(url, { params }, { provider: 'coingecko' });
+```
+
+When the bucket for a key is empty, the next retry is skipped and the caller's
+in-flight error is thrown immediately instead of being queued for another delayed
+attempt — the same fail-fast behavior as a saturated provider bulkhead. Tokens refill
+continuously (default: burst of 10, refilling at 2/sec), so normal transient-failure
+retries are unaffected; only a sustained storm exhausts the budget.
+
+`RetryBudgetService` is an optional dependency of `HttpRetryService` — omitting it
+from a module's providers preserves the previous per-call-only retry behavior.
+
+## Per-Provider Rate Limit (429) Handling (Issue #1374)
+
+When a provider responds `429 Too Many Requests` with a `Retry-After` header (either
+delay-seconds or an HTTP-date, per RFC 7231 §7.1.3), that hint is used for the next
+retry's delay instead of the exponential backoff formula — the provider knows its own
+rate-limit window better than we can guess. The honored delay is clamped to a
+provider-specific cap so a misbehaving or malicious response can't force an
+arbitrarily long wait:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OUTBOUND_<PROVIDER>_MAX_RETRY_AFTER_MS` | `OUTBOUND_DEFAULT_MAX_RETRY_AFTER_MS` | Max ms a `Retry-After` hint may push a retry out to |
+| `OUTBOUND_DEFAULT_MAX_RETRY_AFTER_MS` | `30000` | Default cap for any provider |
+
+A 429 without a usable `Retry-After` header, or any other retryable status, continues
+to use the standard exponential backoff described above. Non-retryable responses
+(permanent failures such as 400/401/403/404/422) are never retried regardless of any
+rate-limit header present.
+
 ## Security Notes
 
 - **401 / 403 are never retried** — retrying auth failures would mask misconfigured credentials and could trigger account lockouts on third-party APIs.

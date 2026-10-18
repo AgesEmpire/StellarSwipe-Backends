@@ -20,17 +20,14 @@ import {
 } from './entities/user-subscription.entity';
 import { PaymentProcessorService } from './services/payment-processor.service';
 import { AccessControlService } from './services/access-control.service';
-import {
-  SubscriptionChangeNotifierService,
-  TierSnapshot,
-} from './services/subscription-change-notifier.service';
+import { ProviderProfileService } from './services/provider-profile.service';
+import { SubscriptionNotificationService } from './services/subscription-notification.service';
 import { CreateTierDto, UpdateTierDto } from './dto/create-tier.dto';
 import {
   SubscribeDto,
   CancelSubscriptionDto,
   RenewSubscriptionDto,
 } from './dto/subscribe.dto';
-import { User } from '../users/entities/user.entity';
 
 /** Maximum consecutive payment failures before access is suspended */
 const MAX_PAYMENT_FAILURES = 3;
@@ -50,6 +47,8 @@ export class SubscriptionsService {
     private readonly subscriptionRepo: Repository<UserSubscription>,
     private readonly paymentProcessor: PaymentProcessorService,
     private readonly accessControl: AccessControlService,
+    private readonly providerProfileService: ProviderProfileService,
+    private readonly notificationService: SubscriptionNotificationService,
     private readonly dataSource: DataSource,
     private readonly changeNotifier: SubscriptionChangeNotifierService,
   ) {}
@@ -245,11 +244,12 @@ export class SubscriptionsService {
   ): Promise<UserSubscription> {
     const tier = await this.getTierOrFail(dto.tierId);
 
-    if (!tier.active || !tier.acceptingNewSubscribers) {
-      throw new BadRequestException(
-        'This subscription tier is not currently accepting new subscribers',
-      );
-    }
+    // Validate the provider profile and that the plan metadata is current
+    const providerProfile = await this.providerProfileService.loadProviderProfile(
+      tier.providerId,
+    );
+    this.providerProfileService.assertProviderOperational(providerProfile);
+    this.providerProfileService.assertPlanCurrent(tier, true);
 
     // Prevent duplicate active subscriptions to the same tier
     const existing = await this.subscriptionRepo.findOne({
@@ -265,22 +265,15 @@ export class SubscriptionsService {
 
     // For FREE tiers we skip payment verification
     if (tier.level !== TierLevel.FREE) {
-      // Load provider wallet from their user record
-      const providerUser = await this.tierRepo.manager.findOne(User, {
-        where: { id: tier.providerId },
-      });
-
-      const providerWallet = providerUser?.walletAddress;
-
-      if (!providerWallet) {
-        throw new BadRequestException('Provider wallet not found');
+      if (!providerProfile.walletAddress) {
+        throw new BadRequestException('Provider wallet address is not configured');
       }
 
       const verification = await this.paymentProcessor.verifySubscriptionPayment(
         dto.stellarTxHash,
         tier.price,
         dto.subscriberWallet,
-        providerWallet,
+        providerProfile.walletAddress,
       );
 
       if (!verification.valid) {
@@ -297,20 +290,12 @@ export class SubscriptionsService {
     const now = new Date();
     const periodEnd = new Date(now.getTime() + BILLING_CYCLE_DAYS * 86_400_000);
 
-    return this.dataSource.transaction(async (manager) => {
-      // Find and cache provider wallet for future renewals
-      const providerUser = await manager.findOne(User, {
-        where: { id: tier.providerId },
-      });
-
+    const saved = await this.dataSource.transaction(async (manager) => {
       const subscription = manager.create(UserSubscription, {
         userId,
         tierId: tier.id,
         providerId: tier.providerId,
-        status:
-          tier.level === TierLevel.FREE
-            ? SubscriptionStatus.ACTIVE
-            : SubscriptionStatus.ACTIVE,
+        status: SubscriptionStatus.ACTIVE,
         amountPaid: tier.price,
         platformCommission,
         providerEarnings,
@@ -320,13 +305,13 @@ export class SubscriptionsService {
         periodEnd,
         renewsAt: new Date(periodEnd.getTime() - RENEWAL_NOTIFICATION_DAYS * 86_400_000),
         subscriberWallet: dto.subscriberWallet,
-        providerWallet: providerUser?.walletAddress ?? '',
+        providerWallet: providerProfile.walletAddress ?? '',
         autoRenew: dto.autoRenew ?? true,
         renewalCount: 0,
         paymentFailureCount: 0,
       });
 
-      const saved = await manager.save(UserSubscription, subscription);
+      const created = await manager.save(UserSubscription, subscription);
 
       // Increment subscriber count and accumulate revenue on the tier
       const newTotal = new Big(tier.totalRevenue).plus(new Big(tier.price)).toFixed(7);
@@ -336,11 +321,19 @@ export class SubscriptionsService {
       });
 
       this.logger.log(
-        `User ${userId} subscribed to tier ${tier.id} (${tier.name}) – sub id: ${saved.id}`,
+        `User ${userId} subscribed to tier ${tier.id} (${tier.name}) – sub id: ${created.id}`,
       );
 
-      return saved;
+      return created;
     });
+
+    // Emit the lifecycle notification after the transaction commits
+    await this.safeNotify(
+      () => this.notificationService.notifyCreated(saved, tier.name),
+      `subscription created ${saved.id}`,
+    );
+
+    return saved;
   }
 
   /**
@@ -384,6 +377,101 @@ export class SubscriptionsService {
     Object.assign(sub, updates);
     const saved = await this.subscriptionRepo.save(sub);
     this.logger.log(`Subscription ${subscriptionId} cancelled (immediate=${dto.immediate})`);
+
+    await this.safeNotify(
+      () =>
+        this.notificationService.notifyCancelled(saved, {
+          tierName: sub.tier?.name,
+          immediate: dto.immediate,
+        }),
+      `subscription cancelled ${saved.id}`,
+    );
+
+    return saved;
+  }
+
+  /**
+   * Pause a subscription's auto-renewal. Access continues until the current
+   * period ends but the subscription will not be charged again until resumed.
+   */
+  async pauseSubscription(
+    subscriptionId: string,
+    userId: string,
+  ): Promise<UserSubscription> {
+    const sub = await this.getSubscriptionOrFail(subscriptionId);
+
+    if (sub.userId !== userId) {
+      throw new ForbiddenException('You do not own this subscription');
+    }
+    if (sub.status !== SubscriptionStatus.ACTIVE) {
+      throw new BadRequestException('Only active subscriptions can be paused');
+    }
+    if (!sub.autoRenew) {
+      throw new BadRequestException('Subscription is already paused');
+    }
+
+    const occurrence = Number(sub.metadata?.pauseCount ?? 0) + 1;
+    sub.autoRenew = false;
+    sub.metadata = {
+      ...(sub.metadata ?? {}),
+      pauseCount: occurrence,
+      pausedAt: new Date().toISOString(),
+    };
+
+    const saved = await this.subscriptionRepo.save(sub);
+    this.logger.log(`Subscription ${subscriptionId} paused by user ${userId}`);
+
+    await this.safeNotify(
+      () =>
+        this.notificationService.notifyPaused(saved, {
+          tierName: sub.tier?.name,
+          occurrence,
+        }),
+      `subscription paused ${saved.id}`,
+    );
+
+    return saved;
+  }
+
+  /**
+   * Resume a paused subscription's auto-renewal.
+   */
+  async resumeSubscription(
+    subscriptionId: string,
+    userId: string,
+  ): Promise<UserSubscription> {
+    const sub = await this.getSubscriptionOrFail(subscriptionId);
+
+    if (sub.userId !== userId) {
+      throw new ForbiddenException('You do not own this subscription');
+    }
+    if (sub.status !== SubscriptionStatus.ACTIVE) {
+      throw new BadRequestException('Only active subscriptions can be resumed');
+    }
+    if (sub.autoRenew) {
+      throw new BadRequestException('Subscription is not paused');
+    }
+
+    const occurrence = Number(sub.metadata?.resumeCount ?? 0) + 1;
+    sub.autoRenew = true;
+    sub.metadata = {
+      ...(sub.metadata ?? {}),
+      resumeCount: occurrence,
+      resumedAt: new Date().toISOString(),
+    };
+
+    const saved = await this.subscriptionRepo.save(sub);
+    this.logger.log(`Subscription ${subscriptionId} resumed by user ${userId}`);
+
+    await this.safeNotify(
+      () =>
+        this.notificationService.notifyResumed(saved, {
+          tierName: sub.tier?.name,
+          occurrence,
+        }),
+      `subscription resumed ${saved.id}`,
+    );
+
     return saved;
   }
 
@@ -411,30 +499,23 @@ export class SubscriptionsService {
       );
     }
 
+    // Validate provider status and that the plan metadata is still current
+    const providerProfile = await this.providerProfileService.loadProviderProfile(
+      tier.providerId,
+    );
+    this.providerProfileService.assertProviderOperational(providerProfile);
+    this.providerProfileService.assertPlanCurrent(tier, false);
+
     // Verify payment
     const verification = await this.paymentProcessor.verifySubscriptionPayment(
       dto.stellarTxHash,
       tier.price,
       sub.subscriberWallet,
-      sub.providerWallet,
+      providerProfile.walletAddress || sub.providerWallet,
     );
 
     if (!verification.valid) {
-      // Increment failure count
-      sub.paymentFailureCount += 1;
-      sub.lastFailureReason = verification.error;
-      sub.paymentStatus = PaymentStatus.FAILED;
-
-      if (sub.paymentFailureCount >= MAX_PAYMENT_FAILURES) {
-        sub.status = SubscriptionStatus.SUSPENDED;
-        await this.accessControl.suspendSubscription(
-          sub.id,
-          `Payment failed ${MAX_PAYMENT_FAILURES} times`,
-        );
-        this.logger.warn(`Subscription ${sub.id} suspended after ${MAX_PAYMENT_FAILURES} failures`);
-      }
-
-      await this.subscriptionRepo.save(sub);
+      await this.recordFailedRenewal(sub, tier);
       throw new BadRequestException(`Renewal payment failed: ${verification.error}`);
     }
 
@@ -469,7 +550,95 @@ export class SubscriptionsService {
     await this.tierRepo.update(tier.id, { totalRevenue: newTotal });
 
     this.logger.log(`Subscription ${sub.id} renewed – period now ${newPeriodStart.toISOString()} → ${newPeriodEnd.toISOString()}`);
+
+    await this.safeNotify(
+      () => this.notificationService.notifyRenewed(saved, tier.name),
+      `subscription renewed ${saved.id}`,
+    );
+
     return saved;
+  }
+
+  /**
+   * Record a failed renewal attempt, suspend the subscription once the retry
+   * budget is exhausted, and emit exactly one subscriber notification.
+   *
+   * The reconciliation record and the notification deliberately exclude
+   * payment secrets (transaction hashes, wallet addresses, raw provider
+   * errors).
+   */
+  private async recordFailedRenewal(
+    sub: UserSubscription,
+    tier: SubscriptionTier,
+  ): Promise<void> {
+    sub.paymentFailureCount += 1;
+    sub.paymentStatus = PaymentStatus.FAILED;
+
+    const suspended = sub.paymentFailureCount >= MAX_PAYMENT_FAILURES;
+    sub.lastFailureReason = suspended
+      ? `Payment failed ${MAX_PAYMENT_FAILURES} times`
+      : `Renewal payment failed (attempt ${sub.paymentFailureCount})`;
+
+    if (suspended) {
+      sub.status = SubscriptionStatus.SUSPENDED;
+    }
+
+    // Append a bounded, secret-free reconciliation record.
+    const previousAttempts = Array.isArray(sub.metadata?.failedRenewalAttempts)
+      ? (sub.metadata!.failedRenewalAttempts as Array<Record<string, unknown>>)
+      : [];
+
+    sub.metadata = {
+      ...(sub.metadata ?? {}),
+      failedRenewalAttempts: [
+        ...previousAttempts,
+        {
+          attempt: sub.paymentFailureCount,
+          reason: sub.lastFailureReason,
+          at: new Date().toISOString(),
+        },
+      ].slice(-MAX_PAYMENT_FAILURES),
+      lastFailedRenewalAt: new Date().toISOString(),
+    };
+
+    await this.subscriptionRepo.save(sub);
+
+    if (suspended) {
+      await this.accessControl.suspendSubscription(
+        sub.id,
+        `Payment failed ${MAX_PAYMENT_FAILURES} times`,
+      );
+      this.logger.warn(`Subscription ${sub.id} suspended after ${MAX_PAYMENT_FAILURES} failures`);
+    }
+
+    // One notification per failed attempt (duplicate events are suppressed).
+    await this.safeNotify(
+      () =>
+        this.notificationService.notifyPaymentFailed(sub, {
+          tierName: tier?.name,
+          attempt: sub.paymentFailureCount,
+          suspended,
+        }),
+      `subscription payment failed ${sub.id}`,
+    );
+  }
+
+  /**
+   * Run a notification callback without letting a delivery failure break the
+   * subscription action that triggered it.
+   */
+  private async safeNotify(
+    action: () => Promise<void>,
+    context: string,
+  ): Promise<void> {
+    try {
+      await action();
+    } catch (error: any) {
+      this.logger.error(
+        `Subscription notification failed (${context}): ${error?.message}`,
+        error?.stack,
+      );
+    }
   }
 
   // ─────────────────────────────────────────────────────────────

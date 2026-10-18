@@ -115,6 +115,60 @@ jobs:
 
           echo "✅  OpenAPI specification is in sync with the committed spec."
 
+      # ── Step 3: Regenerate the TypeScript SDK types and detect drift ──────
+      - name: Regenerate SDK types from OpenAPI
+        run: npm run generate:sdk
+        env:
+          NODE_ENV: test
+
+      - name: Check for SDK type drift
+        run: |
+          COMMITTED_SDK="sdk/types"
+          GENERATED_SDK="sdk/generated/types"
+
+          if [ ! -d "${COMMITTED_SDK}" ]; then
+            echo "❌  ${COMMITTED_SDK} does not exist."
+            echo ""
+            echo "Generate the SDK types locally and commit:"
+            echo "    npm run generate:sdk"
+            echo "    git add ${COMMITTED_SDK}"
+            echo "    git commit -m 'chore(sdk): add committed SDK types'"
+            exit 1
+          fi
+
+          if ! diff -ru "${COMMITTED_SDK}" "${GENERATED_SDK}"; then
+            echo ""
+            echo "❌  TypeScript SDK types have drifted from the committed types."
+            echo "    The OpenAPI document changed but the SDK types were not regenerated."
+            echo ""
+            echo "Regenerate and commit the SDK types locally:"
+            echo "    npm run export:openapi"
+            echo "    npm run generate:sdk"
+            echo "    git add ${COMMITTED_SDK}"
+            echo "    git commit -m 'chore(sdk): regenerate SDK types'"
+            echo ""
+            echo "Then push and re-run CI."
+            exit 1
+          fi
+
+          echo "✅  TypeScript SDK types are in sync with the generated OpenAPI document."
+
+      # ── Step 4: Run NestJS contract tests for representative endpoints ────
+      - name: Run API contract tests
+        run: npm run test:contract
+        env:
+          NODE_ENV: test
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          DATABASE_USER: test
+          DATABASE_PASSWORD: test
+          DATABASE_NAME: stellarswipe_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: ci-jwt-secret-for-contract-tests
+          STELLAR_NETWORK: testnet
+          SOROBAN_RPC_URL: https://soroban-testnet.stellar.org:443
+
       # ── Upload diff artifact on failure for easier debugging ──────────────
       - name: Upload drift diff on failure
         if: failure()

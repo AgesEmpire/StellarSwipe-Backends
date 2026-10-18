@@ -15,5 +15,17 @@
     "PAYMENT_SCHEDULED": "Akọọ ụgwọ gị maka {date}",
     "PAYMENT_EXECUTED": "Emechara ụgwọ akọọ gị",
     "PAYMENT_CANCELLED": "Ewepụtara ụgwọ akọọ gị",
-    "PAYMENT_REMINDER": "Ncheta: Ị nwere ụgwọ akọọ maka {date}"
+    "PAYMENT_REMINDER": "Ncheta: Ị nwere ụgwọ akọọ maka {date}",
+    "SUBSCRIPTION_CREATED_TITLE": "Emebere ndenye aha",
+    "SUBSCRIPTION_CREATED_MESSAGE": "Ndenye aha gị na {tier} arụ ọrụ ugbu a.",
+    "SUBSCRIPTION_CANCELLED_TITLE": "Ewepụrụ ndenye aha",
+    "SUBSCRIPTION_CANCELLED_MESSAGE": "Ewepụrụ ndenye aha gị na {tier}.",
+    "SUBSCRIPTION_PAUSED_TITLE": "Akwụsịla ndenye aha",
+    "SUBSCRIPTION_PAUSED_MESSAGE": "Akwụsịla mmeghari ndenye aha gị na {tier}. Ịnweta ga-aga n'ihu ruo {date}.",
+    "SUBSCRIPTION_RESUMED_TITLE": "Amaliteghachiri ndenye aha",
+    "SUBSCRIPTION_RESUMED_MESSAGE": "Amaliteghachiri mmeghari ndenye aha gị na {tier}.",
+    "SUBSCRIPTION_RENEWED_TITLE": "Emelitere ndenye aha",
+    "SUBSCRIPTION_RENEWED_MESSAGE": "Emelitere ndenye aha gị na {tier} ruo {date}.",
+    "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Ụgwọ mmeghari dara",
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "Anyị enweghị ike imeghari ndenye aha gị na {tier} (nnwale {attempt}). Biko melite usoro ịkwụ ụgwọ gị."
 }

@@ -10,9 +10,12 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiConsumes, ApiBody, ApiResponse } from '@nestjs/swagger';
+import { promises as fs } from 'fs';
 import { FileUploadService } from './file-upload.service';
 import { FileUploadResponseDto, BatchFileUploadResponseDto } from './dto/file-upload-response.dto';
 import { DEFAULT_MAX_FILE_SIZE } from './interfaces/file-upload.interface';
+import { multipartDiskStorage } from './multipart-temp-storage';
+import { MultipartCleanupInterceptor } from './multipart-cleanup.interceptor';
 
 @ApiTags('File Upload')
 @Controller('storage/upload')
@@ -23,8 +26,10 @@ export class FileUploadController {
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('file', {
+      storage: multipartDiskStorage,
       limits: { fileSize: DEFAULT_MAX_FILE_SIZE },
     }),
+    MultipartCleanupInterceptor,
   )
   @ApiOperation({ summary: 'Upload a single file with validation' })
   @ApiConsumes('multipart/form-data')
@@ -51,8 +56,12 @@ export class FileUploadController {
     if (!file) {
       throw new BadRequestException('No file provided');
     }
+    // `multipartDiskStorage` streams the part to a temp file rather than
+    // buffering it in memory; `MultipartCleanupInterceptor` removes that
+    // temp file once this request settles (success, failure, or disconnect).
+    const buffer = await fs.readFile(file.path);
     return this.fileUploadService.storeFile({
-      buffer: file.buffer,
+      buffer,
       originalname: file.originalname,
       mimetype: file.mimetype,
       size: file.size,
@@ -63,8 +72,10 @@ export class FileUploadController {
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FilesInterceptor('files', 10, {
+      storage: multipartDiskStorage,
       limits: { fileSize: DEFAULT_MAX_FILE_SIZE },
     }),
+    MultipartCleanupInterceptor,
   )
   @ApiOperation({ summary: 'Upload multiple files with validation (max 10 files)' })
   @ApiConsumes('multipart/form-data')
@@ -90,14 +101,15 @@ export class FileUploadController {
       throw new BadRequestException('No files provided');
     }
 
-    const result = await this.fileUploadService.storeFiles(
-      files.map((f) => ({
-        buffer: f.buffer,
+    const loaded = await Promise.all(
+      files.map(async (f) => ({
+        buffer: await fs.readFile(f.path),
         originalname: f.originalname,
         mimetype: f.mimetype,
         size: f.size,
       })),
     );
+    const result = await this.fileUploadService.storeFiles(loaded);
 
     return {
       files: result.files,

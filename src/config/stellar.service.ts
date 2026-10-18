@@ -16,6 +16,13 @@ export class StellarConfigService {
     );
   }
 
+  /** Ordered Horizon endpoint candidates for health-aware failover (#1373). */
+  get horizonUrls(): string[] {
+    return (
+      this.configService.get<string[]>('stellar.horizonUrls') ?? [this.horizonUrl]
+    );
+  }
+
   get sorobanRpcUrl(): string {
     return (
       this.configService.get<string>('stellar.sorobanRpcUrl') ??

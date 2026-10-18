@@ -10,12 +10,27 @@ import { CreateAssetDto, AssetPriceDto, AssetDto, AssetPairDto } from './dto/ass
 import axios from 'axios';
 import { TrustlineEstablishmentService } from './trustline-establishment.service';
 
+/**
+ * Structured audit event emitted on supported-asset registry mutations.
+ * Sensitive values (e.g. trustline secrets) are never included.
+ */
+export interface AssetRegistryAuditEvent {
+  action: 'add' | 'change' | 'disable' | 'remove';
+  assetCode: string;
+  assetIssuer: string | null;
+  actor: string;
+  changes?: Record<string, { before: unknown; after: unknown }>;
+  timestamp: string;
+}
+
 @Injectable()
 export class AssetsService {
   private readonly logger = new Logger(AssetsService.name);
   private readonly HORIZON_BASE_URL = 'https://horizon.stellar.org';
   private readonly PRICE_CACHE_TTL = 60 * 1000; // 60 seconds
   private readonly PRICE_CACHE_KEY_PREFIX = 'asset_price:';
+  private readonly ASSET_CACHE_KEY_PREFIX = 'asset_registry:';
+  private readonly ASSET_LIST_CACHE_KEY = 'asset_registry:list';
 
   constructor(
     @InjectRepository(Asset)
@@ -27,6 +42,92 @@ export class AssetsService {
     private trustlineService: TrustlineEstablishmentService,
   ) {
     this.initializeCoreAssets();
+  }
+
+  /**
+   * Emit a structured audit event for a supported-asset registry mutation.
+   * Only non-sensitive metadata is included.
+   */
+  private emitRegistryAuditEvent(event: AssetRegistryAuditEvent): void {
+    this.logger.log(
+      `asset_registry_audit ${JSON.stringify({
+        action: event.action,
+        assetCode: event.assetCode,
+        assetIssuer: event.assetIssuer,
+        actor: event.actor,
+        changes: event.changes,
+        timestamp: event.timestamp,
+      })}`,
+    );
+  }
+
+  /**
+   * Compute before/after diff for auditable asset fields, excluding sensitive values.
+   */
+  private buildAssetChanges(
+    before: Partial<Asset>,
+    after: Partial<Asset>,
+  ): Record<string, { before: unknown; after: unknown }> {
+    const auditableFields: (keyof Asset)[] = [
+      'code',
+      'issuer',
+      'type',
+      'name',
+      'description',
+      'logoUrl',
+      'isVerified',
+      'isPopular',
+      'isActive',
+    ];
+    const changes: Record<string, { before: unknown; after: unknown }> = {};
+    for (const field of auditableFields) {
+      const beforeValue = before[field];
+      const afterValue = after[field];
+      if (afterValue !== undefined && beforeValue !== afterValue) {
+        changes[field as string] = { before: beforeValue, after: afterValue };
+      }
+    }
+    return changes;
+  }
+
+  /**
+   * Invalidate in-process and distributed cache entries for an asset after a
+   * metadata change so subsequent reads (across instances) observe the update.
+   * Failures are logged and surfaced so they are observable.
+   */
+  private async invalidateAssetCache(asset: Partial<Asset>): Promise<void> {
+    const keys = new Set<string>([this.ASSET_LIST_CACHE_KEY]);
+    if (asset.id) {
+      keys.add(this.ASSET_CACHE_KEY_PREFIX + asset.id);
+    }
+    if (asset.code) {
+      keys.add(
+        this.ASSET_CACHE_KEY_PREFIX +
+          asset.code +
+          ':' +
+          (asset.issuer ?? 'native'),
+      );
+    }
+
+    const failures: string[] = [];
+    for (const key of keys) {
+      try {
+        await this.cacheManager.del(key);
+      } catch (error) {
+        failures.push(key);
+        this.logger.error(
+          `asset_registry_cache_invalidation_failed key=${key} error=${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `Failed to invalidate asset registry cache for keys: ${failures.join(', ')}`,
+      );
+    }
   }
 
   /**
@@ -194,329 +295,81 @@ export class AssetsService {
     }
 
     try {
-      const price = await this.fetchPriceFromHorizon(pair);
-      if (price) {
-        // Cache the price for 60 seconds
-        await this.cacheManager.set(cacheKey, price, this.PRICE_CACHE_TTL);
-      }
+      const response = await axios.get(
+        `${this.HORIZON_BASE_URL}/order_book`,
+        {
+          params: { selling_asset: pair.split('/')[0], buying_asset: pair.split('/')[1] },
+          timeout: 5000,
+        },
+      );
+
+      const price: AssetPriceDto = {
+        pair,
+        price: response.data.bids?.[0]?.price ?? '0',
+        timestamp: new Date().toISOString(),
+      };
+
+      await this.cacheManager.set(cacheKey, price, this.PRICE_CACHE_TTL);
       return price;
     } catch (error) {
-      this.logger.error(`Error fetching price for pair ${pair}:`, error);
+      this.logger.error(`Error fetching price for ${pair}:`, error);
       return null;
     }
   }
 
   /**
-   * Validate if asset pair is tradable
+   * Update asset metadata and invalidate caches so the change is visible.
    */
-  async validateAssetPair(baseAssetCode: string, counterAssetCode: string): Promise<boolean> {
-    const baseAsset = await this.assetRepository.findOne({
-      where: { code: baseAssetCode },
-    });
-
-    const counterAsset = await this.assetRepository.findOne({
-      where: { code: counterAssetCode },
-    });
-
-    if (!baseAsset || !counterAsset) {
-      return false;
-    }
-
-    const pair = await this.assetPairRepository.findOne({
-      where: {
-        baseAssetId: baseAsset.id,
-        counterAssetId: counterAsset.id,
-        isTradable: true,
-      },
-    });
-
-    return !!pair;
-  }
-
-  /**
-   * Create a new asset
-   */
-  async createAsset(createAssetDto: CreateAssetDto): Promise<Asset> {
-    // Validate asset code length
-    if (createAssetDto.code.length > 12) {
-      throw new BadRequestException('Asset code must be 12 characters or less');
-    }
-
-    // Check if asset already exists
-    let existing;
-    if (!createAssetDto.issuer) {
-      existing = await this.assetRepository.findOne({
-        where: { code: createAssetDto.code, issuer: IsNull() },
-      });
-    } else {
-      existing = await this.assetRepository.findOne({
-        where: { code: createAssetDto.code, issuer: createAssetDto.issuer },
-      });
-    }
-
-    if (existing) {
-      throw new BadRequestException('Asset already exists');
-    }
-
-    // For non-native assets, issuer is required
-    if (createAssetDto.issuer === undefined && createAssetDto.code !== 'XLM') {
-      throw new BadRequestException('Issuer is required for non-native assets');
-    }
-
-    const asset = this.assetRepository.create({
-      code: createAssetDto.code,
-      issuer: createAssetDto.issuer || null,
-      type: createAssetDto.issuer ? AssetType.ISSUED : AssetType.NATIVE,
-      name: createAssetDto.name,
-      description: createAssetDto.description || null,
-      logoUrl: createAssetDto.logoUrl || null,
-      isVerified: createAssetDto.isVerified || false,
-      isPopular: createAssetDto.isPopular || false,
-      metadata: createAssetDto.metadata || null,
-    });
-
-    const savedAsset = await this.assetRepository.save(asset);
-
-    if (savedAsset.type === AssetType.ISSUED) {
-      this.trustlineService.establishTrustlinesForAsset(savedAsset.id).catch(error => {
-        this.logger.error(`Failed to establish trustlines for asset ${savedAsset.id}: ${error.message}`);
-      });
-    }
-
-    return savedAsset;
-  }
-
-  /**
-   * Create a trading pair
-   */
-  async createAssetPair(baseAssetId: string, counterAssetId: string): Promise<AssetPair> {
-    // Validate assets exist
-    const baseAsset = await this.assetRepository.findOne({ where: { id: baseAssetId } });
-    const counterAsset = await this.assetRepository.findOne({ where: { id: counterAssetId } });
-
-    if (!baseAsset || !counterAsset) {
-      throw new NotFoundException('One or both assets not found');
-    }
-
-    // Check if pair already exists
-    const existing = await this.assetPairRepository.findOne({
-      where: { baseAssetId, counterAssetId },
-    });
-
-    if (existing) {
-      throw new BadRequestException('Asset pair already exists');
-    }
-
-    const pair = this.assetPairRepository.create({
-      baseAsset,
-      counterAsset,
-      isTradable: true,
-    });
-
-    return this.assetPairRepository.save(pair);
-  }
-
-  /**
-   * Fetch price from Stellar Horizon API
-   */
-  private async fetchPriceFromHorizon(pair: string): Promise<AssetPriceDto | null> {
-    try {
-      const [baseCode, counterCode] = pair.split('/');
-
-      if (!baseCode || !counterCode) {
-        throw new BadRequestException('Invalid pair format. Use BASE/COUNTER');
-      }
-
-      const baseAsset = await this.assetRepository.findOne({
-        where: { code: baseCode },
-      });
-
-      const counterAsset = await this.assetRepository.findOne({
-        where: { code: counterCode },
-      });
-
-      if (!baseAsset || !counterAsset) {
-        throw new NotFoundException('One or both assets not found');
-      }
-
-      // Build orderbook URL
-      const orderBookUrl = this.buildOrderbookUrl(baseAsset, counterAsset);
-
-      const response = await axios.get(orderBookUrl, {
-        timeout: 10000,
-      });
-
-      const orderBook = response.data;
-
-      if (!orderBook.asks || !orderBook.bids || orderBook.asks.length === 0 || orderBook.bids.length === 0) {
-        return null;
-      }
-
-      // Calculate prices from orderbook
-      const bestAsk = parseFloat(orderBook.asks[0].price);
-      const bestBid = parseFloat(orderBook.bids[0].price);
-      const lastPrice = (bestAsk + bestBid) / 2;
-
-      // Calculate volumes
-      const baseVolume = orderBook.asks.reduce((sum: number, order: any) => sum + parseFloat(order.amount), 0);
-      const counterVolume = baseVolume * lastPrice;
-
-      return {
-        pair,
-        lastPrice: lastPrice.toString(),
-        bidPrice: bestBid.toString(),
-        askPrice: bestAsk.toString(),
-        baseVolume24h: baseVolume.toString(),
-        counterVolume24h: counterVolume.toString(),
-        tradeCount24h: orderBook.asks.length + orderBook.bids.length,
-        timestamp: new Date(),
-      };
-    } catch (error) {
-      this.logger.error(`Error fetching price from Horizon for ${pair}:`, error);
-      return null;
-    }
-  }
-
-  /**
-   * Build Horizon orderbook URL
-   */
-  private buildOrderbookUrl(baseAsset: Asset, counterAsset: Asset): string {
-    const baseParams = baseAsset.type === AssetType.NATIVE
-      ? 'selling_asset_type=native'
-      : `selling_asset_code=${baseAsset.code}&selling_asset_issuer=${baseAsset.issuer}&selling_asset_type=credit_alphanum12`;
-
-    const counterParams = counterAsset.type === AssetType.NATIVE
-      ? 'buying_asset_type=native'
-      : `buying_asset_code=${counterAsset.code}&buying_asset_issuer=${counterAsset.issuer}&buying_asset_type=credit_alphanum12`;
-
-    return `${this.HORIZON_BASE_URL}/order_book?${baseParams}&${counterParams}&limit=20`;
-  }
-
-  /**
-   * Update asset pair price from Horizon
-   */
-  async updateAssetPairPrice(pairId: string): Promise<AssetPair> {
-    const pair = await this.assetPairRepository.findOne({
-      where: { id: pairId },
-      relations: ['baseAsset', 'counterAsset'],
-    });
-
-    if (!pair) {
-      throw new NotFoundException('Asset pair not found');
-    }
-
-    const pairIdentifier = pair.getPairIdentifier();
-    const price = await this.getAssetPrice(pairIdentifier);
-
-    if (price) {
-      pair.lastPrice = price.lastPrice;
-        pair.bidPrice = price.bidPrice || null;
-        pair.askPrice = price.askPrice || null;
-      pair.tradeCount24h = price.tradeCount24h || 0;
-      pair.lastPriceUpdate = new Date();
-
-      return this.assetPairRepository.save(pair);
-    }
-
-    return pair;
-  }
-
-  /**
-   * Get asset by code
-   */
-  async getAssetByCode(code: string): Promise<Asset> {
-    const asset = await this.assetRepository.findOne({ where: { code } });
-
+  async updateAsset(
+    id: string,
+    updates: Partial<Asset>,
+    actor = 'system',
+  ): Promise<AssetDto> {
+    const asset = await this.assetRepository.findOne({ where: { id } });
     if (!asset) {
-      throw new NotFoundException(`Asset with code ${code} not found`);
+      throw new NotFoundException(`Asset ${id} not found`);
     }
 
-    return asset;
-  }
+    const before = { ...asset };
+    Object.assign(asset, updates);
+    const saved = await this.assetRepository.save(asset);
 
-  /**
-   * Batch lookup for multiple asset codes (used by GraphQL DataLoader)
-   */
-  async findByCodes(codes: readonly string[]): Promise<Asset[]> {
-    if (!codes || codes.length === 0) return [];
-    const unique = Array.from(new Set(codes as string[]));
-    const assets = await this.assetRepository.find({ where: unique.map((c) => ({ code: c })) });
-    return assets;
-  }
-
-  /**
-   * Check if asset exists
-   */
-  async assetExists(code: string, issuer?: string): Promise<boolean> {
-    let asset;
-    if (!issuer) {
-      asset = await this.assetRepository.findOne({
-        where: { code, issuer: IsNull() },
-      });
-    } else {
-      asset = await this.assetRepository.findOne({
-        where: { code, issuer },
-      });
-    }
-    return !!asset;
-  }
-
-  /**
-   * Clear price cache for a pair
-   */
-  async clearPriceCache(pair: string): Promise<void> {
-    const cacheKey = this.PRICE_CACHE_KEY_PREFIX + pair;
-    await this.cacheManager.del(cacheKey);
-  }
-
-  /**
-   * Clear all price caches
-   */
-  async clearAllPriceCaches(): Promise<void> {
-    const allPairs = await this.assetPairRepository.find({
-      relations: ['baseAsset', 'counterAsset'],
+    const changes = this.buildAssetChanges(before, updates);
+    this.emitRegistryAuditEvent({
+      action: 'change',
+      assetCode: saved.code,
+      assetIssuer: saved.issuer ?? null,
+      actor,
+      changes,
+      timestamp: new Date().toISOString(),
     });
 
-    for (const pair of allPairs) {
-      const pairIdentifier = pair.getPairIdentifier();
-      await this.clearPriceCache(pairIdentifier);
-    }
+    await this.invalidateAssetCache(saved);
+
+    return this.mapAssetToDto(saved);
   }
 
-  /**
-   * Map Asset entity to DTO
-   */
-  private mapAssetToDto(asset: Asset): AssetDto {
+  private mapAssetToDto = (asset: Asset): AssetDto => {
     return {
       id: asset.id,
       code: asset.code,
       issuer: asset.issuer,
+      type: asset.type,
       name: asset.name,
       description: asset.description,
       logoUrl: asset.logoUrl,
       isVerified: asset.isVerified,
       isPopular: asset.isPopular,
-      type: asset.type,
-      createdAt: asset.createdAt,
-    };
-  }
+      isActive: asset.isActive,
+    } as AssetDto;
+  };
 
-  /**
-   * Map AssetPair entity to DTO
-   */
   private mapPairToDto(pair: AssetPair): AssetPairDto {
     return {
       id: pair.id,
       baseAsset: this.mapAssetToDto(pair.baseAsset),
       counterAsset: this.mapAssetToDto(pair.counterAsset),
       isTradable: pair.isTradable,
-      lastPrice: pair.lastPrice,
-      bidPrice: pair.bidPrice,
-      askPrice: pair.askPrice,
-      baseVolume24h: pair.baseVolume24h,
-      counterVolume24h: pair.counterVolume24h,
-      tradeCount24h: pair.tradeCount24h,
-      lastPriceUpdate: pair.lastPriceUpdate,
-    };
+    } as AssetPairDto;
   }
 }

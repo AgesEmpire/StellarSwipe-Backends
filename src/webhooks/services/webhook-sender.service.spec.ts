@@ -1,11 +1,19 @@
 jest.mock('axios');
 jest.mock('uuid', () => ({ v4: () => 'mock-uuid' }));
+// #1377 — sendWithValidatedRedirects revalidates every outbound hostname via
+// dns.lookup() (see ssrf-url-validator.ts) before issuing the request, so a
+// real DNS lookup must be mocked here the same way ssrf-validation.pipe.spec
+// mocks it, or these tests would make live network calls.
+jest.mock('dns', () => ({
+  promises: { lookup: jest.fn() },
+}));
 
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { getQueueToken } from '@nestjs/bullmq';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import axios, { AxiosError } from 'axios';
+import { promises as dns } from 'dns';
 import { Queue } from 'bullmq';
 import { NotificationChannel } from '../../notifications/entities/notification.entity';
 import { NotificationService } from '../../notifications/notification.service';
@@ -22,6 +30,7 @@ import { SignatureGeneratorService } from './signature-generator.service';
 import { WebhookSenderService } from './webhook-sender.service';
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+const mockedDnsLookup = dns.lookup as jest.MockedFunction<typeof dns.lookup>;
 
 describe('WebhookSenderService', () => {
   let service: WebhookSenderService;
@@ -40,6 +49,7 @@ describe('WebhookSenderService', () => {
   };
   let signatureGenerator: {
     generateSignature: jest.Mock;
+    generateVersionedSignatureHeader: jest.Mock;
     signWithWebhookSecret: jest.Mock;
   };
   let eventEmitter: {
@@ -50,7 +60,13 @@ describe('WebhookSenderService', () => {
   };
 
   beforeEach(async () => {
-    mockedAxios.post.mockReset();
+    mockedAxios.request.mockReset();
+    mockedDnsLookup.mockReset();
+    // All test webhook URLs resolve to a public IP by default — individual
+    // SSRF-specific tests override this to exercise the blocking behavior.
+    mockedDnsLookup.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+    ] as any);
 
     deliveryRepo = {
       create: jest.fn((value) => ({ id: 'delivery-1', ...value })),
@@ -67,7 +83,8 @@ describe('WebhookSenderService', () => {
     };
     signatureGenerator = {
       generateSignature: jest.fn().mockReturnValue('signed-payload'),
-      signWithWebhookSecret: jest.fn().mockReturnValue('signed-challenge'),
+      generateVersionedSignatureHeader: jest.fn().mockReturnValue('v1=signed-payload'),
+      signWithWebhookSecret: jest.fn().mockReturnValue('v1=signed-challenge'),
     };
     eventEmitter = {
       emit: jest.fn().mockReturnValue(true),
@@ -121,7 +138,7 @@ describe('WebhookSenderService', () => {
 
     it('posts a signed challenge to the pending URL', async () => {
       const webhook = makeWebhook();
-      mockedAxios.post.mockResolvedValue({ status: 200, data: {} });
+      mockedAxios.request.mockResolvedValue({ status: 200, data: {} });
 
       await expect(
         service.sendVerificationChallenge(
@@ -135,12 +152,15 @@ describe('WebhookSenderService', () => {
         challenge,
         webhook,
       );
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        'https://new.example.com/hook',
-        challenge,
+      expect(mockedAxios.request).toHaveBeenCalledWith(
         expect.objectContaining({
+          url: 'https://new.example.com/hook',
+          method: 'post',
+          data: challenge,
+          maxRedirects: 0,
           headers: expect.objectContaining({
-            'X-StellarSwipe-Signature': 'sha256=signed-challenge',
+            'X-StellarSwipe-Signature': 'v1=signed-challenge',
+            'X-StellarSwipe-Signature-Version': 'v1',
             'X-StellarSwipe-Event': 'webhook.verification',
           }),
         }),
@@ -149,7 +169,7 @@ describe('WebhookSenderService', () => {
 
     it('returns false without leaking the token when delivery fails', async () => {
       const warn = jest.spyOn((service as any).logger, 'warn');
-      mockedAxios.post.mockRejectedValue(new Error('connect ECONNREFUSED'));
+      mockedAxios.request.mockRejectedValue(new Error('connect ECONNREFUSED'));
 
       await expect(
         service.sendVerificationChallenge(
@@ -190,7 +210,7 @@ describe('WebhookSenderService', () => {
         { deliveryId: 'delivery-1', manualRetry: false },
         WEBHOOK_DELIVERY_JOB_OPTIONS,
       );
-      expect(mockedAxios.post).not.toHaveBeenCalled();
+      expect(mockedAxios.request).not.toHaveBeenCalled();
     });
 
     it('manual retry requeues an existing active delivery', async () => {
@@ -241,29 +261,29 @@ describe('WebhookSenderService', () => {
     it('performs one HTTP attempt and records success', async () => {
       const delivery = makeDelivery();
       deliveryRepo.findOne.mockResolvedValue(delivery);
-      mockedAxios.post.mockResolvedValue({
+      mockedAxios.request.mockResolvedValue({
         status: 204,
         data: { accepted: true },
       });
 
       await service.deliverQueuedDelivery(delivery.id, 1, false);
 
-      expect(signatureGenerator.generateSignature).toHaveBeenCalledWith(
+      expect(signatureGenerator.generateVersionedSignatureHeader).toHaveBeenCalledWith(
         delivery.payload,
         delivery.webhook.secret,
       );
       expect(mockedAxios.post).toHaveBeenCalledWith(
         delivery.webhook.url,
         delivery.payload,
-        {
+        expect.objectContaining({
           headers: {
             'Content-Type': 'application/json',
-            'X-StellarSwipe-Signature': 'sha256=signed-payload',
+            'X-StellarSwipe-Signature': 'v1=signed-payload',
+            'X-StellarSwipe-Signature-Version': 'v1',
             'X-StellarSwipe-Event': delivery.eventType,
             'X-StellarSwipe-Delivery-Id': delivery.eventId,
           },
-          timeout: 5000,
-        },
+        }),
       );
       expect(deliveryRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -287,7 +307,7 @@ describe('WebhookSenderService', () => {
       jest.spyOn(Math, 'random').mockReturnValue(0.5);
       const delivery = makeDelivery();
       deliveryRepo.findOne.mockResolvedValue(delivery);
-      mockedAxios.post.mockRejectedValue(
+      mockedAxios.request.mockRejectedValue(
         makeAxiosError('provider unavailable', 503, { error: 'down' }),
       );
 
@@ -318,7 +338,7 @@ describe('WebhookSenderService', () => {
       webhookRepo.findOne.mockResolvedValue(
         makeWebhook({ consecutiveFailures: 10 }),
       );
-      mockedAxios.post.mockRejectedValue(
+      mockedAxios.request.mockRejectedValue(
         makeAxiosError('connection refused', 500, { message: 'no listener' }),
       );
 
@@ -381,7 +401,7 @@ describe('WebhookSenderService', () => {
       webhookRepo.findOne.mockResolvedValue(
         makeWebhook({ consecutiveFailures: 4 }),
       );
-      mockedAxios.post.mockRejectedValue(makeAxiosError('timeout'));
+      mockedAxios.request.mockRejectedValue(makeAxiosError('timeout'));
 
       await expect(
         service.deliverQueuedDelivery(delivery.id, WEBHOOK_MAX_ATTEMPTS, true),
@@ -410,7 +430,7 @@ describe('WebhookSenderService', () => {
       webhookRepo.findOne.mockResolvedValue(
         makeWebhook({ consecutiveFailures: 10 }),
       );
-      mockedAxios.post.mockRejectedValue(makeAxiosError('still offline'));
+      mockedAxios.request.mockRejectedValue(makeAxiosError('still offline'));
 
       await expect(service.retryInPlace(delivery)).resolves.toBe(false);
 
