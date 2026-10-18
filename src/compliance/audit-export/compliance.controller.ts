@@ -28,6 +28,7 @@ import { join } from 'path';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { NotFoundException } from '@nestjs/common';
+import { isSafeExportArtifact } from '../../../common/utils/atomic-export.util';
 
 @ApiTags('Compliance Audit Export')
 @ApiBearerAuth()
@@ -71,12 +72,12 @@ export class ComplianceAuditController {
 
     const exportDir =
       process.env.EXPORT_DIR || '/tmp/exports';
-    const filePath = join(exportDir, fileName);
 
-    if (!existsSync(filePath)) {
+    if (!isSafeExportArtifact(exportDir, fileName)) {
       throw new NotFoundException('Export file not found or has expired.');
     }
 
+    const filePath = join(exportDir, fileName);
     const content = await readFile(filePath, 'utf-8');
 
     // Determine content type based on extension

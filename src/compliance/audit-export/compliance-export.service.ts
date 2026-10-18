@@ -14,10 +14,14 @@ import {
 import { AuditExportResultDto } from './dto/export-result.dto';
 import { formatAuditExport } from './utils/export-formatter';
 import { v4 as uuidv4 } from 'uuid';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, stat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
+import {
+  writeExportAtomically,
+  cleanOrphanedStagingFiles,
+} from '../../common/utils/atomic-export.util';
 
 /**
  * Compliance roles that are allowed to export audit data.
@@ -90,12 +94,18 @@ export class ComplianceExportService {
 
     const formatted = formatAuditExport(logs, format);
 
-    // Persist to file
+    // Persist to file atomically via private staging and atomic promotion
     const exportId = uuidv4();
     const fileName = `audit_export_${exportId}.${formatted.extension}`;
-    const filePath = join(this.exportDir, fileName);
-
-    await writeFile(filePath, formatted.content, 'utf-8');
+    const filePath = await writeExportAtomically(
+      this.exportDir,
+      fileName,
+      formatted.content,
+      async (stagingPath) => {
+        const fileStat = await stat(stagingPath);
+        return fileStat.size > 0;
+      },
+    );
 
     this.logger.log(
       `Audit export ${exportId} generated with ${logs.length} records (${format})`,
@@ -175,5 +185,6 @@ export class ComplianceExportService {
     if (!existsSync(this.exportDir)) {
       await mkdir(this.exportDir, { recursive: true });
     }
+    await cleanOrphanedStagingFiles(this.exportDir);
   }
 }

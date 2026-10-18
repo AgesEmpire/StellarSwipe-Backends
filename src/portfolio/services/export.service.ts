@@ -13,6 +13,11 @@ import { RateLimitService } from '../../common/services/rate-limit.service';
 import { NotificationService } from '../../common/services/notification.service';
 import { User } from '../../users/entities/user.entity';
 import { PositionArchiveService } from './position-archive.service';
+import {
+  createAtomicExportWriter,
+  writeExportAtomically,
+  cleanOrphanedStagingFiles,
+} from '../../common/utils/atomic-export.util';
 
 interface PositionExportData {
   date: Date;
@@ -49,6 +54,7 @@ export class ExportService {
         if (!fs.existsSync(this.EXPORT_DIR)) {
             fs.mkdirSync(this.EXPORT_DIR, { recursive: true });
         }
+        cleanOrphanedStagingFiles(this.EXPORT_DIR).catch(() => {});
     }
 
     async exportTrades(userId: string, query: ExportQueryDto): Promise<{ status: string; url?: string; message?: string }> {
@@ -104,12 +110,12 @@ export class ExportService {
         const allPositions = this.mergePositionData(trades, archivedPositions);
 
         const fileName = `position_history_${userId}_${Date.now()}.${query.format}`;
-        const filePath = path.join(this.EXPORT_DIR, fileName);
+        let filePath: string;
 
         if (query.format === ExportFormat.CSV) {
-            await this.generatePositionCsv(allPositions, filePath);
+            filePath = await this.generatePositionCsv(allPositions, fileName);
         } else {
-            await this.generatePositionJson(allPositions, filePath);
+            filePath = await this.generatePositionJson(allPositions, fileName);
         }
 
         return { filePath, fileName };
@@ -148,14 +154,34 @@ export class ExportService {
         );
     }
 
-    private async generatePositionCsv(positions: PositionExportData[], filePath: string): Promise<void> {
+    private async generatePositionCsv(positions: PositionExportData[], fileName: string): Promise<string> {
+        const writer = await createAtomicExportWriter({
+            exportDir: this.EXPORT_DIR,
+            fileName,
+        });
+
         const csvStream = fastcsv.format({ headers: true });
-        const writableStream = fs.createWriteStream(filePath);
+        const writableStream = fs.createWriteStream(writer.stagingPath);
 
         return new Promise((resolve, reject) => {
+            const onError = async (err: Error) => {
+                await writer.abort();
+                reject(err);
+            };
+
+            writableStream.on('error', onError);
+            csvStream.on('error', onError);
+
             csvStream.pipe(writableStream)
-                .on('finish', resolve)
-                .on('error', reject);
+                .on('finish', async () => {
+                    try {
+                        const finalPath = await writer.publish();
+                        resolve(finalPath);
+                    } catch (publishErr) {
+                        reject(publishErr);
+                    }
+                })
+                .on('error', onError);
 
             positions.forEach((pos) => {
                 csvStream.write({
@@ -174,8 +200,12 @@ export class ExportService {
         });
     }
 
-    private async generatePositionJson(positions: PositionExportData[], filePath: string): Promise<void> {
-        fs.writeFileSync(filePath, JSON.stringify(positions, null, 2));
+    private async generatePositionJson(positions: PositionExportData[], fileName: string): Promise<string> {
+        return writeExportAtomically(
+            this.EXPORT_DIR,
+            fileName,
+            JSON.stringify(positions, null, 2),
+        );
     }
 
     @Process('generate-export')

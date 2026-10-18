@@ -5,6 +5,7 @@ import { AuditService } from '../../audit.service';
 import { formatAuditLogCsv } from '../utils/export-formatters';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { writeExportAtomically } from '../../../common/utils/atomic-export.util';
 
 @Processor('audit-export')
 export class GenerateAuditExportJob {
@@ -20,11 +21,10 @@ export class GenerateAuditExportJob {
     const logs = await this.auditService.exportForCompliance(userId || 'system', new Date(startDate), new Date(endDate));
     const csvData = formatAuditLogCsv(logs);
     
-    const filePath = path.join(process.cwd(), 'exports', `${jobId}.csv`);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, csvData);
+    const exportDir = path.join(process.cwd(), 'exports');
+    const filePath = await writeExportAtomically(exportDir, `${jobId}.csv`, csvData);
     
-    this.logger.log(`Export ${jobId} completed and saved to ${filePath}`);
+    this.logger.log(`Export ${jobId} completed and atomically published to ${filePath}`);
     return { filePath };
   }
 }
