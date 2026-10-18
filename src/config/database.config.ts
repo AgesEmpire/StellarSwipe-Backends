@@ -78,6 +78,9 @@ export const databaseConfig = registerAs(
       username: process.env.DATABASE_REPLICA_USER || process.env.DATABASE_USER || 'postgres',
       password: process.env.DATABASE_REPLICA_PASSWORD || process.env.DATABASE_PASSWORD || 'password',
       database: process.env.DATABASE_REPLICA_NAME || process.env.DATABASE_NAME || 'stellarswipe',
+      // Issue #1371: maximum replication lag (ms) a replica may have before
+      // freshness-sensitive analytics reads fall back to the primary.
+      maxLagMs: parseInt(process.env.DATABASE_REPLICA_MAX_LAG_MS || '5000', 10),
       ssl:
         process.env.NODE_ENV === 'production' ||
         process.env.NODE_ENV === 'mainnet' ||

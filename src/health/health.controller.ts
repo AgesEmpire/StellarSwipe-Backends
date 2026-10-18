@@ -22,6 +22,7 @@ import {
   QueueHealthIndicator,
   KafkaHealthIndicator,
   DatabasePoolHealthIndicator,
+  TransactionReadinessIndicator,
 } from './indicators';
 import {
   HealthSummaryService,
@@ -49,6 +50,7 @@ export class HealthController
     private queueHealth: QueueHealthIndicator,
     private kafkaHealth: KafkaHealthIndicator,
     private databasePoolHealth: DatabasePoolHealthIndicator,
+    private transactionReadinessHealth: TransactionReadinessIndicator,
     private healthSummary: HealthSummaryService,
     private readiness: ReadinessService,
   ) {}
@@ -98,6 +100,10 @@ export class HealthController
   private readinessChecks() {
     return [
       () => this.databaseHealth.isHealthy('database'),
+      // Issue #1372: a reachable connection isn't enough for workflows that
+      // depend on real transactions (trades, settlement, migrations) — this
+      // verifies the database can actually BEGIN/write/ROLLBACK.
+      () => this.transactionReadinessHealth.isHealthy('database_transaction'),
       () => this.redisHealth.isHealthy('cache'),
       () => this.queueHealth.isHealthy('queue'),
     ];
@@ -129,6 +135,7 @@ export class HealthController
     return this.health.check([
       () => this.databaseHealth.isHealthy('database'),
       () => this.databasePoolHealth.isHealthy('database_pool'),
+      () => this.transactionReadinessHealth.isHealthy('database_transaction'),
       () => this.redisHealth.isHealthy('cache'),
       () => this.stellarHealth.isHealthy('stellar'),
       () => this.sorobanHealth.isHealthy('soroban'),

@@ -4,6 +4,7 @@ import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { QueryFailedError, Repository, DataSource } from 'typeorm';
 import { MetricSnapshot, MetricPeriod } from './entities/metric-snapshot.entity';
 import { UserEvent, UserEventType } from './entities/user-event.entity';
+import { ReplicaLagService } from './replica-lag.service';
 
 export interface TrackEventInput {
   eventType: UserEventType;
@@ -42,18 +43,37 @@ export class AnalyticsService {
     private readonly replicaDataSource: DataSource,
     @InjectDataSource()
     private readonly primaryDataSource: DataSource,
+    private readonly replicaLagService: ReplicaLagService,
   ) { }
 
-  private getReadDataSource(): DataSource {
-    return this.replicaDataSource || this.primaryDataSource;
+  /**
+   * Issue #1371 — routes freshness-sensitive analytics reads away from a
+   * replica whose replication lag exceeds the configured policy limit,
+   * falling back to the primary instead of serving stale data silently.
+   */
+  private async getReadDataSource(): Promise<DataSource> {
+    if (!this.replicaDataSource) {
+      return this.primaryDataSource;
+    }
+
+    const withinPolicy = await this.replicaLagService.isWithinPolicy();
+    if (!withinPolicy) {
+      return this.primaryDataSource;
+    }
+
+    return this.replicaDataSource;
   }
 
   private async executeReadQuery<T>(
     queryFn: (dataSource: DataSource) => Promise<T>,
   ): Promise<T> {
+    const dataSource = await this.getReadDataSource();
     try {
-      return await queryFn(this.getReadDataSource());
+      return await queryFn(dataSource);
     } catch (error) {
+      if (dataSource === this.primaryDataSource) {
+        throw error;
+      }
       this.logger.warn('Replica query failed, falling back to primary', {
         error: error instanceof Error ? error.message : 'Unknown error',
       });

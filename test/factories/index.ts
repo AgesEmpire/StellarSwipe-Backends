@@ -7,3 +7,10 @@ export {
   type TestPlatformState,
   type TestSignalProvider,
 } from './platform.factory';
+export { SignalFactory, type TestSignal, type CreateSignalOptions } from './signal.factory';
+export { TradeFactory, type TestTrade, type CreateTradeOptions } from './trade.factory';
+export {
+  EntityGraphFactory,
+  type SignalCopyTradeScenario,
+  type BuildSignalCopyTradeOptions,
+} from './entity-graph.factory';

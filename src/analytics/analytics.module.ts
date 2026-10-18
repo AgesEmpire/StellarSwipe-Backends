@@ -51,6 +51,7 @@ import {
   ANALYTICS_REPORTS_QUEUE,
 } from './reports/analytics-reports.service';
 import { AnalyticsReportsProcessor } from './reports/analytics-reports.processor';
+import { ReplicaLagService } from './replica-lag.service';
 
 @Module({
   imports: [
@@ -109,9 +110,11 @@ import { AnalyticsReportsProcessor } from './reports/analytics-reports.processor
     DetectDataDriftJob,
     AnalyticsReportsService,
     AnalyticsReportsProcessor,
+    ReplicaLagService,
   ],
   exports: [
     AnalyticsService,
+    ReplicaLagService,
     RiskMetricsService,
     AttributionService,
     CorrelationService,
