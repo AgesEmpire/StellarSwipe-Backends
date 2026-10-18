@@ -37,6 +37,7 @@ import { I18nModule } from '../i18n/i18n.module';
     ProviderProfileService,
     SubscriptionNotificationService,
     SubscriptionRenewalJob,
+    SubscriptionChangeNotifierService,
   ],
   exports: [
     SubscriptionsService,

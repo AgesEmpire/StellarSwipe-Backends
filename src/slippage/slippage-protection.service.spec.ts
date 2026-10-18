@@ -3,16 +3,57 @@ import { BadRequestException } from '@nestjs/common';
 import { SlippageProtectionService } from './slippage-protection.service';
 import { SlippageCalculatorService } from './slippage-calculator.service';
 import { SlippageToleranceLevel } from './dto/slippage-config.dto';
+import { MarketDepth } from './market-depth.types';
+import { OrderBookService } from './order-book.service';
+import { VolatilityService } from './volatility.service';
+
+const makeBook = (): MarketDepth => ({
+  symbol: 'BTC/USD',
+  bids: Array.from({ length: 20 }, (_, i) => ({
+    price: 45000 - (i + 1) * 10,
+    quantity: 1,
+  })),
+  asks: Array.from({ length: 20 }, (_, i) => ({
+    price: 45000 + (i + 1) * 10,
+    quantity: 1,
+  })),
+  timestamp: new Date(),
+});
 
 describe('SlippageProtectionService', () => {
   let service: SlippageProtectionService;
   let calculatorService: SlippageCalculatorService;
+  let volatilityService: { getVolatility: jest.Mock };
 
   beforeEach(async () => {
+    const realOrderBook = new OrderBookService();
+    volatilityService = {
+      getVolatility: jest.fn().mockResolvedValue({
+        value: 1.0,
+        samples: 60,
+        stale: false,
+        usedFallback: false,
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SlippageProtectionService,
         SlippageCalculatorService,
+        {
+          provide: OrderBookService,
+          useValue: {
+            fetchMarketDepth: jest.fn(async (_symbol: string) => makeBook()),
+            validateAndNormalise: jest.fn((book: MarketDepth) =>
+              realOrderBook.validateAndNormalise(book),
+            ),
+            walkBook: jest.fn(
+              (side: 'buy' | 'sell', book: MarketDepth, quantity: number) =>
+                realOrderBook.walkBook(side, book, quantity),
+            ),
+          },
+        },
+        { provide: VolatilityService, useValue: volatilityService },
       ],
     }).compile();
 
@@ -153,6 +194,61 @@ describe('SlippageProtectionService', () => {
 
       expect(btcResult.maxAllowedSlippage).toBeLessThanOrEqual(0.2);
       expect(ethResult.maxAllowedSlippage).toBeGreaterThanOrEqual(0.5);
+    });
+  });
+
+  describe('volatility driven tolerance', () => {
+    it('uses historical volatility for the dynamic tolerance', async () => {
+      volatilityService.getVolatility.mockResolvedValue({
+        value: 0,
+        samples: 60,
+        stale: false,
+        usedFallback: false,
+      });
+      const calm = await service.validateTradeExecution({
+        symbol: 'BTC/USD',
+        side: 'buy' as const,
+        quantity: 1.0,
+        expectedPrice: 45000,
+        timestamp: new Date(),
+      });
+
+      volatilityService.getVolatility.mockResolvedValue({
+        value: 5.0,
+        samples: 60,
+        stale: false,
+        usedFallback: false,
+      });
+      const wild = await service.validateTradeExecution({
+        symbol: 'BTC/USD',
+        side: 'buy' as const,
+        quantity: 1.0,
+        expectedPrice: 45000,
+        timestamp: new Date(),
+      });
+
+      expect(volatilityService.getVolatility).toHaveBeenCalledWith('BTC/USD');
+      expect(wild.maxAllowedSlippage).toBeGreaterThan(calm.maxAllowedSlippage);
+    });
+
+    it('falls back to the configured volatility when market data is unavailable', async () => {
+      volatilityService.getVolatility.mockResolvedValue({
+        value: 1.0,
+        samples: 0,
+        stale: true,
+        usedFallback: true,
+      });
+
+      const result = await service.validateTradeExecution({
+        symbol: 'BTC/USD',
+        side: 'buy' as const,
+        quantity: 1.0,
+        expectedPrice: 45000,
+        timestamp: new Date(),
+      });
+
+      expect(result.maxAllowedSlippage).toBeGreaterThan(0);
+      expect(result.maxAllowedSlippage).toBeLessThanOrEqual(1.5);
     });
   });
 
