@@ -16,6 +16,7 @@ import { Cache } from 'cache-manager';
 import { RATE_LIMIT_KEY, RateLimitConfig, RateLimitTier } from '../decorators/rate-limit.decorator';
 import { SubscriptionsService } from '../../subscriptions/subscriptions.service';
 import { TenantConfigService } from '../../config/tenant-config.service';
+import { setRateLimitHeaders } from '../rate-limit/rate-limit-headers.util';
 
 interface RateLimitInfo {
   count: number;
@@ -304,12 +305,12 @@ export class RateLimitGuard implements CanActivate {
     if (info.count > finalLimit) {
       const retryAfter = Math.ceil((info.resetTime - now) / 1000);
 
-      if (response?.setHeader) {
-        response.setHeader('X-RateLimit-Limit', finalLimit);
-        response.setHeader('X-RateLimit-Remaining', 0);
-        response.setHeader('X-RateLimit-Reset', info.resetTime);
-        response.setHeader('Retry-After', retryAfter);
-      }
+      setRateLimitHeaders(response, {
+        limit: finalLimit,
+        remaining: 0,
+        reset: info.resetTime,
+        retryAfter,
+      });
 
       this.logViolation(`${tenantPrefix}${identifier}`, tier, finalLimit);
 
@@ -327,11 +328,11 @@ export class RateLimitGuard implements CanActivate {
 
     await this.setRateLimitInfo(key, info, finalWindow);
 
-    if (response?.setHeader) {
-      response.setHeader('X-RateLimit-Limit', finalLimit);
-      response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
-      response.setHeader('X-RateLimit-Reset', info.resetTime);
-    }
+    setRateLimitHeaders(response, {
+      limit: finalLimit,
+      remaining: finalLimit - info.count,
+      reset: info.resetTime,
+    });
 
     return true;
   }
@@ -376,12 +377,12 @@ export class RateLimitGuard implements CanActivate {
     if (info.count > finalLimit) {
       const retryAfter = Math.ceil((info.resetTime - now) / 1000);
 
-      if (response?.setHeader) {
-        response.setHeader('X-RateLimit-Limit', finalLimit);
-        response.setHeader('X-RateLimit-Remaining', 0);
-        response.setHeader('X-RateLimit-Reset', info.resetTime);
-        response.setHeader('Retry-After', retryAfter);
-      }
+      setRateLimitHeaders(response, {
+        limit: finalLimit,
+        remaining: 0,
+        reset: info.resetTime,
+        retryAfter,
+      });
 
       this.logViolation(`${tenantPrefix}${accountId}`, tier, finalLimit);
 
@@ -399,11 +400,11 @@ export class RateLimitGuard implements CanActivate {
 
     await this.setRateLimitInfo(key, info, finalWindow);
 
-    if (response?.setHeader) {
-      response.setHeader('X-RateLimit-Limit', finalLimit);
-      response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
-      response.setHeader('X-RateLimit-Reset', info.resetTime);
-    }
+    setRateLimitHeaders(response, {
+      limit: finalLimit,
+      remaining: finalLimit - info.count,
+      reset: info.resetTime,
+    });
   }
 
   private extractWalletAddress(context: ExecutionContext): string | null {
@@ -452,12 +453,12 @@ export class RateLimitGuard implements CanActivate {
     if (info.count > finalLimit) {
       const retryAfter = Math.ceil((info.resetTime - now) / 1000);
 
-      if (response?.setHeader) {
-        response.setHeader('X-RateLimit-Limit', finalLimit);
-        response.setHeader('X-RateLimit-Remaining', 0);
-        response.setHeader('X-RateLimit-Reset', info.resetTime);
-        response.setHeader('Retry-After', retryAfter);
-      }
+      setRateLimitHeaders(response, {
+        limit: finalLimit,
+        remaining: 0,
+        reset: info.resetTime,
+        retryAfter,
+      });
 
       this.logViolation(`${tenantPrefix}wallet:${walletAddress}`, tier, finalLimit);
 
@@ -475,11 +476,11 @@ export class RateLimitGuard implements CanActivate {
 
     await this.setRateLimitInfo(key, info, finalWindow);
 
-    if (response?.setHeader) {
-      response.setHeader('X-RateLimit-Limit', finalLimit);
-      response.setHeader('X-RateLimit-Remaining', finalLimit - info.count);
-      response.setHeader('X-RateLimit-Reset', info.resetTime);
-    }
+    setRateLimitHeaders(response, {
+      limit: finalLimit,
+      remaining: finalLimit - info.count,
+      reset: info.resetTime,
+    });
   }
 
   private extractAccountIdentifier(request: any, keyBy: string[]): string | null {

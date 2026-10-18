@@ -30,6 +30,7 @@
     "export:openapi": "ts-node -r tsconfig-paths/register scripts/generate-openapi.ts",
     "openapi:generate": "npm run export:openapi",
     "openapi:check": "ts-node -r tsconfig-paths/register scripts/check-openapi-drift.ts",
+    "validate:deprecation-sunset": "ts-node -r tsconfig-paths/register scripts/validate-deprecation-sunset.ts",
     "sdk:generate-types": "bash scripts/generate-sdk-types.sh",
     "sdk:check-drift": "bash scripts/check-sdk-drift.sh",
     "migration:ci": "npm run migration:run && npm run seed",
