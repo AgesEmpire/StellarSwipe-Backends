@@ -69,6 +69,28 @@ export class BulkQueryIngestionDto {
   queries: SubmitQueryAnalysisDto[];
 }
 
+/**
+ * Per-item outcome for one query in a `POST /db/analyzer/submit/bulk`
+ * request (#1382) — every input query gets a stable entry here, indexed to
+ * match its position in the request's `queries` array, instead of a failed
+ * item simply being dropped from the response with no trace of it.
+ */
+export class BulkQueryIngestionItemResultDto {
+  @ApiProperty() index: number;
+  @ApiProperty({ enum: ['submitted', 'failed'] }) status: 'submitted' | 'failed';
+  @ApiPropertyOptional({ description: 'Created/updated SlowQuery id, when submitted' }) id?: string;
+  @ApiPropertyOptional({ description: 'Failure reason, when failed' }) error?: string;
+}
+
+export class BulkQueryIngestionResponseDto {
+  @ApiProperty() submitted: number;
+  @ApiProperty() failed: number;
+  @ApiProperty({ type: [String], description: 'ids of successfully submitted/updated queries' })
+  ids: string[];
+  @ApiProperty({ type: [BulkQueryIngestionItemResultDto] })
+  results: BulkQueryIngestionItemResultDto[];
+}
+
 // ─── Analysis Result ──────────────────────────────────────────────────────────
 
 export enum AnalysisComplexity {
