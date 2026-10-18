@@ -16,9 +16,11 @@ import { QueryMonitorService } from './query-monitor.service';
 import { MigrationRunnerService } from './migration-runner.service';
 import { MigrationRunnerController } from './migration-runner.controller';
 import { DatabaseRetryService } from './database-retry.service';
+import { AdvisoryLockModule } from '../common/database/advisory-lock.module';
 
 @Module({
   imports: [
+    AdvisoryLockModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
