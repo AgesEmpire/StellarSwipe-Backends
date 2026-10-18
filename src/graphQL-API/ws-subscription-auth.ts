@@ -25,7 +25,18 @@ export interface AuthenticatedSubscriptionUser {
   username?: string;
   walletAddress?: string;
   sessionId?: string;
+  /** JWT `exp` claim, in epoch milliseconds, when present on the token. */
+  tokenExpiresAt?: number;
 }
+
+/**
+ * `graphql-ws` close code used when a connection is closed because the
+ * credentials it was authenticated with have expired. In the `4000`–`4999`
+ * range reserved for application use (outside the standard WS/`graphql-ws`
+ * close codes), so clients can tell "please reauthenticate and reconnect"
+ * apart from a generic/protocol error.
+ */
+export const SUBSCRIPTION_AUTH_EXPIRED_CLOSE_CODE = 4401;
 
 /** Raised when a `graphql-ws` `connection_init` handshake fails authentication. */
 export class SubscriptionAuthError extends Error {
@@ -128,7 +139,51 @@ export async function authenticateGraphqlWsConnection(
     username: user.username,
     walletAddress: user.walletAddress,
     sessionId: payload.sid,
+    tokenExpiresAt: typeof payload.exp === 'number' ? payload.exp * 1000 : undefined,
   };
+}
+
+/**
+ * Schedules this connection to be closed the moment its token expires,
+ * clearing any timer scheduled by a previous call for the same connection
+ * first (re-handshakes, if the client reconnects with a fresh token, must
+ * not leave the old timer armed).
+ *
+ * Tokens without an `exp` claim are left alone — there's nothing to expire.
+ */
+function scheduleExpiryClose(
+  context: GraphqlWsConnectionContext,
+  user: AuthenticatedSubscriptionUser,
+): void {
+  clearScheduledExpiryClose(context);
+
+  if (!user.tokenExpiresAt) return;
+
+  const delayMs = Math.max(user.tokenExpiresAt - Date.now(), 0);
+  const timer = setTimeout(() => {
+    const socket = context.extra.socket as
+      | { close?: (code: number, reason: string) => void }
+      | undefined;
+    socket?.close?.(
+      SUBSCRIPTION_AUTH_EXPIRED_CLOSE_CODE,
+      'Authentication expired — reconnect with a fresh token',
+    );
+  }, delayMs);
+  // Don't let this timer alone keep the process alive (e.g. during tests
+  // or graceful shutdown) — the open socket already does that while the
+  // connection is genuinely active.
+  timer.unref?.();
+
+  context.extra.expiryTimer = timer;
+}
+
+/** Clears a timer scheduled by `scheduleExpiryClose`, if any, for this connection. */
+function clearScheduledExpiryClose(context: GraphqlWsConnectionContext): void {
+  const timer = context.extra.expiryTimer as NodeJS.Timeout | undefined;
+  if (timer) {
+    clearTimeout(timer);
+    delete context.extra.expiryTimer;
+  }
 }
 
 /**
@@ -144,10 +199,24 @@ export async function authenticateGraphqlWsConnection(
  *   connection. It reads the user stashed on `extra` during `onConnect` and
  *   merges it into the GraphQL execution context, so `@Subscription()`
  *   resolvers and `GqlAuthGuard` can read `context.user`.
+ * - `onDisconnect` runs once the connection closes for any reason, and
+ *   clears the expiry timer armed by `onConnect` so a closed connection
+ *   never leaves a dangling timer behind.
+ *
+ * Reauthentication policy for long-lived subscriptions (#1384): rather than
+ * silently letting a subscription keep delivering protected events past the
+ * lifetime of the token that authorized it, `onConnect` arms a timer for the
+ * token's `exp` claim. When it fires, the underlying socket is closed with
+ * `SUBSCRIPTION_AUTH_EXPIRED_CLOSE_CODE` — `graphql-ws` clients treat a
+ * non-1000 close as "reconnect", so a client holding a refreshed token
+ * simply re-handshakes (`connection_init` → `onConnect` again) with it. A
+ * client with no fresh token to offer fails the next handshake the same way
+ * any other expired/invalid token does, and stops receiving events.
  */
 export function createGraphqlWsAuthHandlers(deps: SubscriptionAuthDeps): {
   onConnect: (context: GraphqlWsConnectionContext) => Promise<void>;
   context: (context: GraphqlWsConnectionContext) => { user?: AuthenticatedSubscriptionUser };
+  onDisconnect: (context: GraphqlWsConnectionContext) => void;
 } {
   return {
     onConnect: async (context: GraphqlWsConnectionContext) => {
@@ -155,9 +224,13 @@ export function createGraphqlWsAuthHandlers(deps: SubscriptionAuthDeps): {
       // Stash on `extra` — the per-operation `context` below (and therefore
       // every subscription resolver) reads it back out as `context.user`.
       context.extra.user = user;
+      scheduleExpiryClose(context, user);
     },
     context: (context: GraphqlWsConnectionContext) => ({
       user: context.extra?.user as AuthenticatedSubscriptionUser | undefined,
     }),
+    onDisconnect: (context: GraphqlWsConnectionContext) => {
+      clearScheduledExpiryClose(context);
+    },
   };
 }

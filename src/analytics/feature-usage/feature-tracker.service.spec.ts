@@ -141,9 +141,9 @@ describe('FeatureTrackerService', () => {
   // trackBulk
   // -------------------------
   describe('trackBulk', () => {
-    it('should create and save multiple events', async () => {
+    it('should track each event independently and report a stable per-item result', async () => {
       usageRepo.create.mockImplementation((data) => data);
-      usageRepo.save.mockResolvedValue([]);
+      usageRepo.save.mockResolvedValue(undefined);
 
       const result = await service.trackBulk({
         events: [
@@ -153,7 +153,43 @@ describe('FeatureTrackerService', () => {
       });
 
       expect(result.tracked).toBe(2);
-      expect(usageRepo.save).toHaveBeenCalledTimes(1);
+      expect(result.failed).toBe(0);
+      // One `save` per event (#1382) — a failure on one event must not be
+      // able to roll back or block any other event in the batch the way a
+      // single batched `save(events[])` call would.
+      expect(usageRepo.save).toHaveBeenCalledTimes(2);
+      expect(result.results).toEqual([
+        { index: 0, status: 'tracked' },
+        { index: 1, status: 'tracked' },
+      ]);
+    });
+
+    it('isolates a failing event: other events in the batch are still tracked, and the failure is reported at its own index', async () => {
+      usageRepo.create.mockImplementation((data) => data);
+      usageRepo.save
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('duplicate key value violates unique constraint'))
+        .mockResolvedValueOnce(undefined);
+
+      const result = await service.trackBulk({
+        events: [
+          { featureKey: 'swap', userId: 'user-001' },
+          { featureKey: 'pool', userId: 'user-002' },
+          { featureKey: 'stake', userId: 'user-003' },
+        ],
+      });
+
+      expect(result.tracked).toBe(2);
+      expect(result.failed).toBe(1);
+      expect(result.results).toEqual([
+        { index: 0, status: 'tracked' },
+        {
+          index: 1,
+          status: 'failed',
+          error: 'duplicate key value violates unique constraint',
+        },
+        { index: 2, status: 'tracked' },
+      ]);
     });
   });
 
