@@ -33,5 +33,7 @@
     "SUBSCRIPTION_RENEWED_TITLE": "Subscription renewed",
     "SUBSCRIPTION_RENEWED_MESSAGE": "Your {tier} subscription has been renewed until {date}.",
     "SUBSCRIPTION_PAYMENT_FAILED_TITLE": "Renewal payment failed",
-    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "We could not renew your {tier} subscription (attempt {attempt}). Please update your payment method."
+    "SUBSCRIPTION_PAYMENT_FAILED_MESSAGE": "We could not renew your {tier} subscription (attempt {attempt}). Please update your payment method.",
+    "DIGEST_TITLE": "You have {count} new updates",
+    "DIGEST_SUMMARY": "We've grouped {count} low-priority updates (signals, price alerts) into this digest so you're not interrupted by each one individually."
 }

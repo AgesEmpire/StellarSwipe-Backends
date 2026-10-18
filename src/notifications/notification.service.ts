@@ -3,7 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
-import { Notification, NotificationChannel, NotificationStatus } from './entities/notification.entity';
+import {
+  Notification,
+  NotificationChannel,
+  NotificationPriority,
+  NotificationStatus,
+  resolveNotificationPriority,
+} from './entities/notification.entity';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { PreferencesService } from './preferences/preferences.service';
 import { ConsentService } from './consent.service';
@@ -116,6 +122,86 @@ export class NotificationService implements OnModuleInit {
     });
   }
 
+  /**
+   * Create (and, unless deferred to a digest, queue for delivery) a
+   * notification for a specific domain event, using a stable event
+   * identifier to dedupe at the database level.
+   *
+   * Domain event listeners sometimes retry (queue redelivery, at-least-once
+   * event buses, etc.). Rather than tracking "have I seen this event"
+   * in process memory — which is lost on restart and doesn't work across
+   * multiple instances — the event id is stored on the notification row
+   * behind a unique index. A retried call with the same `eventId` is
+   * rejected by the database (`ON CONFLICT DO NOTHING`) instead of
+   * inserting a second inbox item, and the existing notification is
+   * returned so callers can't tell the difference.
+   *
+   * @param eventId Stable identifier of the domain event, e.g.
+   *   `${event.eventName}:${event.tradeId}:${event.correlationId}`.
+   * @param dto The notification to create if this event hasn't been seen.
+   * @returns The notification (newly created or the pre-existing one) and
+   *   whether this call observed a duplicate.
+   */
+  async sendForEvent(
+    eventId: string,
+    dto: SendNotificationDto,
+  ): Promise<{ notification: Notification; deduplicated: boolean }> {
+    const channel = dto.channel ?? NotificationChannel.IN_APP;
+    const priority = resolveNotificationPriority(dto.type);
+
+    const insertResult = await this.notificationRepository
+      .createQueryBuilder()
+      .insert()
+      .into(Notification)
+      .values({
+        userId: dto.userId,
+        type: dto.type,
+        channel,
+        title: dto.title,
+        message: dto.message,
+        metadata: dto.metadata ?? {},
+        status: NotificationStatus.PENDING,
+        priority,
+        eventId,
+      })
+      .orIgnore()
+      .returning(['id'])
+      .execute();
+
+    if (insertResult.raw.length === 0) {
+      const existing = await this.notificationRepository.findOne({ where: { eventId } });
+      if (existing) {
+        this.logger.debug(
+          `Duplicate domain event "${eventId}"; reusing existing notification ${existing.id} instead of creating another`,
+        );
+        return { notification: existing, deduplicated: true };
+      }
+      // Replication lag / read-after-write edge case: the conflict says a row
+      // exists but we couldn't read it back yet. Surface this rather than
+      // silently dropping the notification.
+      throw new Error(
+        `Insert for domain event "${eventId}" was ignored (duplicate) but no existing notification was found`,
+      );
+    }
+
+    const insertedId: string = insertResult.raw[0].id ?? insertResult.identifiers[0]?.id;
+    const notification = await this.notificationRepository.findOneByOrFail({ id: insertedId });
+
+    if (priority === NotificationPriority.LOW && channel === NotificationChannel.IN_APP) {
+      // Low-priority in-app notifications are batched into a scheduled
+      // digest instead of being queued for immediate delivery.
+      return { notification, deduplicated: false };
+    }
+
+    await this.notificationQueue.add('deliver', { notificationId: notification.id }, {
+      priority: 100,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+    });
+
+    return { notification, deduplicated: false };
+  }
+
   async send(dto: SendNotificationDto): Promise<Notification> {
     const channel = dto.channel ?? NotificationChannel.IN_APP;
 
@@ -156,12 +242,23 @@ export class NotificationService implements OnModuleInit {
       }
     }
 
+    const priority = resolveNotificationPriority(dto.type);
     const notification = this.notificationRepository.create({
       ...dto,
       channel,
       status: NotificationStatus.PENDING,
+      priority,
     });
     const saved = await this.notificationRepository.save(notification);
+
+    if (priority === NotificationPriority.LOW && channel === NotificationChannel.IN_APP) {
+      // Low-priority in-app notifications (e.g. signal/price updates) are
+      // batched into a scheduled digest by DigestService rather than
+      // delivered immediately; urgent notifications always go straight
+      // onto the delivery queue below.
+      this.logger.debug(`Notification ${saved.id} deferred to digest (type=${dto.type})`);
+      return saved;
+    }
 
     await this.notificationQueue.add('deliver', { notificationId: saved.id }, {
       priority: 100,
