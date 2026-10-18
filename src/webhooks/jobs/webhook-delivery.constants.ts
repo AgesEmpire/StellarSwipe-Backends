@@ -13,6 +13,13 @@ export const WEBHOOK_CONNECT_TIMEOUT_MS = 3_000;
 export const WEBHOOK_MAX_RESPONSE_BYTES = 8_192; // 8 KB
 /** Stored response body is capped at this many characters (post-serialization). */
 export const WEBHOOK_RESPONSE_BODY_MAX_CHARS = 2_048;
+/**
+ * #1377 — Maximum number of redirect hops sendWithValidatedRedirects will
+ * follow for a single delivery attempt. Each hop is revalidated against the
+ * SSRF rules before being followed, and the chain is aborted once this cap
+ * is exceeded so a malicious/compromised endpoint can't redirect forever.
+ */
+export const WEBHOOK_MAX_REDIRECTS = 5;
 export const WEBHOOK_BACKOFF_BASE_MS = 1000;
 export const WEBHOOK_BACKOFF_CAP_MS = 64000;
 export const WEBHOOK_BACKOFF_JITTER_MS = 1000;

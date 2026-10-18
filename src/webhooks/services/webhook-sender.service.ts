@@ -4,7 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Repository } from 'typeorm';
 import { Queue } from 'bullmq';
-import axios, { AxiosError, AxiosResponse } from 'axios';
+import { AxiosError, AxiosResponse } from 'axios';
 import { NotificationChannel } from '../../notifications/entities/notification.entity';
 import { NotificationService } from '../../notifications/notification.service';
 import { Webhook } from '../entities/webhook.entity';
@@ -15,6 +15,7 @@ import {
   SignatureGeneratorService,
 } from './signature-generator.service';
 import { WebhookDeliveryMetricsService } from './webhook-delivery-metrics.service';
+import { sendWithValidatedRedirects } from './safe-webhook-http';
 import {
   WEBHOOK_CONNECT_TIMEOUT_MS,
   WEBHOOK_DELIVERY_JOB,
@@ -94,7 +95,13 @@ export class WebhookSenderService {
     );
 
     try {
-      await axios.post(url, challenge, {
+      // #1377 — validated/bounded redirect following instead of a raw
+      // axios.post, so a verification destination can't redirect this
+      // request into a private/internal address.
+      await sendWithValidatedRedirects({
+        url,
+        method: 'post',
+        data: challenge,
         headers: {
           'Content-Type': 'application/json',
           'X-StellarSwipe-Signature': signature,
@@ -262,7 +269,13 @@ export class WebhookSenderService {
       Number(process.hrtime.bigint() - startedAt) / 1e9;
 
     try {
-      const response = await axios.post(webhook.url, payload, {
+      // #1377 — see sendWithValidatedRedirects: revalidates every redirect
+      // hop against the SSRF rules instead of letting axios auto-follow a
+      // 3xx straight into a private/internal address.
+      const response = await sendWithValidatedRedirects({
+        url: webhook.url,
+        method: 'post',
+        data: payload,
         headers: this.buildHeaders(payload, signature),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
         transitional: { clarifyTimeoutError: true },

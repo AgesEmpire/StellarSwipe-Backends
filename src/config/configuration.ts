@@ -211,10 +211,13 @@ export default registerAs('app', () => {
         },
       },
       // Standard rate-limit metadata headers returned to clients.
+      // Kept in sync with RATE_LIMIT_HEADER_NAMES in
+      // src/common/rate-limit/rate-limit-headers.util.ts, which is what
+      // guards/middleware actually set — see #1380.
       headers: {
-        limit: 'RateLimit-Limit',
-        remaining: 'RateLimit-Remaining',
-        reset: 'RateLimit-Reset',
+        limit: 'X-RateLimit-Limit',
+        remaining: 'X-RateLimit-Remaining',
+        reset: 'X-RateLimit-Reset',
         retryAfter: 'Retry-After',
       },
     },

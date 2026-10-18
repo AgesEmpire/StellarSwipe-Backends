@@ -9,6 +9,7 @@ import {
   EndpointGroup,
   ENDPOINT_GROUP_PATTERNS,
 } from './rate-limit-config';
+import { RATE_LIMIT_HEADER_NAMES } from '../common/rate-limit/rate-limit-headers.util';
 
 export interface ApiKeyRateLimitInfo {
   count: number;
@@ -85,9 +86,9 @@ export class ApiKeyRateLimitService {
     const burstInfo = await this.getWindowInfo(this.burstKey(apiKeyHash, endpointGroup, tenantId));
 
     const headers: Record<string, string> = {
-      'X-RateLimit-Limit': String(limits.limit),
-      'X-RateLimit-Remaining': String(Math.max(0, limits.limit - standardInfo.count)),
-      'X-RateLimit-Reset': String(Math.ceil(standardInfo.resetTime / 1000)),
+      [RATE_LIMIT_HEADER_NAMES.LIMIT]: String(limits.limit),
+      [RATE_LIMIT_HEADER_NAMES.REMAINING]: String(Math.max(0, limits.limit - standardInfo.count)),
+      [RATE_LIMIT_HEADER_NAMES.RESET]: String(Math.ceil(standardInfo.resetTime / 1000)),
       'X-RateLimit-Burst-Limit': String(limits.burstLimit),
       'X-RateLimit-Burst-Remaining': String(Math.max(0, limits.burstLimit - burstInfo.count)),
       'X-RateLimit-Tier': tier,

@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Inject } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { setRateLimitHeaders } from '../rate-limit/rate-limit-headers.util';
 
 @Injectable()
 export class RateLimitMiddleware implements NestMiddleware {
@@ -31,11 +32,13 @@ export class RateLimitMiddleware implements NestMiddleware {
       // Check if limit exceeded
       if (info.count > this.GLOBAL_LIMIT) {
         const retryAfter = Math.ceil((info.resetTime - now) / 1000);
-        
-        res.setHeader('X-RateLimit-Limit', this.GLOBAL_LIMIT);
-        res.setHeader('X-RateLimit-Remaining', 0);
-        res.setHeader('X-RateLimit-Reset', info.resetTime);
-        res.setHeader('Retry-After', retryAfter);
+
+        setRateLimitHeaders(res, {
+          limit: this.GLOBAL_LIMIT,
+          remaining: 0,
+          reset: info.resetTime,
+          retryAfter,
+        });
 
         throw new HttpException(
           {
@@ -51,9 +54,11 @@ export class RateLimitMiddleware implements NestMiddleware {
       await this.setRateLimitInfo(key, info);
 
       // Set headers
-      res.setHeader('X-RateLimit-Limit', this.GLOBAL_LIMIT);
-      res.setHeader('X-RateLimit-Remaining', this.GLOBAL_LIMIT - info.count);
-      res.setHeader('X-RateLimit-Reset', info.resetTime);
+      setRateLimitHeaders(res, {
+        limit: this.GLOBAL_LIMIT,
+        remaining: this.GLOBAL_LIMIT - info.count,
+        reset: info.resetTime,
+      });
 
       next();
     } catch (error) {

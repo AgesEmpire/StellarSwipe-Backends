@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerException } from '@nestjs/throttler';
 import { Request, Response } from 'express';
+import { setRateLimitHeaders } from '../rate-limit/rate-limit-headers.util';
 
 /**
  * Metadata key used to mark routes as trusted internal traffic.
@@ -88,7 +89,7 @@ export class DistributedThrottlerGuard extends ThrottlerGuard {
       const allowed = await super.canActivate(context);
 
       // Attach standard rate-limit metadata headers on success.
-      this.setRateLimitHeaders(response, request);
+      this.applyRateLimitHeaders(response, request);
 
       return allowed;
     } catch (error) {
@@ -96,7 +97,7 @@ export class DistributedThrottlerGuard extends ThrottlerGuard {
         // Standard Retry-After header for throttled clients.
         const ttl = await this.getTtl(context);
         response.setHeader('Retry-After', Math.ceil(ttl / 1000));
-        this.setRateLimitHeaders(response, request);
+        this.applyRateLimitHeaders(response, request);
         throw error;
       }
 
@@ -112,21 +113,21 @@ export class DistributedThrottlerGuard extends ThrottlerGuard {
   /**
    * Emit standard rate-limit metadata headers when the underlying
    * throttler exposes tracking information on the request.
+   *
+   * Uses the shared `X-RateLimit-*` header names (see rate-limit-headers.util)
+   * so this guard's output matches RateLimitGuard/RateLimitMiddleware instead
+   * of the bare `RateLimit-*` names it previously emitted on its own.
    */
-  private setRateLimitHeaders(response: Response, request: Request): void {
+  private applyRateLimitHeaders(response: Response, request: Request): void {
     const tracker = (request as any).rateLimit;
     if (!tracker) {
       return;
     }
 
-    if (typeof tracker.limit === 'number') {
-      response.setHeader('RateLimit-Limit', tracker.limit);
-    }
-    if (typeof tracker.remaining === 'number') {
-      response.setHeader('RateLimit-Remaining', tracker.remaining);
-    }
-    if (typeof tracker.reset === 'number') {
-      response.setHeader('RateLimit-Reset', tracker.reset);
-    }
+    setRateLimitHeaders(response, {
+      limit: typeof tracker.limit === 'number' ? tracker.limit : undefined,
+      remaining: typeof tracker.remaining === 'number' ? tracker.remaining : undefined,
+      reset: typeof tracker.reset === 'number' ? tracker.reset : undefined,
+    });
   }
 }
