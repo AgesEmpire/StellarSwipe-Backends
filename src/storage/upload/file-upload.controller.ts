@@ -7,13 +7,14 @@ import {
   BadRequestException,
   HttpCode,
   HttpStatus,
+  Headers,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiConsumes, ApiBody, ApiResponse } from '@nestjs/swagger';
-import { promises as fs } from 'fs';
+import { ApiTags, ApiOperation, ApiConsumes, ApiBody, ApiResponse, ApiHeader } from '@nestjs/swagger';
+import * as fs from 'fs';
 import { FileUploadService } from './file-upload.service';
 import { FileUploadResponseDto, BatchFileUploadResponseDto } from './dto/file-upload-response.dto';
-import { DEFAULT_MAX_FILE_SIZE } from './interfaces/file-upload.interface';
+import { DEFAULT_MAX_FILE_SIZE, SupportedChecksumAlgorithm } from './interfaces/file-upload.interface';
 import { multipartDiskStorage } from './multipart-temp-storage';
 import { MultipartCleanupInterceptor } from './multipart-cleanup.interceptor';
 
@@ -31,8 +32,18 @@ export class FileUploadController {
     }),
     MultipartCleanupInterceptor,
   )
-  @ApiOperation({ summary: 'Upload a single file with validation' })
+  @ApiOperation({ summary: 'Upload a single file with validation and optional checksum verification' })
   @ApiConsumes('multipart/form-data')
+  @ApiHeader({
+    name: 'x-checksum',
+    required: false,
+    description: 'Optional expected hex digest for integrity verification before making file durable',
+  })
+  @ApiHeader({
+    name: 'x-checksum-algorithm',
+    required: false,
+    description: 'Hash algorithm (sha256, sha512, md5). Defaults to sha256',
+  })
   @ApiBody({
     schema: {
       type: 'object',
@@ -50,22 +61,33 @@ export class FileUploadController {
     description: 'File uploaded successfully',
     type: FileUploadResponseDto,
   })
+  @ApiResponse({ status: 400, description: 'Checksum mismatch or validation failure' })
   @ApiResponse({ status: 413, description: 'File too large' })
   @ApiResponse({ status: 415, description: 'Unsupported media type' })
-  async uploadSingle(@UploadedFile() file: Express.Multer.File): Promise<FileUploadResponseDto> {
+  async uploadSingle(
+    @UploadedFile() file: Express.Multer.File,
+    @Headers('x-checksum') expectedChecksum?: string,
+    @Headers('x-checksum-algorithm') checksumAlgorithm?: SupportedChecksumAlgorithm,
+  ): Promise<FileUploadResponseDto> {
     if (!file) {
       throw new BadRequestException('No file provided');
     }
     // `multipartDiskStorage` streams the part to a temp file rather than
     // buffering it in memory; `MultipartCleanupInterceptor` removes that
     // temp file once this request settles (success, failure, or disconnect).
-    const buffer = await fs.readFile(file.path);
-    return this.fileUploadService.storeFile({
-      buffer,
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size,
-    });
+    const stream = fs.createReadStream(file.path);
+    return this.fileUploadService.storeStreamedFile(
+      {
+        stream,
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+      },
+      {
+        expectedChecksum,
+        checksumAlgorithm,
+      },
+    );
   }
 
   @Post('batch')

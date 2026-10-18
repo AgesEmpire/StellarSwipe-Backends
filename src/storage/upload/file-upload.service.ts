@@ -10,12 +10,15 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { pipeline } from 'stream/promises';
 import {
   UploadedFileMetadata,
   FileUploadOptions,
   FileValidationResult,
   DEFAULT_ALLOWED_MIME_TYPES,
   DEFAULT_MAX_FILE_SIZE,
+  SUPPORTED_CHECKSUM_ALGORITHMS,
+  SupportedChecksumAlgorithm,
 } from './interfaces/file-upload.interface';
 import { FileUploadResponseDto } from './dto/file-upload-response.dto';
 
@@ -175,8 +178,18 @@ export class FileUploadService {
 
     const safeFileName = sanitizeFileName ? this.sanitizeFileName(file.originalname) : file.originalname;
     const extension = path.extname(safeFileName).toLowerCase();
+
+    // Verify client-provided checksum before promoting file to durable storage
+    const algorithm = options?.checksumAlgorithm ?? 'sha256';
+    this.assertSupportedChecksumAlgorithm(algorithm);
+
+    const calculatedHash = crypto.createHash(algorithm).update(file.buffer).digest('hex');
+    if (options?.expectedChecksum) {
+      this.verifyChecksum(calculatedHash, options.expectedChecksum, algorithm);
+    }
+
     const contentHash = computeHash
-      ? crypto.createHash('sha256').update(file.buffer).digest('hex')
+      ? (algorithm === 'sha256' ? calculatedHash : crypto.createHash('sha256').update(file.buffer).digest('hex'))
       : '';
 
     const storedFileName = `${uuidv4()}${extension}`;
@@ -216,6 +229,125 @@ export class FileUploadService {
         }
       }
       throw error;
+    }
+  }
+
+  /**
+   * Promotes an uploaded file stream / temp file to durable storage while calculating
+   * its digest on-the-fly and verifying against client-provided checksum without
+   * buffering the full file into memory.
+   */
+  async storeStreamedFile(
+    source: { stream: NodeJS.ReadableStream; originalname: string; mimetype: string; size?: number },
+    options?: FileUploadOptions,
+  ): Promise<FileUploadResponseDto> {
+    const algorithm = options?.checksumAlgorithm ?? 'sha256';
+    this.assertSupportedChecksumAlgorithm(algorithm);
+
+    const sanitizeFileName = options?.sanitizeFileName !== false;
+    const safeFileName = sanitizeFileName ? this.sanitizeFileName(source.originalname) : source.originalname;
+    const extension = path.extname(safeFileName).toLowerCase();
+
+    const storedFileName = `${uuidv4()}${extension}`;
+    const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '/');
+    const relativePath = path.join(datePrefix, storedFileName);
+    const absolutePath = path.join(this.uploadDir, relativePath);
+
+    // Temp file for durable writing while streaming digest
+    const tempPromotePath = `${absolutePath}.${uuidv4()}.tmp`;
+
+    const dir = path.dirname(absolutePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+
+    const hashStream = crypto.createHash(algorithm);
+    const sha256Stream = algorithm === 'sha256' ? null : crypto.createHash('sha256');
+    const fileWriteStream = fs.createWriteStream(tempPromotePath, { mode: 0o600 });
+
+    let bytesWritten = 0;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        source.stream.on('data', (chunk: Buffer) => {
+          bytesWritten += chunk.length;
+          hashStream.update(chunk);
+          if (sha256Stream) {
+            sha256Stream.update(chunk);
+          }
+          if (!fileWriteStream.write(chunk)) {
+            source.stream.pause();
+            fileWriteStream.once('drain', () => source.stream.resume());
+          }
+        });
+
+        source.stream.on('error', reject);
+        fileWriteStream.on('error', reject);
+        source.stream.on('end', () => {
+          fileWriteStream.end(() => resolve());
+        });
+      });
+
+      const calculatedDigest = hashStream.digest('hex');
+      if (options?.expectedChecksum) {
+        this.verifyChecksum(calculatedDigest, options.expectedChecksum, algorithm);
+      }
+
+      // Promote temp file to durable target atomically
+      fs.renameSync(tempPromotePath, absolutePath);
+
+      const contentHash = options?.computeHash !== false
+        ? (algorithm === 'sha256' ? calculatedDigest : sha256Stream!.digest('hex'))
+        : '';
+
+      const metadata: FileUploadResponseDto = {
+        id: uuidv4(),
+        originalName: safeFileName,
+        mimeType: source.mimetype,
+        size: bytesWritten,
+        extension,
+        storagePath: relativePath,
+        contentHash,
+        uploadedAt: new Date(),
+      };
+
+      this.logger.log(`Streamed file stored: ${safeFileName} (${bytesWritten} bytes, ${source.mimetype}) -> ${relativePath}`);
+      return metadata;
+    } catch (error) {
+      if (fs.existsSync(tempPromotePath)) {
+        try {
+          fs.unlinkSync(tempPromotePath);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+      throw error;
+    }
+  }
+
+  private assertSupportedChecksumAlgorithm(algorithm: string): void {
+    if (!SUPPORTED_CHECKSUM_ALGORITHMS.includes(algorithm as any)) {
+      throw new BadRequestException(
+        `Unsupported checksum algorithm: '${algorithm}'. Supported algorithms: ${SUPPORTED_CHECKSUM_ALGORITHMS.join(', ')}`,
+      );
+    }
+  }
+
+  private verifyChecksum(actual: string, expected: string, algorithm: string): void {
+    const cleanExpected = expected.trim().toLowerCase();
+    const cleanActual = actual.toLowerCase();
+
+    // Constant-time comparison to prevent timing side channels
+    const expectedBuf = Buffer.from(cleanExpected);
+    const actualBuf = Buffer.from(cleanActual);
+
+    const matches =
+      expectedBuf.length === actualBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, actualBuf);
+
+    if (!matches) {
+      throw new BadRequestException(
+        `Checksum verification failed for algorithm '${algorithm}': expected ${cleanExpected}, calculated ${cleanActual}`,
+      );
     }
   }
 

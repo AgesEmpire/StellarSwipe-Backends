@@ -30,7 +30,20 @@ export interface FileUploadOptions {
   validateContent?: boolean;
   /** Whether to route through malware scanning integration (default: true). */
   scanMalware?: boolean;
+  /**
+   * Optional client-provided checksum (hex string) to verify before promoting
+   * the upload to durable storage.
+   */
+  expectedChecksum?: string;
+  /**
+   * Algorithm used for checksum verification.
+   * Supported: 'sha256', 'sha512', 'md5'. Defaults to 'sha256'.
+   */
+  checksumAlgorithm?: SupportedChecksumAlgorithm;
 }
+
+export const SUPPORTED_CHECKSUM_ALGORITHMS = ['sha256', 'sha512', 'md5'] as const;
+export type SupportedChecksumAlgorithm = (typeof SUPPORTED_CHECKSUM_ALGORITHMS)[number];
 
 export interface FileValidationResult {
   valid: boolean;
