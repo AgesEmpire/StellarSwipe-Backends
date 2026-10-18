@@ -8,9 +8,13 @@ import {
   Context,
   Int,
 } from '@nestjs/graphql';
-import { UseGuards, Logger } from '@nestjs/common';
+import { UseGuards, UseInterceptors, Logger } from '@nestjs/common';
 
 import { GqlAuthGuard } from '../guards/gql-auth.guard';
+import {
+  ResolverTimeout,
+  ResolverTimeoutInterceptor,
+} from '../interceptors/resolver-timeout.interceptor';
 import {
   ProviderType,
   ProviderStatsType,
@@ -55,6 +59,10 @@ export class ProviderResolver {
     return this.providersService.findById(id);
   }
 
+  // Issue #1385: ranks across the full provider set, so it's budgeted
+  // rather than left free to run unbounded against a growing table.
+  @ResolverTimeout(4000)
+  @UseInterceptors(ResolverTimeoutInterceptor)
   @Query(() => [ProviderType], { description: 'Top providers ranked by win rate' })
   async topProviders(
     @Args('limit', { type: () => Int, nullable: true, defaultValue: 10 }) limit?: number,
@@ -65,6 +73,9 @@ export class ProviderResolver {
   // ─── Field resolvers ───────────────────────────────────────────────────────
 
   /** Aggregated stats resolved lazily — skipped if client doesn't request the field. */
+  // Issue #1385: aggregates across a provider's full signal/trade history.
+  @ResolverTimeout(4000)
+  @UseInterceptors(ResolverTimeoutInterceptor)
   @ResolveField(() => ProviderStatsType)
   async stats(@Parent() provider: ProviderType): Promise<ProviderStatsType> {
     return this.providersService.getStats(provider.id);

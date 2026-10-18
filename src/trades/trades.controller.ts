@@ -58,8 +58,10 @@ import {
 } from './dto/trade-result.dto';
 import { PaginatedTradeHistoryDto } from './trade-history.service';
 import { Deprecated } from '../versioning/decorators/deprecated.decorator';
+import { RejectDuplicateJsonKeys } from '../common/decorators/reject-duplicate-json-keys.decorator';
 
 @Controller('trades')
+@RejectDuplicateJsonKeys()
 @UseInterceptors(IdempotencyInterceptor)
 export class TradesController {
   constructor(

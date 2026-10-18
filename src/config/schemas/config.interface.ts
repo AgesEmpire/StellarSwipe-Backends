@@ -42,6 +42,15 @@ export interface HorizonBulkheadConfig {
 export interface StellarConfig {
   network: 'testnet' | 'public';
   horizonUrl: string;
+  /**
+   * Ordered list of Horizon endpoints to select among for health-aware
+   * failover (#1373). Always includes `horizonUrl` as the first candidate;
+   * additional endpoints come from `STELLAR_HORIZON_URLS`. Every endpoint
+   * here must serve the same `network`/`networkPassphrase` — failover only
+   * ever changes *which URL* is called, never which Stellar network the
+   * request targets.
+   */
+  horizonUrls: string[];
   sorobanRpcUrl: string;
   networkPassphrase: string;
   apiTimeout: number;

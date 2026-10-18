@@ -33,6 +33,7 @@
     "validate:deprecation-sunset": "ts-node -r tsconfig-paths/register scripts/validate-deprecation-sunset.ts",
     "sdk:generate-types": "bash scripts/generate-sdk-types.sh",
     "sdk:check-drift": "bash scripts/check-sdk-drift.sh",
+    "es:check-mapping-drift": "ts-node -r tsconfig-paths/register scripts/check-es-mapping-drift.ts",
     "migration:ci": "npm run migration:run && npm run seed",
     "seed": "ts-node -r tsconfig-paths/register src/database/seeds/seed.ts",
     "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0",

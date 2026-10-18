@@ -49,6 +49,7 @@ describe('WebhookSenderService', () => {
   };
   let signatureGenerator: {
     generateSignature: jest.Mock;
+    generateVersionedSignatureHeader: jest.Mock;
     signWithWebhookSecret: jest.Mock;
   };
   let eventEmitter: {
@@ -82,7 +83,8 @@ describe('WebhookSenderService', () => {
     };
     signatureGenerator = {
       generateSignature: jest.fn().mockReturnValue('signed-payload'),
-      signWithWebhookSecret: jest.fn().mockReturnValue('signed-challenge'),
+      generateVersionedSignatureHeader: jest.fn().mockReturnValue('v1=signed-payload'),
+      signWithWebhookSecret: jest.fn().mockReturnValue('v1=signed-challenge'),
     };
     eventEmitter = {
       emit: jest.fn().mockReturnValue(true),
@@ -157,7 +159,8 @@ describe('WebhookSenderService', () => {
           data: challenge,
           maxRedirects: 0,
           headers: expect.objectContaining({
-            'X-StellarSwipe-Signature': 'sha256=signed-challenge',
+            'X-StellarSwipe-Signature': 'v1=signed-challenge',
+            'X-StellarSwipe-Signature-Version': 'v1',
             'X-StellarSwipe-Event': 'webhook.verification',
           }),
         }),
@@ -265,23 +268,21 @@ describe('WebhookSenderService', () => {
 
       await service.deliverQueuedDelivery(delivery.id, 1, false);
 
-      expect(signatureGenerator.generateSignature).toHaveBeenCalledWith(
+      expect(signatureGenerator.generateVersionedSignatureHeader).toHaveBeenCalledWith(
         delivery.payload,
         delivery.webhook.secret,
       );
-      expect(mockedAxios.request).toHaveBeenCalledWith(
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        delivery.webhook.url,
+        delivery.payload,
         expect.objectContaining({
-          url: delivery.webhook.url,
-          method: 'post',
-          data: delivery.payload,
-          maxRedirects: 0,
           headers: {
             'Content-Type': 'application/json',
-            'X-StellarSwipe-Signature': 'sha256=signed-payload',
+            'X-StellarSwipe-Signature': 'v1=signed-payload',
+            'X-StellarSwipe-Signature-Version': 'v1',
             'X-StellarSwipe-Event': delivery.eventType,
             'X-StellarSwipe-Delivery-Id': delivery.eventId,
           },
-          timeout: 5000,
         }),
       );
       expect(deliveryRepo.save).toHaveBeenCalledWith(

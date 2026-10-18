@@ -10,7 +10,10 @@ import { NotificationService } from '../../notifications/notification.service';
 import { Webhook } from '../entities/webhook.entity';
 import { WebhookDelivery } from '../entities/webhook-delivery.entity';
 import { WebhookPayload } from '../dto/webhook-event.dto';
-import { SignatureGeneratorService } from './signature-generator.service';
+import {
+  CURRENT_SIGNATURE_VERSION,
+  SignatureGeneratorService,
+} from './signature-generator.service';
 import { WebhookDeliveryMetricsService } from './webhook-delivery-metrics.service';
 import { sendWithValidatedRedirects } from './safe-webhook-http';
 import {
@@ -84,6 +87,8 @@ export class WebhookSenderService {
     url: string,
     challenge: WebhookVerificationChallenge,
   ): Promise<boolean> {
+    // signWithWebhookSecret already returns a versioned `v1=<hex>` value so
+    // the destination can identify the signing algorithm up front.
     const signature = this.signatureGenerator.signWithWebhookSecret(
       challenge,
       webhook,
@@ -99,7 +104,8 @@ export class WebhookSenderService {
         data: challenge,
         headers: {
           'Content-Type': 'application/json',
-          'X-StellarSwipe-Signature': `sha256=${signature}`,
+          'X-StellarSwipe-Signature': signature,
+          'X-StellarSwipe-Signature-Version': CURRENT_SIGNATURE_VERSION,
           'X-StellarSwipe-Event': WEBHOOK_VERIFICATION_EVENT,
         },
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
@@ -150,7 +156,7 @@ export class WebhookSenderService {
     // consumer adopts the new key. Falls back to the current secret when no
     // rotation is in progress.
     const signingSecret = this.resolveSigningSecret(webhook);
-    const signature = this.signatureGenerator.generateSignature(
+    const signature = this.signatureGenerator.generateVersionedSignatureHeader(
       payload,
       signingSecret,
     );
@@ -199,7 +205,7 @@ export class WebhookSenderService {
 
     const payload = delivery.payload as unknown as WebhookPayload;
     const signingSecret = this.resolveSigningSecret(webhook);
-    const signature = this.signatureGenerator.generateSignature(
+    const signature = this.signatureGenerator.generateVersionedSignatureHeader(
       payload,
       signingSecret,
     );
@@ -470,13 +476,21 @@ export class WebhookSenderService {
     }
   }
 
+  /**
+   * `signature` is already a versioned `<version>=<hex>` value (see
+   * `SignatureGeneratorService.generateVersionedSignatureHeader`), so it's
+   * sent as-is. `X-StellarSwipe-Signature-Version` repeats the version in
+   * its own header for subscribers that prefer not to parse it out of the
+   * signature value.
+   */
   private buildHeaders(
     payload: WebhookPayload,
     signature: string,
   ): Record<string, string> {
     return {
       'Content-Type': 'application/json',
-      'X-StellarSwipe-Signature': `sha256=${signature}`,
+      'X-StellarSwipe-Signature': signature,
+      'X-StellarSwipe-Signature-Version': CURRENT_SIGNATURE_VERSION,
       'X-StellarSwipe-Event': payload.event,
       'X-StellarSwipe-Delivery-Id': payload.deliveryId,
     };

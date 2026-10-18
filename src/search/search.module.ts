@@ -6,6 +6,7 @@ import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 import { ElasticsearchConfigService } from './services/elasticsearch.service';
+import { MappingValidationService } from './services/mapping-validation.service';
 import { SearchAnalyticsService } from './services/search-analytics.service';
 import { SignalIndexerService } from './indexers/signal-indexer.service';
 import { ProviderIndexerService } from './indexers/provider-indexer.service';
@@ -47,6 +48,7 @@ import {
   providers: [
     SearchService,
     ElasticsearchConfigService,
+    MappingValidationService,
     SearchAnalyticsService,
     SignalIndexerService,
     ProviderIndexerService,
@@ -58,6 +60,7 @@ import {
     ProviderIndexerService,
     ContentIndexerService,
     SearchAnalyticsService,
+    MappingValidationService,
   ],
 })
 export class SearchModule {}

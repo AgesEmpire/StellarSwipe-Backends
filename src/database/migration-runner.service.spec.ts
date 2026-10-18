@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { MigrationRunnerService } from './migration-runner.service';
+import { AdvisoryLockService } from '../common/database/advisory-lock.service';
 
 const mockDataSource = () => ({
   migrations: [],
@@ -10,20 +11,29 @@ const mockDataSource = () => ({
   createQueryRunner: jest.fn(),
 });
 
+const mockAdvisoryLockService = () => ({
+  tryAcquire: jest.fn().mockResolvedValue(true),
+  release: jest.fn().mockResolvedValue(undefined),
+  runExclusive: jest.fn(),
+});
+
 describe('MigrationRunnerService', () => {
   let service: MigrationRunnerService;
   let dataSource: ReturnType<typeof mockDataSource>;
+  let advisoryLockService: ReturnType<typeof mockAdvisoryLockService>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MigrationRunnerService,
         { provide: getDataSourceToken(), useFactory: mockDataSource },
+        { provide: AdvisoryLockService, useFactory: mockAdvisoryLockService },
       ],
     }).compile();
 
     service = module.get(MigrationRunnerService);
     dataSource = module.get(getDataSourceToken());
+    advisoryLockService = module.get(AdvisoryLockService);
   });
 
   describe('runMigrations', () => {
@@ -71,6 +81,74 @@ describe('MigrationRunnerService', () => {
 
       expect(result.failed).toContain('Incompatible pending migrations detected');
       expect(dataSource.runMigrations).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('concurrency protection (Issue #1369)', () => {
+    it('acquires the shared migrations advisory lock before running', async () => {
+      dataSource.migrations = [];
+      dataSource.createQueryRunner.mockReturnValue({ hasTable: jest.fn().mockResolvedValue(true), release: jest.fn() });
+      dataSource.query.mockResolvedValue([]);
+
+      await service.runMigrations();
+
+      expect(advisoryLockService.tryAcquire).toHaveBeenCalledWith('stellarswipe:migrations');
+      expect(advisoryLockService.release).toHaveBeenCalledWith('stellarswipe:migrations');
+    });
+
+    it('skips the migration run without touching the schema when the lock is already held', async () => {
+      advisoryLockService.tryAcquire.mockResolvedValue(false);
+
+      const result = await service.runMigrations();
+
+      expect(result.failed).toBe('Another migration run is already in progress');
+      expect(dataSource.runMigrations).not.toHaveBeenCalled();
+      expect(advisoryLockService.release).not.toHaveBeenCalled();
+    });
+
+    it('releases the lock even when the migration run throws', async () => {
+      const migration = { constructor: { name: 'CreateUsers1700000000000' }, up: jest.fn(), down: jest.fn() };
+      dataSource.migrations = [migration];
+      dataSource.createQueryRunner.mockReturnValue({ hasTable: jest.fn().mockResolvedValue(true), release: jest.fn() });
+      dataSource.query.mockResolvedValue([]);
+      dataSource.runMigrations.mockRejectedValue(new Error('boom'));
+
+      await service.runMigrations();
+
+      expect(advisoryLockService.release).toHaveBeenCalledWith('stellarswipe:migrations');
+    });
+
+    it('simulates two concurrent runner instances: only the first proceeds', async () => {
+      // Model a single Postgres-backed advisory lock shared across two
+      // "instances" of MigrationRunnerService — the first tryAcquire call
+      // succeeds, every subsequent one fails until release() is called.
+      let locked = false;
+      advisoryLockService.tryAcquire.mockImplementation(async () => {
+        if (locked) return false;
+        locked = true;
+        return true;
+      });
+      advisoryLockService.release.mockImplementation(async () => {
+        locked = false;
+      });
+
+      dataSource.migrations = [];
+      dataSource.createQueryRunner.mockReturnValue({ hasTable: jest.fn().mockResolvedValue(true), release: jest.fn() });
+      dataSource.query.mockResolvedValue([]);
+
+      const [first, second] = await Promise.all([
+        service.runMigrations(),
+        service.runMigrations(),
+      ]);
+
+      const results = [first, second];
+      const skipped = results.filter((r) => r.failed === 'Another migration run is already in progress');
+      const proceeded = results.filter((r) => r.failed === undefined);
+
+      // Exactly one of the two concurrent calls actually ran; the other
+      // observed the lock already held and backed off immediately.
+      expect(skipped).toHaveLength(1);
+      expect(proceeded).toHaveLength(1);
     });
   });
 

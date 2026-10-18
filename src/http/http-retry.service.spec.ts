@@ -4,6 +4,7 @@ import { HttpModule, HttpService } from '@nestjs/axios';
 import { of, throwError } from 'rxjs';
 import { HttpRetryService } from './http-retry.service';
 import { ProviderConcurrencyService } from './provider-concurrency.service';
+import { RetryBudgetService } from './retry-budget.service';
 import { BulkheadRejectedError } from '../stellar/bulkhead/bulkhead';
 
 // ---------------------------------------------------------------------------
@@ -13,6 +14,12 @@ import { BulkheadRejectedError } from '../stellar/bulkhead/bulkhead';
 function axiosError(status: number, message = `HTTP ${status}`) {
   const err: any = new Error(message);
   err.response = { status };
+  return err;
+}
+
+function axios429WithRetryAfter(retryAfter: string) {
+  const err: any = new Error('HTTP 429');
+  err.response = { status: 429, headers: { 'retry-after': retryAfter } };
   return err;
 }
 
@@ -492,4 +499,181 @@ describe('HttpRetryService — stub server integration (Issue #1061)', () => {
     ).rejects.toThrow();
     expect(requestCount).toBe(1); // no retries happened
   }, 10_000);
+});
+
+// ---------------------------------------------------------------------------
+// Per-provider rate-limit (429) response handling (Issue #1374)
+// ---------------------------------------------------------------------------
+
+describe('HttpRetryService — per-provider rate limit response handling (Issue #1374)', () => {
+  let service: HttpRetryService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [HttpRetryService, { provide: HttpService, useValue: {} }],
+    }).compile();
+    service = module.get(HttpRetryService);
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn(service as any, 'sleep').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    delete process.env.OUTBOUND_COINGECKO_MAX_RETRY_AFTER_MS;
+    delete process.env.OUTBOUND_DEFAULT_MAX_RETRY_AFTER_MS;
+  });
+
+  it('computeDelay() honours a Retry-After header (seconds form) over exponential backoff', () => {
+    const opts = { baseDelayMs: 500, maxDelayMs: 10_000, jitter: false, maxAttempts: 3, retryableStatuses: [429] };
+    const delay = service.computeDelay(1, opts, axios429WithRetryAfter('7'));
+    expect(delay).toBe(7000);
+  });
+
+  it('computeDelay() clamps a Retry-After hint to the provider-configured cap', () => {
+    process.env.OUTBOUND_COINGECKO_MAX_RETRY_AFTER_MS = '2000';
+    const opts = { baseDelayMs: 500, maxDelayMs: 10_000, jitter: false, maxAttempts: 3, retryableStatuses: [429] };
+    const delay = service.computeDelay(1, opts, axios429WithRetryAfter('60'), 'coingecko');
+    expect(delay).toBe(2000);
+  });
+
+  it('computeDelay() falls back to exponential backoff when 429 has no Retry-After header', () => {
+    const opts = { baseDelayMs: 500, maxDelayMs: 10_000, jitter: false, maxAttempts: 3, retryableStatuses: [429] };
+    const delay = service.computeDelay(2, opts, axiosError(429));
+    expect(delay).toBe(1000); // unaffected — same as plain exponential backoff
+  });
+
+  it('computeDelay() ignores Retry-After for non-429 errors', () => {
+    const opts = { baseDelayMs: 500, maxDelayMs: 10_000, jitter: false, maxAttempts: 3, retryableStatuses: [503] };
+    const err: any = axiosError(503);
+    err.response.headers = { 'retry-after': '99' };
+    const delay = service.computeDelay(1, opts, err);
+    expect(delay).toBe(500);
+  });
+
+  it('executeWithRetry() sleeps for the Retry-After duration on a 429 and then succeeds', async () => {
+    const sleepSpy = jest.spyOn(service as any, 'sleep').mockResolvedValue(undefined);
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axios429WithRetryAfter('3'))
+      .mockResolvedValueOnce('ok');
+
+    const result = await service.executeWithRetry(fn, 'test', { provider: 'coingecko' });
+
+    expect(result).toBe('ok');
+    expect(sleepSpy).toHaveBeenCalledWith(3000);
+  });
+
+  it('still fails immediately for permanent (non-retryable) errors even with provider set', async () => {
+    const fn = jest.fn().mockRejectedValue(axiosError(404));
+    await expect(
+      service.executeWithRetry(fn, 'test', { provider: 'coingecko', maxAttempts: 3 }),
+    ).rejects.toThrow('HTTP 404');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared retry budgets to prevent retry storms (Issue #1376)
+// ---------------------------------------------------------------------------
+
+describe('HttpRetryService — shared retry budget (Issue #1376)', () => {
+  let service: HttpRetryService;
+  let retryBudget: RetryBudgetService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        HttpRetryService,
+        RetryBudgetService,
+        { provide: HttpService, useValue: {} },
+      ],
+    }).compile();
+    service = module.get(HttpRetryService);
+    retryBudget = module.get(RetryBudgetService);
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn((retryBudget as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn(service as any, 'sleep').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  it('retries normally while the shared budget has tokens', async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axiosError(503))
+      .mockResolvedValueOnce('ok');
+
+    await expect(
+      service.executeWithRetry(fn, 'test', { provider: 'coingecko', maxAttempts: 5 }),
+    ).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails fast once the shared retry budget for a provider is exhausted', async () => {
+    // Drain the budget for "coingecko" directly.
+    for (let i = 0; i < 10; i++) {
+      retryBudget.tryConsume('coingecko');
+    }
+
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axiosError(503))
+      .mockResolvedValueOnce('ok');
+
+    await expect(
+      service.executeWithRetry(fn, 'test', { provider: 'coingecko', maxAttempts: 5 }),
+    ).rejects.toThrow('HTTP 503');
+    // Only the first attempt ran — the retry was denied by the exhausted budget.
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('isolates retry budgets per provider — one exhausted provider does not affect another', async () => {
+    for (let i = 0; i < 10; i++) {
+      retryBudget.tryConsume('coingecko');
+    }
+
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axiosError(503))
+      .mockResolvedValueOnce('ok');
+
+    await expect(
+      service.executeWithRetry(fn, 'test', { provider: 'stellar-expert', maxAttempts: 3 }),
+    ).resolves.toBe('ok');
+  });
+
+  it('shares a single "default" budget across calls with no provider specified', async () => {
+    for (let i = 0; i < 10; i++) {
+      retryBudget.tryConsume('default');
+    }
+
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axiosError(503))
+      .mockResolvedValueOnce('ok');
+
+    await expect(
+      service.executeWithRetry(fn, 'test', { maxAttempts: 3 }),
+    ).rejects.toThrow('HTTP 503');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('works unchanged when no RetryBudgetService is provided (optional dependency)', async () => {
+    const bareModule: TestingModule = await Test.createTestingModule({
+      providers: [HttpRetryService, { provide: HttpService, useValue: {} }],
+    }).compile();
+    const bareService = bareModule.get(HttpRetryService);
+    jest.spyOn((bareService as any).logger, 'error').mockImplementation(() => {});
+    jest.spyOn((bareService as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn(bareService as any, 'sleep').mockResolvedValue(undefined);
+
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axiosError(503))
+      .mockResolvedValueOnce('ok');
+
+    await expect(bareService.executeWithRetry(fn, 'test')).resolves.toBe('ok');
+  });
 });

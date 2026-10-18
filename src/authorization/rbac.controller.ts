@@ -26,8 +26,10 @@ import { AssignRoleDto } from './dto/assign-role.dto';
 import { RequirePermissions, RequireWorkflowApproval } from './decorators/require-permissions.decorator';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { WorkflowApprovalGuard } from './guards/workflow-approval.guard';
+import { RejectDuplicateJsonKeys } from '../common/decorators/reject-duplicate-json-keys.decorator';
 
 @Controller('authorization')
+@RejectDuplicateJsonKeys()
 @UseGuards(PermissionsGuard)
 export class RbacController {
   constructor(private readonly rbacService: RbacService) {}

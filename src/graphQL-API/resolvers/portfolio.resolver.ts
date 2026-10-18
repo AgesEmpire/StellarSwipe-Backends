@@ -1,7 +1,11 @@
 import { Resolver, Query, ResolveField, Parent, Context } from '@nestjs/graphql';
-import { UseGuards, Logger } from '@nestjs/common';
+import { UseGuards, UseInterceptors, Logger } from '@nestjs/common';
 
 import { GqlAuthGuard } from '../guards/gql-auth.guard';
+import {
+  ResolverTimeout,
+  ResolverTimeoutInterceptor,
+} from '../interceptors/resolver-timeout.interceptor';
 import {
   PortfolioType,
   PortfolioPerformanceType,
@@ -67,8 +71,13 @@ export class PortfolioResolver {
     return this.portfolioService.getAllocation(portfolio.userId);
   }
 
+  // Issue #1385: performance aggregates across every position/trade for the
+  // account, so it gets its own execution budget instead of inheriting
+  // whatever the surrounding HTTP/WS transport timeout happens to be.
   @UseGuards(GqlOwnershipGuard)
   @FieldOwner()
+  @ResolverTimeout(4000)
+  @UseInterceptors(ResolverTimeoutInterceptor)
   @ResolveField(() => PortfolioPerformanceType)
   async performance(@Parent() portfolio: PortfolioType): Promise<PortfolioPerformanceType> {
     return this.portfolioService.getPerformance(portfolio.userId);

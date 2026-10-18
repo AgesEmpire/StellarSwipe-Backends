@@ -11,6 +11,7 @@ import {
   KafkaHealthIndicator,
   DatabasePoolHealthIndicator,
   MigrationHealthIndicator,
+  TransactionReadinessIndicator,
 } from './indicators';
 import { StellarConfigService } from '../config/stellar.service';
 import { HealthSummaryService } from './health-summary.service';
@@ -44,6 +45,7 @@ import { DatabaseOptimizationModule } from '../database/database.module';
     KafkaHealthIndicator,
     DatabasePoolHealthIndicator,
     MigrationHealthIndicator,
+    TransactionReadinessIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
     ReadinessService,
@@ -57,6 +59,7 @@ import { DatabaseOptimizationModule } from '../database/database.module';
     KafkaHealthIndicator,
     DatabasePoolHealthIndicator,
     MigrationHealthIndicator,
+    TransactionReadinessIndicator,
     HealthSummaryService,
     SyntheticMonitoringService,
     ReadinessService,

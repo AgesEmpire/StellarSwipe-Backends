@@ -41,7 +41,19 @@ export class WebsocketGateway
 
   async handleConnection(@ConnectedSocket() client: Socket): Promise<void> {
     try {
-      const user = this.wsJwtGuard.validateSocket(client);
+      const user = await this.wsJwtGuard.validateSocket(client);
+
+      // Issue #1386: cap concurrent connections per account before the
+      // socket is admitted to its account room, so rejected sockets never
+      // count toward (or receive) that account's private traffic.
+      const withinLimit = await this.socketManager.enforceConnectionLimit(
+        user.sub,
+        client,
+      );
+      if (!withinLimit) {
+        this.closeConnectionLimitExceeded(client);
+        return;
+      }
 
       await client.join(this.socketManager.getUserRoom(user.sub));
       await client.join(SocketRoom.SIGNALS_FEED);
@@ -117,9 +129,18 @@ export class WebsocketGateway
   }
 
   private closeUnauthorized(client: Socket): void {
+    this.closeWithCode(client, 4001, 'Unauthorized');
+  }
+
+  /** Issue #1386: closed when the account is already at its concurrent-connection cap. */
+  private closeConnectionLimitExceeded(client: Socket): void {
+    this.closeWithCode(client, 4008, 'Connection limit exceeded');
+  }
+
+  private closeWithCode(client: Socket, code: number, reason: string): void {
     const rawSocket = this.getRawWebSocket(client);
     if (rawSocket?.close) {
-      rawSocket.close(4001, 'Unauthorized');
+      rawSocket.close(code, reason);
       return;
     }
 
