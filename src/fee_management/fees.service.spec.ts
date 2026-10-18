@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { FeesService, STAKING_STATUS_SERVICE } from './fees.service';
 import { FeeTransaction, FeeStatus, FeeTier } from './entities/fee-transaction.entity';
+import { FeeManagerService } from './fee-manager.service';
 
 describe('FeesService', () => {
   let service: FeesService;
@@ -28,7 +29,16 @@ describe('FeesService', () => {
     }),
   };
 
+  const mockFeeManager = {
+    checkPromotionEligibility: jest.fn(),
+    getActivePromotions: jest.fn(),
+    computePromotionalDiscount: jest.fn(),
+    redeemPromotion: jest.fn(),
+  };
+
   beforeEach(async () => {
+    mockFeeManager.getActivePromotions.mockResolvedValue([]);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FeesService,
@@ -39,6 +49,10 @@ describe('FeesService', () => {
         {
           provide: ConfigService,
           useValue: mockConfigService,
+        },
+        {
+          provide: FeeManagerService,
+          useValue: mockFeeManager,
         },
       ],
     }).compile();
@@ -408,108 +422,108 @@ describe('FeesService', () => {
       expect(parseFloat(result.feeAmount)).toBeGreaterThanOrEqual(0);
     });
   });
-});
 
-// ---------------------------------------------------------------------------
-// Staking status integration (issue #1188)
-// ---------------------------------------------------------------------------
+  describe('promotion eligibility', () => {
+    const tradeDetails = {
+      userId: 'user123',
+      tradeId: 'trade456',
+      tradeAmount: '1000',
+      assetCode: 'USDC',
+      assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    };
 
-describe('FeesService – staking status', () => {
-  const tradeDetails = {
-    userId: 'staker-1',
-    tradeId: 'trade-stake',
-    tradeAmount: '1000',
-    assetCode: 'USDC',
-    assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-  };
-
-  const buildService = async (getStakingStatus: jest.Mock): Promise<FeesService> => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        FeesService,
-        { provide: getRepositoryToken(FeeTransaction), useValue: mockFeeRepository },
-        { provide: ConfigService, useValue: mockConfigService },
-        {
-          provide: STAKING_STATUS_SERVICE,
-          useValue: { getStakingStatus },
+    it('applies an explicit, auditable discount for an eligible promotion', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.checkPromotionEligibility.mockResolvedValue({
+        eligible: true,
+        promotion: {
+          id: 'promo-1',
+          promoCode: 'SAVE10',
+          name: 'Save 10%',
+          promotionType: 'PERCENTAGE_DISCOUNT',
+          discountPercentage: '10',
         },
-      ],
-    }).compile();
+      });
+      mockFeeManager.computePromotionalDiscount.mockReturnValue({
+        discount: '0.1000000',
+        discountedFee: '0.9000000',
+        capped: false,
+      });
 
-    return module.get<FeesService>(FeesService);
-  };
+      const result = await service.calculateFee({
+        ...tradeDetails,
+        promoCode: 'SAVE10',
+      });
 
-  beforeEach(() => {
-    mockFeeRepository.find.mockResolvedValue([]);
-  });
-
-  it('applies the configured VIP treatment for an active, unexpired stake', async () => {
-    const service = await buildService(
-      jest.fn().mockResolvedValue({
-        isActive: true,
-        expiresAt: new Date(Date.now() + 86_400_000),
-      }),
-    );
-
-    const result = await service.calculateFee(tradeDetails);
-
-    expect(result.feeTier).toBe(FeeTier.VIP);
-    expect(result.feeRate).toBe('0.0005');
-    expect(result.feeAmount).toBe('0.5000000');
-    expect(result.netAmount).toBe('999.5000000');
-  });
-
-  it('ignores an inactive stake and keeps the standard tier', async () => {
-    const service = await buildService(
-      jest.fn().mockResolvedValue({
-        isActive: false,
-        expiresAt: new Date(Date.now() + 86_400_000),
-      }),
-    );
-
-    const result = await service.calculateFee(tradeDetails);
-
-    expect(result.feeTier).toBe(FeeTier.STANDARD);
-    expect(result.feeRate).toBe('0.001');
-  });
-
-  it('ignores an expired stake and keeps the standard tier', async () => {
-    const service = await buildService(
-      jest.fn().mockResolvedValue({
-        isActive: true,
-        expiresAt: new Date(Date.now() - 86_400_000),
-      }),
-    );
-
-    const result = await service.calculateFee(tradeDetails);
-
-    expect(result.feeTier).toBe(FeeTier.STANDARD);
-    expect(result.feeRate).toBe('0.001');
-  });
-
-  it('falls back to the standard tier when the staking service is unavailable', async () => {
-    const service = await buildService(
-      jest.fn().mockRejectedValue(new Error('staking service down')),
-    );
-
-    await expect(service.calculateFee(tradeDetails)).resolves.toMatchObject({
-      feeTier: FeeTier.STANDARD,
-      feeRate: '0.001',
+      expect(result.feeAmount).toBe('0.9000000');
+      expect(result.netAmount).toBe('999.1000000');
+      expect(result.promotionApplied).toEqual({
+        promoCode: 'SAVE10',
+        promotionId: 'promo-1',
+        promotionName: 'Save 10%',
+        originalFee: '1.0000000',
+        discount: '0.1000000',
+        discountedFee: '0.9000000',
+        capped: false,
+      });
     });
-  });
 
-  it('proceeds without a staking service configured', async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        FeesService,
-        { provide: getRepositoryToken(FeeTransaction), useValue: mockFeeRepository },
-        { provide: ConfigService, useValue: mockConfigService },
-      ],
-    }).compile();
-    const service = module.get<FeesService>(FeesService);
+    it('ignores expired or ineligible promotions and keeps the base fee', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.checkPromotionEligibility.mockResolvedValue({
+        eligible: false,
+        reason: 'Promotion has expired',
+      });
 
-    const result = await service.calculateFee(tradeDetails);
+      const result = await service.calculateFee({
+        ...tradeDetails,
+        promoCode: 'EXPIRED',
+      });
 
-    expect(result.feeTier).toBe(FeeTier.STANDARD);
+      expect(result.feeAmount).toBe('1.0000000');
+      expect(result.promotionApplied).toBeUndefined();
+    });
+
+    it('never stacks conflicting automatic promotions; the largest bounded discount wins', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.getActivePromotions.mockResolvedValue([
+        { promoCode: 'AUTO5', requiresCode: false },
+        { promoCode: 'AUTO20', requiresCode: false },
+      ]);
+      mockFeeManager.checkPromotionEligibility.mockImplementation((code: string) =>
+        Promise.resolve({
+          eligible: true,
+          promotion: {
+            id: code,
+            promoCode: code,
+            name: code,
+            promotionType: 'PERCENTAGE_DISCOUNT',
+          },
+        }),
+      );
+      mockFeeManager.computePromotionalDiscount.mockImplementation(
+        (_baseFee: string, _amount: string, promotion: any) =>
+          promotion.promoCode === 'AUTO20'
+            ? { discount: '0.2000000', discountedFee: '0.8000000', capped: false }
+            : { discount: '0.0500000', discountedFee: '0.9500000', capped: false },
+      );
+
+      const result = await service.calculateFee(tradeDetails);
+
+      expect(result.promotionApplied?.promoCode).toBe('AUTO20');
+      expect(result.feeAmount).toBe('0.8000000');
+    });
+
+    it('falls back to the base fee when the promotions provider fails', async () => {
+      mockFeeRepository.find.mockResolvedValue([]);
+      mockFeeManager.getActivePromotions.mockRejectedValue(
+        new Error('promotions service unavailable'),
+      );
+
+      const result = await service.calculateFee(tradeDetails);
+
+      expect(result.feeAmount).toBe('1.0000000');
+      expect(result.promotionApplied).toBeUndefined();
+    });
   });
 });

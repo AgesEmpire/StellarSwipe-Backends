@@ -199,3 +199,102 @@ describe('createGraphqlWsAuthHandlers (graphql-ws handshake wiring)', () => {
     expect(handlers.context(ctx).user).toBeUndefined();
   });
 });
+
+describe('createGraphqlWsAuthHandlers (expiry reauthentication, #1384)', () => {
+  const activeUser = { id: 'user-1', username: 'alice', walletAddress: 'GABC...', isActive: true };
+
+  function buildDeps(overrides: Partial<SubscriptionAuthDeps> = {}): SubscriptionAuthDeps {
+    return {
+      jwtService: { verifyAsync: jest.fn() },
+      configService: { get: jest.fn().mockReturnValue('test-secret') },
+      usersService: { findById: jest.fn().mockResolvedValue(activeUser) },
+      sessionManager: { getSession: jest.fn().mockResolvedValue({ userId: 'user-1' } as any) },
+      ...overrides,
+    } as SubscriptionAuthDeps;
+  }
+
+  function buildConnectionContext(
+    connectionParams?: Record<string, unknown>,
+  ): GraphqlWsConnectionContext & { extra: { socket: { close: jest.Mock } } } {
+    return { connectionParams, extra: { socket: { close: jest.fn() } } };
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('closes the socket once the token in use has reached its `exp` claim', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const deps = buildDeps({
+      jwtService: {
+        verifyAsync: jest.fn().mockResolvedValue({ sub: 'user-1', exp: nowSeconds + 60 }),
+      },
+    });
+    const handlers = createGraphqlWsAuthHandlers(deps);
+    const ctx = buildConnectionContext({ authorization: 'Bearer good-token' });
+
+    await handlers.onConnect(ctx);
+    expect(ctx.extra.socket.close).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(60_000);
+
+    expect(ctx.extra.socket.close).toHaveBeenCalledWith(4401, expect.stringContaining('expired'));
+  });
+
+  it('does not schedule a close for a token with no `exp` claim', async () => {
+    const deps = buildDeps({
+      jwtService: { verifyAsync: jest.fn().mockResolvedValue({ sub: 'user-1' }) },
+    });
+    const handlers = createGraphqlWsAuthHandlers(deps);
+    const ctx = buildConnectionContext({ authorization: 'Bearer good-token' });
+
+    await handlers.onConnect(ctx);
+    jest.advanceTimersByTime(24 * 60 * 60 * 1000);
+
+    expect(ctx.extra.socket.close).not.toHaveBeenCalled();
+  });
+
+  it('clears the expiry timer on disconnect so it never fires for a closed connection', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const deps = buildDeps({
+      jwtService: {
+        verifyAsync: jest.fn().mockResolvedValue({ sub: 'user-1', exp: nowSeconds + 60 }),
+      },
+    });
+    const handlers = createGraphqlWsAuthHandlers(deps);
+    const ctx = buildConnectionContext({ authorization: 'Bearer good-token' });
+
+    await handlers.onConnect(ctx);
+    handlers.onDisconnect(ctx);
+    jest.advanceTimersByTime(60_000);
+
+    expect(ctx.extra.socket.close).not.toHaveBeenCalled();
+  });
+
+  it('replaces the previous timer when a connection re-authenticates with a new token', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const deps = buildDeps({
+      jwtService: {
+        verifyAsync: jest
+          .fn()
+          .mockResolvedValueOnce({ sub: 'user-1', exp: nowSeconds + 60 })
+          .mockResolvedValueOnce({ sub: 'user-1', exp: nowSeconds + 300 }),
+      },
+    });
+    const handlers = createGraphqlWsAuthHandlers(deps);
+    const ctx = buildConnectionContext({ authorization: 'Bearer first-token' });
+
+    await handlers.onConnect(ctx);
+    await handlers.onConnect(ctx); // re-handshake with a longer-lived token
+
+    jest.advanceTimersByTime(60_000);
+    expect(ctx.extra.socket.close).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(240_000);
+    expect(ctx.extra.socket.close).toHaveBeenCalledTimes(1);
+  });
+});

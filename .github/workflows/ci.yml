@@ -162,6 +162,33 @@ jobs:
             openapi-drift.log
           if-no-files-found: ignore
 
+  # #1379 — Fails the build when any @Deprecated()/@ApiDeprecated() route
+  # (checked via both route metadata and the generated OpenAPI document) is
+  # missing a sunset date or carries one that doesn't parse as YYYY-MM-DD.
+  deprecation-sunset:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate OpenAPI document
+        run: npm run openapi:generate
+        env:
+          NODE_ENV: test
+
+      - name: Validate deprecation sunset metadata
+        run: npm run validate:deprecation-sunset
+        env:
+          NODE_ENV: test
+
   e2e:
     runs-on: ubuntu-latest
     continue-on-error: true   # non-blocking on PRs; set to false on release branches

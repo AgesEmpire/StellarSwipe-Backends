@@ -6,6 +6,7 @@ import { FeatureAdoption } from './entities/feature-adoption.entity';
 import {
   TrackFeatureUsageDto,
   BulkTrackFeatureUsageDto,
+  BulkTrackFeatureUsageResponseDto,
   FeatureMetricsSummaryDto,
   GetFeatureMetricsDto,
   GetFeatureRankingDto,
@@ -57,23 +58,52 @@ export class FeatureTrackerService {
     await this.usageRepo.save(event);
   }
 
-  async trackBulk(dto: BulkTrackFeatureUsageDto): Promise<{ tracked: number }> {
-    const events = dto.events.map((e) =>
-      this.usageRepo.create({
-        featureKey: e.featureKey,
-        userId: e.userId,
-        userSegment: e.userSegment ?? UserSegment.FREE,
-        eventType: e.eventType ?? UsageEventType.INTERACT,
-        featureCategory: e.featureCategory ?? null,
-        sessionId: e.sessionId ?? null,
-        durationMs: e.durationMs ?? null,
-        metadata: e.metadata ?? null,
-        occurredAt: e.occurredAt ? new Date(e.occurredAt) : new Date(),
-      }),
-    );
+  /**
+   * Tracks each event in the batch independently (#1382): a malformed or
+   * failing event no longer aborts the whole request (the previous
+   * single `save(events[])` call would reject every event in the batch if
+   * any one of them failed) and every input event gets a stable,
+   * index-matched result entry — tracked or failed, with the failure
+   * reason — instead of the batch silently reporting only a success count.
+   */
+  async trackBulk(dto: BulkTrackFeatureUsageDto): Promise<BulkTrackFeatureUsageResponseDto> {
+    const results: BulkTrackFeatureUsageResponseDto['results'] = [];
+    let tracked = 0;
+    let failed = 0;
 
-    await this.usageRepo.save(events);
-    return { tracked: events.length };
+    for (let index = 0; index < dto.events.length; index++) {
+      const e = dto.events[index];
+      try {
+        const event = this.usageRepo.create({
+          featureKey: e.featureKey,
+          userId: e.userId,
+          userSegment: e.userSegment ?? UserSegment.FREE,
+          eventType: e.eventType ?? UsageEventType.INTERACT,
+          featureCategory: e.featureCategory ?? null,
+          sessionId: e.sessionId ?? null,
+          durationMs: e.durationMs ?? null,
+          metadata: e.metadata ?? null,
+          occurredAt: e.occurredAt ? new Date(e.occurredAt) : new Date(),
+        });
+        await this.usageRepo.save(event);
+        results.push({ index, status: 'tracked' });
+        tracked++;
+      } catch (error) {
+        this.logger.warn(
+          `Bulk feature-usage tracking failed for event at index ${index}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+        results.push({
+          index,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        failed++;
+      }
+    }
+
+    return { tracked, failed, results };
   }
 
   // -------------------------

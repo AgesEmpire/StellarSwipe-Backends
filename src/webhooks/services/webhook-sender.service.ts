@@ -4,14 +4,18 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Repository } from 'typeorm';
 import { Queue } from 'bullmq';
-import axios, { AxiosError, AxiosResponse } from 'axios';
+import { AxiosError, AxiosResponse } from 'axios';
 import { NotificationChannel } from '../../notifications/entities/notification.entity';
 import { NotificationService } from '../../notifications/notification.service';
 import { Webhook } from '../entities/webhook.entity';
 import { WebhookDelivery } from '../entities/webhook-delivery.entity';
 import { WebhookPayload } from '../dto/webhook-event.dto';
-import { SignatureGeneratorService } from './signature-generator.service';
+import {
+  CURRENT_SIGNATURE_VERSION,
+  SignatureGeneratorService,
+} from './signature-generator.service';
 import { WebhookDeliveryMetricsService } from './webhook-delivery-metrics.service';
+import { sendWithValidatedRedirects } from './safe-webhook-http';
 import {
   WEBHOOK_CONNECT_TIMEOUT_MS,
   WEBHOOK_DELIVERY_JOB,
@@ -83,16 +87,25 @@ export class WebhookSenderService {
     url: string,
     challenge: WebhookVerificationChallenge,
   ): Promise<boolean> {
+    // signWithWebhookSecret already returns a versioned `v1=<hex>` value so
+    // the destination can identify the signing algorithm up front.
     const signature = this.signatureGenerator.signWithWebhookSecret(
       challenge,
       webhook,
     );
 
     try {
-      await axios.post(url, challenge, {
+      // #1377 — validated/bounded redirect following instead of a raw
+      // axios.post, so a verification destination can't redirect this
+      // request into a private/internal address.
+      await sendWithValidatedRedirects({
+        url,
+        method: 'post',
+        data: challenge,
         headers: {
           'Content-Type': 'application/json',
-          'X-StellarSwipe-Signature': `sha256=${signature}`,
+          'X-StellarSwipe-Signature': signature,
+          'X-StellarSwipe-Signature-Version': CURRENT_SIGNATURE_VERSION,
           'X-StellarSwipe-Event': WEBHOOK_VERIFICATION_EVENT,
         },
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
@@ -143,7 +156,7 @@ export class WebhookSenderService {
     // consumer adopts the new key. Falls back to the current secret when no
     // rotation is in progress.
     const signingSecret = this.resolveSigningSecret(webhook);
-    const signature = this.signatureGenerator.generateSignature(
+    const signature = this.signatureGenerator.generateVersionedSignatureHeader(
       payload,
       signingSecret,
     );
@@ -192,7 +205,7 @@ export class WebhookSenderService {
 
     const payload = delivery.payload as unknown as WebhookPayload;
     const signingSecret = this.resolveSigningSecret(webhook);
-    const signature = this.signatureGenerator.generateSignature(
+    const signature = this.signatureGenerator.generateVersionedSignatureHeader(
       payload,
       signingSecret,
     );
@@ -256,7 +269,13 @@ export class WebhookSenderService {
       Number(process.hrtime.bigint() - startedAt) / 1e9;
 
     try {
-      const response = await axios.post(webhook.url, payload, {
+      // #1377 — see sendWithValidatedRedirects: revalidates every redirect
+      // hop against the SSRF rules instead of letting axios auto-follow a
+      // 3xx straight into a private/internal address.
+      const response = await sendWithValidatedRedirects({
+        url: webhook.url,
+        method: 'post',
+        data: payload,
         headers: this.buildHeaders(payload, signature),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
         transitional: { clarifyTimeoutError: true },
@@ -457,13 +476,21 @@ export class WebhookSenderService {
     }
   }
 
+  /**
+   * `signature` is already a versioned `<version>=<hex>` value (see
+   * `SignatureGeneratorService.generateVersionedSignatureHeader`), so it's
+   * sent as-is. `X-StellarSwipe-Signature-Version` repeats the version in
+   * its own header for subscribers that prefer not to parse it out of the
+   * signature value.
+   */
   private buildHeaders(
     payload: WebhookPayload,
     signature: string,
   ): Record<string, string> {
     return {
       'Content-Type': 'application/json',
-      'X-StellarSwipe-Signature': `sha256=${signature}`,
+      'X-StellarSwipe-Signature': signature,
+      'X-StellarSwipe-Signature-Version': CURRENT_SIGNATURE_VERSION,
       'X-StellarSwipe-Event': payload.event,
       'X-StellarSwipe-Delivery-Id': payload.deliveryId,
     };

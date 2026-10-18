@@ -15,8 +15,10 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from '../authorization/guards/roles.guard';
 import { Roles } from '../authorization/decorators/roles.decorator';
 import { Request } from 'express';
+import { RejectDuplicateJsonKeys } from '../common/decorators/reject-duplicate-json-keys.decorator';
 
 @ApiTags('auth')
+@RejectDuplicateJsonKeys()
 @Controller('auth')
 export class AuthController {
     constructor(

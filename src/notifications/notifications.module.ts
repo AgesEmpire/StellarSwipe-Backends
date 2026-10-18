@@ -1,6 +1,7 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
+import { ScheduleModule } from '@nestjs/schedule';
 import { Notification } from './entities/notification.entity';
 import { NotificationPreference } from './preferences/entities/notification-preference.entity';
 import { NotificationTemplate } from './entities/notification-template.entity';
@@ -22,17 +23,21 @@ import { WebsocketModule } from '../websocket/websocket.module';
 import { NotificationTemplateService } from './notification-template.service';
 import { NotificationTcpController } from './notification-tcp.controller';
 import { JobsModule } from '../jobs/jobs.module';
+import { DigestService } from './digest/digest.service';
+import { I18nModule } from '../i18n/i18n.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate, UserConsent, NotificationDeliveryAuditLog]),
     BullModule.registerQueue({ name: NOTIFICATION_QUEUE }),
+    ScheduleModule.forRoot(),
     JobsModule,
     WebsocketModule,
+    I18nModule,
   ],
   controllers: [NotificationController, PreferencesController, PreferenceController, NotificationTcpController, ConsentController],
-  providers: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationProcessor, NotificationTemplateService, ConsentService],
-  exports: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationTemplateService, ConsentService],
+  providers: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationProcessor, NotificationTemplateService, ConsentService, DigestService],
+  exports: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationTemplateService, ConsentService, DigestService],
 })
 export class NotificationsModule implements OnModuleInit {
   constructor(private readonly templateService: NotificationTemplateService) {}

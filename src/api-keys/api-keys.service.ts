@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inject } from '@nestjs/common';
@@ -10,18 +10,60 @@ import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
 
+const MAX_OVERLAP_MS = 3_600_000;
+const LAST_USED_THROTTLE_MS = 60_000;
+
 @Injectable()
 export class ApiKeysService {
+  private readonly lastUsedInFlight = new Map<string, Promise<void>>();
+
   constructor(
     @InjectRepository(ApiKey)
     private readonly apiKeyRepo: Repository<ApiKey>,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
-  ) {}
+  ) {
+    const configured = Number(process.env.MAX_ACTIVE_API_KEYS);
+    this.maxActiveKeys =
+      Number.isFinite(configured) && configured > 0
+        ? Math.floor(configured)
+        : DEFAULT_MAX_ACTIVE_KEYS;
+  }
+
+  /**
+   * Atomically enforce the per-account active key limit and persist a new key.
+   * Uses a pessimistic write lock on the account's active keys so concurrent
+   * creations cannot both observe a below-limit count. Revoked keys are
+   * excluded from the count.
+   */
+  private async saveWithActiveKeyLimit(
+    apiKey: ApiKey,
+  ): Promise<ApiKey> {
+    return this.apiKeyRepo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(ApiKey);
+
+      const activeCount = await repo
+        .createQueryBuilder('apiKey')
+        .setLock('pessimistic_write')
+        .where('apiKey.userId = :userId', { userId: apiKey.userId })
+        .andWhere('apiKey.revokedAt IS NULL')
+        .getCount();
+
+      if (activeCount >= this.maxActiveKeys) {
+        throw new ConflictException(
+          `Active API key limit of ${this.maxActiveKeys} reached for this account`,
+        );
+      }
+
+      return repo.save(apiKey);
+    });
+  }
 
   async create(
     userId: string,
     dto: CreateApiKeyDto,
   ): Promise<ApiKeyResponseDto> {
+    await this.assertEmailVerified(userId);
+
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
 
@@ -34,7 +76,7 @@ export class ApiKeysService {
       expiresAt: dto.expiresAt,
     });
 
-    const saved = await this.apiKeyRepo.save(apiKey);
+    const saved = await this.saveWithActiveKeyLimit(apiKey);
 
     return {
       id: saved.id,
@@ -45,6 +87,22 @@ export class ApiKeysService {
       rateLimit: saved.rateLimit,
       createdAt: saved.createdAt,
     };
+  }
+
+  private async assertEmailVerified(userId: string): Promise<void> {
+    const user = await this.apiKeyRepo.manager
+      .getRepository('User')
+      .findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (!user.emailVerified) {
+      throw new ForbiddenException(
+        'A verified email is required to create an API key',
+      );
+    }
   }
 
   async verify(rawKey: string): Promise<ApiKey> {
@@ -74,12 +132,42 @@ export class ApiKeysService {
         if (key.expiresAt && key.expiresAt < new Date()) {
           throw new UnauthorizedException('API key expired');
         }
-        await this.apiKeyRepo.update(key.id, { lastUsed: new Date() });
+        await this.touchLastUsed(key);
         return key;
       }
     }
 
     throw new UnauthorizedException('Invalid API key');
+  }
+
+  /**
+   * Records last-used time at a bounded interval instead of on every request.
+   * Concurrent requests for the same key share a single in-flight write, and
+   * writes are skipped when the stored timestamp is still fresh.
+   */
+  private async touchLastUsed(key: ApiKey): Promise<void> {
+    const now = Date.now();
+    if (key.lastUsed && now - key.lastUsed.getTime() < LAST_USED_THROTTLE_MS) {
+      return;
+    }
+
+    const inFlight = this.lastUsedInFlight.get(key.id);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const write = this.apiKeyRepo
+      .update(key.id, { lastUsed: new Date(now) })
+      .then(() => {
+        key.lastUsed = new Date(now);
+      })
+      .finally(() => {
+        this.lastUsedInFlight.delete(key.id);
+      });
+
+    this.lastUsedInFlight.set(key.id, write);
+    await write;
   }
 
   async checkRateLimit(keyId: string, limit: number): Promise<boolean> {
@@ -153,15 +241,21 @@ export class ApiKeysService {
       throw new UnauthorizedException('API key not found');
     }
 
+    if (existing.revokedAt) {
+      throw new UnauthorizedException('API key has been revoked');
+    }
+
     const rawKey = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
     const keyHash = await bcrypt.hash(rawKey, 10);
+
+    const boundedOverlapMs = Number.isFinite(overlapMs)
+      ? Math.max(0, Math.min(overlapMs, MAX_OVERLAP_MS))
+      : 0;
 
     await this.apiKeyRepo.update(keyId, {
       previousKeyHash: existing.keyHash,
       keyHash,
-      overlapUntil: new Date(
-        Date.now() + Math.max(0, Math.min(overlapMs, 3_600_000)),
-      ),
+      overlapUntil: new Date(Date.now() + boundedOverlapMs),
     });
 
     return {
@@ -175,11 +269,40 @@ export class ApiKeysService {
     };
   }
 
-  async revoke(userId: string, keyId: string): Promise<void> {
+  async revoke(
+    userId: string,
+    keyId: string,
+    revokedBy: string = userId,
+    reason?: string,
+  ): Promise<void> {
+    const revokedAt = new Date();
     await this.apiKeyRepo.update(
       { id: keyId, userId },
-      { revokedAt: new Date(), previousKeyHash: null, overlapUntil: null },
+      { revokedAt, previousKeyHash: null, overlapUntil: null },
     );
+
+    // Append-only audit record. Never store key hashes, raw keys, or tokens.
+    this.revocationHistory.push({
+      id: crypto.randomUUID(),
+      apiKeyId: keyId,
+      userId,
+      revokedBy,
+      revokedAt,
+      reason: reason ? reason.slice(0, 500) : null,
+    });
+  }
+
+  /**
+   * Return immutable revocation audit records for a key, scoped to the
+   * owning account. Callers must be authorized for `userId`.
+   */
+  async getRevocationHistory(
+    userId: string,
+    keyId: string,
+  ): Promise<ApiKeyRevocationRecord[]> {
+    return this.revocationHistory
+      .filter((record) => record.userId === userId && record.apiKeyId === keyId)
+      .map((record) => ({ ...record }));
   }
 
   async list(userId: string): Promise<ApiKey[]> {

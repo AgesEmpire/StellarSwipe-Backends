@@ -22,6 +22,7 @@ import { QueryParser } from './utils/query-parser';
 import {
   SubmitQueryAnalysisDto,
   BulkQueryIngestionDto,
+  BulkQueryIngestionResponseDto,
   QueryFilterDto,
   MarkOptimizationAppliedDto,
   QueryAnalysisResultDto,
@@ -111,14 +112,38 @@ export class QueryAnalyzerService {
     return record;
   }
 
-  async submitBulk(dto: BulkQueryIngestionDto): Promise<{ submitted: number; ids: string[] }> {
-    const results = await Promise.allSettled(
+  /**
+   * Each query is already submitted independently via `Promise.allSettled`
+   * (so one bad query can't block the rest), but previously a failed query
+   * was simply dropped from the response with no record it was ever sent.
+   * Every input query now gets a stable, index-matched result entry (#1382)
+   * — `submitted` with its id, or `failed` with the reason — so a partial
+   * failure is reported rather than hidden.
+   */
+  async submitBulk(dto: BulkQueryIngestionDto): Promise<BulkQueryIngestionResponseDto> {
+    const settled = await Promise.allSettled(
       dto.queries.map((q) => this.submitQuery(q)),
     );
-    const succeeded = results.filter((r) => r.status === 'fulfilled') as PromiseFulfilledResult<SlowQuery>[];
+
+    const results: BulkQueryIngestionResponseDto['results'] = settled.map((outcome, index) =>
+      outcome.status === 'fulfilled'
+        ? { index, status: 'submitted' as const, id: outcome.value.id }
+        : {
+            index,
+            status: 'failed' as const,
+            error: outcome.reason instanceof Error ? outcome.reason.message : 'Unknown error',
+          },
+    );
+
+    const ids = results
+      .filter((r): r is { index: number; status: 'submitted'; id: string } => r.status === 'submitted')
+      .map((r) => r.id);
+
     return {
-      submitted: succeeded.length,
-      ids: succeeded.map((r) => r.value.id),
+      submitted: ids.length,
+      failed: results.length - ids.length,
+      ids,
+      results,
     };
   }
 

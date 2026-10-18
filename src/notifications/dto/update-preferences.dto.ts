@@ -2,7 +2,10 @@ import {
   IsBoolean,
   IsOptional,
   IsNumber,
+  IsIn,
+  IsString,
   Min,
+  Max,
   Matches,
   ValidateNested,
 } from 'class-validator';
@@ -59,6 +62,22 @@ export class ThresholdsDto {
   marketing?: number;
 }
 
+export class DigestPreferenceDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsIn(['hourly', 'daily'])
+  frequency?: 'hourly' | 'daily';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(23)
+  hour?: number;
+}
+
 export class UpdatePreferencesDto {
   @IsOptional()
   @ValidateNested()
@@ -89,4 +108,13 @@ export class UpdatePreferencesDto {
   @ValidateNested()
   @Type(() => ThresholdsDto)
   thresholds?: ThresholdsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DigestPreferenceDto)
+  digest?: DigestPreferenceDto;
+
+  @IsOptional()
+  @IsString()
+  locale?: string;
 }

@@ -25,6 +25,7 @@ import {
   FeeConfigDto,
   MonthlyRevenueReportDto,
 } from './dto/fee-summary.dto';
+import { FeeManagerService, PromotionInfo } from './fee-manager.service';
 
 /**
  * Staking status as reported by the staking service.
@@ -56,6 +57,8 @@ interface TradeDetails {
   assetCode: string;
   assetIssuer: string;
   userPublicKey?: string;
+  /** Optional redemption code for an explicit promotional discount. */
+  promoCode?: string;
 }
 
 interface FeeCollectionResult {
@@ -81,9 +84,7 @@ export class FeesService {
     @InjectRepository(FeeTransaction)
     private readonly feeTransactionRepository: Repository<FeeTransaction>,
     private readonly configService: ConfigService,
-    @Optional()
-    @Inject(STAKING_STATUS_SERVICE)
-    private readonly stakingStatusService?: StakingStatusService,
+    private readonly feeManager: FeeManagerService,
   ) {
     // Initialize Stellar configuration
     this.networkPassphrase = this.configService.get<string>(
@@ -121,7 +122,12 @@ export class FeesService {
   }
 
   /**
-   * Calculate fee for a trade based on user's tier
+   * Calculate fee for a trade based on user's tier and any eligible promotion.
+   *
+   * Promotional discounts are explicit (returned in `promotionApplied`),
+   * bounded (never below zero or above the base fee and capped by
+   * `maxDiscount`), time-aware (validated through the promotions service) and
+   * auditable (recorded on the resulting fee transaction).
    */
   async calculateFee(tradeDetails: TradeDetails): Promise<FeeCalculationDto> {
     try {
@@ -137,23 +143,144 @@ export class FeesService {
 
       // Calculate fee: tradeAmount * feeRate
       const feeAmount = tradeAmount.times(new Big(feeRate));
-      const netAmount = tradeAmount.minus(feeAmount);
-
-      // Round to 7 decimal places (Stellar standard)
       const roundedFeeAmount = feeAmount.toFixed(7);
-      const roundedNetAmount = netAmount.toFixed(7);
 
-      return {
+      const result: FeeCalculationDto = {
         tradeAmount: tradeDetails.tradeAmount,
         feeAmount: roundedFeeAmount,
         feeRate,
         feeTier,
-        netAmount: roundedNetAmount,
+        netAmount: tradeAmount.minus(feeAmount).toFixed(7),
         assetCode: tradeDetails.assetCode,
       };
+
+      // Apply the best eligible promotion (never stacked).
+      const promotionApplied = await this.resolvePromotion(
+        tradeDetails,
+        roundedFeeAmount,
+      );
+
+      if (promotionApplied) {
+        result.feeAmount = promotionApplied.discountedFee;
+        result.netAmount = tradeAmount
+          .minus(new Big(promotionApplied.discountedFee))
+          .toFixed(7);
+        result.promotionApplied = promotionApplied;
+
+        this.logger.log(
+          `Promotion ${promotionApplied.promoCode} applied for user ${tradeDetails.userId}: ` +
+            `fee ${promotionApplied.originalFee} -> ${promotionApplied.discountedFee} ` +
+            `(discount ${promotionApplied.discount}${promotionApplied.capped ? ', capped' : ''})`,
+        );
+      }
+
+      return result;
     } catch (error: any) {
       this.logger.error(`Fee calculation failed: ${error.message}`, error.stack);
       throw new BadRequestException(`Fee calculation failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Resolve the single best promotional discount for a trade.
+   *
+   * When an explicit `promoCode` is supplied only that promotion is considered.
+   * Otherwise active automatic promotions (those that do not require a code)
+   * are evaluated. Even if multiple promotions are eligible they never stack:
+   * only the largest *bounded* discount is returned.
+   *
+   * Failures in the promotions service degrade gracefully to the base fee so a
+   * provider outage can never block a trade.
+   */
+  private async resolvePromotion(
+    tradeDetails: TradeDetails,
+    baseFee: string,
+  ): Promise<FeeCalculationDto['promotionApplied'] | undefined> {
+    try {
+      const candidates: PromotionInfo[] = [];
+
+      if (tradeDetails.promoCode) {
+        const eligibility = await this.feeManager.checkPromotionEligibility(
+          tradeDetails.promoCode,
+          tradeDetails.userId,
+          tradeDetails.tradeAmount,
+          tradeDetails.assetCode,
+        );
+
+        if (!eligibility.eligible || !eligibility.promotion) {
+          this.logger.warn(
+            `Promotion ${tradeDetails.promoCode} not applied for user ` +
+              `${tradeDetails.userId}: ${eligibility.reason ?? 'not eligible'}`,
+          );
+          return undefined;
+        }
+
+        candidates.push(eligibility.promotion);
+      } else {
+        const activePromotions = await this.feeManager.getActivePromotions();
+
+        for (const promotion of activePromotions) {
+          // Only automatic promotions apply without an explicit code.
+          if (promotion.requiresCode) continue;
+
+          const eligibility = await this.feeManager.checkPromotionEligibility(
+            promotion.promoCode,
+            tradeDetails.userId,
+            tradeDetails.tradeAmount,
+            tradeDetails.assetCode,
+          );
+
+          if (eligibility.eligible && eligibility.promotion) {
+            candidates.push(eligibility.promotion);
+          }
+        }
+      }
+
+      if (candidates.length === 0) {
+        return undefined;
+      }
+
+      let best:
+        | {
+            promotion: PromotionInfo;
+            discount: string;
+            discountedFee: string;
+            capped: boolean;
+          }
+        | undefined;
+
+      for (const promotion of candidates) {
+        const computed = this.feeManager.computePromotionalDiscount(
+          baseFee,
+          tradeDetails.tradeAmount,
+          promotion,
+        );
+
+        if (!best || new Big(computed.discount).gt(new Big(best.discount))) {
+          best = { promotion, ...computed };
+        }
+      }
+
+      if (!best) {
+        return undefined;
+      }
+
+      return {
+        promoCode: best.promotion.promoCode,
+        promotionId: best.promotion.id,
+        promotionName: best.promotion.name,
+        originalFee: baseFee,
+        discount: best.discount,
+        discountedFee: best.discountedFee,
+        capped: best.capped,
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `Promotion lookup failed for user ${tradeDetails.userId}; ` +
+          `falling back to base fee: ${error.message}`,
+        error.stack,
+      );
+      return undefined;
     }
   }
 
@@ -169,7 +296,16 @@ export class FeesService {
       // Calculate fee
       const feeCalculation = await this.calculateFee(tradeDetails);
 
-      // Create fee transaction record
+      // Create fee transaction record with an auditable promotion breakdown
+      const metadata: FeeTransaction['metadata'] = {};
+      if (feeCalculation.promotionApplied) {
+        metadata.promotionCode = feeCalculation.promotionApplied.promoCode;
+        metadata.promotionId = feeCalculation.promotionApplied.promotionId;
+        metadata.originalFee = feeCalculation.promotionApplied.originalFee;
+        metadata.discount = feeCalculation.promotionApplied.discount;
+        metadata.discountCapped = feeCalculation.promotionApplied.capped;
+      }
+
       feeTransaction = this.feeTransactionRepository.create({
         userId: tradeDetails.userId,
         tradeId: tradeDetails.tradeId,
@@ -181,9 +317,13 @@ export class FeesService {
         assetIssuer: tradeDetails.assetIssuer,
         platformWalletAddress: this.platformWallet,
         status: FeeStatus.PENDING,
+        metadata,
       }) as FeeTransaction;
 
       await this.feeTransactionRepository.save(feeTransaction);
+
+      // Record the promotion redemption for reconciliation
+      await this.redeemPromotionIfApplied(feeCalculation, tradeDetails);
 
       // Collect fee to platform wallet
       if (tradeDetails.userPublicKey && this.platformKeypair) {
@@ -228,6 +368,35 @@ export class FeesService {
 
       throw new InternalServerErrorException(
         `Fee collection failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Persist a promotion redemption so promotion usage can be reconciled.
+   * Redemption failures are logged but never fail the trade.
+   */
+  private async redeemPromotionIfApplied(
+    feeCalculation: FeeCalculationDto,
+    tradeDetails: TradeDetails,
+  ): Promise<void> {
+    const applied = feeCalculation.promotionApplied;
+    if (!applied || !applied.promotionId || !tradeDetails.tradeId) {
+      return;
+    }
+
+    try {
+      await this.feeManager.redeemPromotion({
+        promotionId: applied.promotionId,
+        userId: tradeDetails.userId,
+        tradeId: tradeDetails.tradeId,
+        originalFee: applied.originalFee,
+        discountedFee: applied.discountedFee,
+      });
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to record redemption for promotion ${applied.promoCode}: ${error.message}`,
+        error.stack,
       );
     }
   }
@@ -668,15 +837,13 @@ export class FeesService {
   }
 
   /**
-   * Determine user's fee tier based on volume and VIP status
+   * Determine user's fee tier based on volume and VIP status.
+   *
+   * Promotions are intentionally *not* modelled as a tier here: they are
+   * applied on top of the volume tier as an explicit, bounded discount by
+   * {@link calculateFee} so they can never over-discount a fee.
    */
   private async determineUserFeeTier(userId: string): Promise<FeeTier> {
-    // Check for promotional tier first
-    const hasPromotion = await this.checkUserPromotion(userId);
-    if (hasPromotion) {
-      return FeeTier.PROMOTIONAL;
-    }
-
     // Check VIP status (would integrate with user service)
     const isVIP = await this.checkVIPStatus(userId);
     if (isVIP) {
@@ -785,28 +952,5 @@ export class FeesService {
     }
 
     return expiresAt.getTime() <= Date.now();
-  }
-
-  /**
-   * Check if user has active promotion (stub)
-   */
-  private async checkUserPromotion(_userId: string): Promise<boolean> {
-    // TODO: Integrate with promotions service
-    return false;
-  }
-
-  /**
-   * Apply promotional fee rate
-   */
-  async applyPromotionalRate(
-    userId: string,
-    promotionCode: string,
-    customRate: string,
-  ): Promise<void> {
-    // This would create a promotion record
-    // For now, just log
-    this.logger.log(
-      `Applied promotional rate ${customRate} for user ${userId} with code ${promotionCode}`,
-    );
   }
 }

@@ -6,3 +6,4 @@ export * from './redis.health';
 export * from './queue.health';
 export * from './bullmq.health';
 export * from './kafka.health';
+export * from './transaction-readiness.indicator';

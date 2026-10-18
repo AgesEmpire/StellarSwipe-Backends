@@ -46,6 +46,25 @@ export class BulkTrackFeatureUsageDto {
   events: TrackFeatureUsageDto[];
 }
 
+/**
+ * Per-item outcome for one event in a `POST /analytics/features/track/bulk`
+ * request (#1382) — every input event gets a stable entry here, indexed to
+ * match its position in the request's `events` array, so a partial failure
+ * (e.g. one malformed event) never silently drops information about which
+ * events were and weren't tracked.
+ */
+export class BulkTrackFeatureUsageItemResultDto {
+  index: number;
+  status: 'tracked' | 'failed';
+  error?: string;
+}
+
+export class BulkTrackFeatureUsageResponseDto {
+  tracked: number;
+  failed: number;
+  results: BulkTrackFeatureUsageItemResultDto[];
+}
+
 export class FeatureMetricsSummaryDto {
   featureKey: string;
   featureCategory: string | null;

@@ -38,6 +38,8 @@ import {
 import { SlippageGuardService } from './services/slippage-guard.service';
 import { AtomicTransactionHelper } from '../common/database/atomic-transaction.helper';
 import { updateWithVersionCheck } from '../common/utils/optimistic-update.util';
+import { RbacService } from '../authorization/rbac.service';
+import { TradeAuditService } from './trade-audit.service';
 
 interface SignalData {
   id: string;
@@ -67,7 +69,12 @@ export class TradesService {
     private readonly tradeLatency: TradeLatencyService,
     private readonly slippageGuard: SlippageGuardService,
     private readonly atomicTx: AtomicTransactionHelper,
+    private readonly rbacService: RbacService,
+    private readonly tradeAuditService: TradeAuditService,
   ) {}
+
+  /** Roles permitted to restore a soft-deleted trade. See issue #1367. */
+  private static readonly RESTORE_ALLOWED_ROLES = ['admin', 'trader'];
 
   async executeTrade(dto: ExecuteTradeDto): Promise<TradeResultDto> {
     this.logger.log(
@@ -472,6 +479,14 @@ export class TradesService {
 
   /**
    * Restore a previously soft-deleted trade.
+   *
+   * Authorization: only actors holding one of RESTORE_ALLOWED_ROLES may
+   * restore a trade (issue #1367).
+   *
+   * Conflict rule: a restore is rejected if an active (non-cancelled,
+   * non-failed) trade already exists for the same user+signal, since that
+   * trade has effectively replaced the one being restored and restoring
+   * would create a duplicate position for the same signal.
    */
   async restoreTrade(
     tradeId: string,
@@ -484,7 +499,41 @@ export class TradesService {
     if (!trade) {
       throw new NotFoundException('Trade not found');
     }
-    await restoreOrThrow(this.tradeRepository, tradeId, 'Trade not found');
+
+    const userRoles = await this.rbacService.getUserRoles(userId);
+    const actorRoles = userRoles
+      .filter((userRole) => userRole.isActive())
+      .map((userRole) => userRole.role?.name)
+      .filter((name): name is string => Boolean(name));
+
+    const activeStatuses = new Set([
+      TradeStatus.PENDING,
+      TradeStatus.CONFIRMED,
+      TradeStatus.EXECUTING,
+      TradeStatus.SETTLED,
+      TradeStatus.COMPLETED,
+    ]);
+
+    await restoreOrThrow(this.tradeRepository, tradeId, {
+      notFoundMessage: 'Trade not found',
+      actorRoles,
+      allowedRoles: TradesService.RESTORE_ALLOWED_ROLES,
+      conflictCheck: async (entity) => {
+        const candidates = await this.tradeRepository.find({
+          where: { userId: entity.userId, signalId: entity.signalId },
+        });
+        const replacement = candidates.find(
+          (candidate) => candidate.id !== entity.id && activeStatuses.has(candidate.status),
+        );
+        return replacement
+          ? `Cannot restore trade ${entity.id}: an active replacement trade (${replacement.id}) already exists for signal ${entity.signalId}`
+          : null;
+      },
+      onRestored: async () => {
+        await this.tradeAuditService.logTradeRestored(trade, actorRoles);
+      },
+    });
+
     return this.getTradeById(tradeId, userId);
   }
 

@@ -9,7 +9,7 @@ import { AdvisoryLockService } from '../../common/database/advisory-lock.service
  * revert migrations concurrently (deploy pods, CI jobs, manual CLI runs).
  * A single, well-known name means all callers coordinate on the same lock.
  */
-const MIGRATIONS_LOCK_NAME = 'stellarswipe:migrations';
+export const MIGRATIONS_LOCK_NAME = 'stellarswipe:migrations';
 
 @Injectable()
 export class MigrationService {

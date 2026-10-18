@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, Header, Param, UseGuards } from '@nestjs/common';
+import { Controller, Delete, Get, Header, Param, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PrometheusService } from './metrics/prometheus.service';
 import { CircuitBreakerService } from '../http/circuit-breaker.service';
@@ -36,12 +36,29 @@ export class MonitoringController {
     return this.circuitBreaker.getAllStats();
   }
 
+  /**
+   * #1375 — Manual recovery control. Who may call this is governed entirely
+   * by `HealthMetricsAuthGuard` on the controller (JWT user or admin-style
+   * API key); this handler's only job is to attribute the action in the
+   * audit trail so every manual override is traceable to its caller.
+   */
   @Delete('circuit-breakers/:name')
-  @ApiOperation({ summary: 'Manually reset a named circuit breaker to CLOSED' })
+  @ApiOperation({ summary: 'Manually reset a named circuit breaker to CLOSED (audited)' })
   @ApiParam({ name: 'name', description: 'Circuit breaker name (e.g. stellar-horizon)' })
   @ApiResponse({ status: 200, description: 'Circuit reset successfully' })
-  resetCircuitBreaker(@Param('name') name: string): { reset: boolean; circuit: string } {
-    this.circuitBreaker.reset(name);
+  resetCircuitBreaker(
+    @Param('name') name: string,
+    @Req() req: any,
+  ): { reset: boolean; circuit: string } {
+    const actor = req.user?.id ?? req.user?.email ?? req.apiKey?.id ?? 'unknown';
+    this.circuitBreaker.reset(name, actor);
     return { reset: true, circuit: name };
+  }
+
+  /** #1375 — Audit trail of manual circuit breaker resets. */
+  @Get('circuit-breakers/audit-log')
+  @ApiOperation({ summary: 'List the audit trail of manual circuit breaker resets' })
+  getCircuitBreakerAuditLog() {
+    return this.circuitBreaker.getAuditLog();
   }
 }

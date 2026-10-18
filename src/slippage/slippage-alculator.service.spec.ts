@@ -1,13 +1,49 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { SlippageCalculatorService } from './slippage-calculator.service';
 import { SlippageToleranceLevel } from './dto/slippage-config.dto';
+import { MarketDepth } from './market-depth.types';
+import { OrderBookService } from './order-book.service';
+
+const makeBook = (): MarketDepth => ({
+  symbol: 'BTC/USD',
+  bids: Array.from({ length: 20 }, (_, i) => ({
+    price: 45000 - (i + 1) * 10,
+    quantity: 1,
+  })),
+  asks: Array.from({ length: 20 }, (_, i) => ({
+    price: 45000 + (i + 1) * 10,
+    quantity: 1,
+  })),
+  timestamp: new Date('2026-01-01T00:00:00.000Z'),
+});
 
 describe('SlippageCalculatorService', () => {
   let service: SlippageCalculatorService;
+  let orderBookMock: {
+    fetchMarketDepth: jest.Mock;
+    validateAndNormalise: jest.Mock;
+    walkBook: jest.Mock;
+  };
+  const realOrderBook = new OrderBookService();
 
   beforeEach(async () => {
+    orderBookMock = {
+      fetchMarketDepth: jest.fn(async (_symbol: string) => makeBook()),
+      validateAndNormalise: jest.fn((book: MarketDepth) =>
+        realOrderBook.validateAndNormalise(book),
+      ),
+      walkBook: jest.fn(
+        (side: 'buy' | 'sell', book: MarketDepth, quantity: number) =>
+          realOrderBook.walkBook(side, book, quantity),
+      ),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SlippageCalculatorService],
+      providers: [
+        SlippageCalculatorService,
+        { provide: OrderBookService, useValue: orderBookMock },
+      ],
     }).compile();
 
     service = module.get<SlippageCalculatorService>(SlippageCalculatorService);
@@ -76,7 +112,7 @@ describe('SlippageCalculatorService', () => {
 
     it('should complete estimation quickly', async () => {
       const start = Date.now();
-      
+
       await service.estimateSlippage({
         symbol: 'BTC/USD',
         side: 'buy',
@@ -85,6 +121,100 @@ describe('SlippageCalculatorService', () => {
 
       const elapsed = Date.now() - start;
       expect(elapsed).toBeLessThan(1000); // Should complete in under 1 second
+    });
+  });
+
+  describe('order book depth', () => {
+    it('consumes asks for buys and bids for sells', async () => {
+      const book = makeBook();
+
+      await service.estimateSlippage({
+        symbol: 'BTC/USD',
+        side: 'buy',
+        quantity: 2,
+      });
+      expect(orderBookMock.walkBook).toHaveBeenLastCalledWith('buy', book, 2);
+
+      await service.estimateSlippage({
+        symbol: 'BTC/USD',
+        side: 'sell',
+        quantity: 2,
+      });
+      expect(orderBookMock.walkBook).toHaveBeenLastCalledWith('sell', book, 2);
+    });
+
+    it('prices buys off the asks even when the book sides are asymmetric', async () => {
+      const asymmetric: MarketDepth = {
+        symbol: 'BTC/USD',
+        bids: [
+          { price: 40000, quantity: 100 },
+          { price: 39990, quantity: 100 },
+        ],
+        asks: [
+          { price: 45000, quantity: 1 },
+          { price: 46000, quantity: 100 },
+        ],
+        timestamp: new Date(),
+      };
+      orderBookMock.fetchMarketDepth.mockResolvedValue(asymmetric);
+
+      const buy = await service.estimateSlippage({
+        symbol: 'BTC/USD',
+        side: 'buy',
+        quantity: 2,
+        expectedPrice: 45000,
+      });
+      // 1 @ 45000 + 1 @ 46000 = 45500
+      expect(buy.estimatedSlippagePercent).toBeCloseTo(1.111, 2);
+
+      const sell = await service.estimateSlippage({
+        symbol: 'BTC/USD',
+        side: 'sell',
+        quantity: 2,
+        expectedPrice: 45000,
+      });
+      // 2 @ 40000 = 40000, a favourable 11.11% move away from expected
+      expect(sell.estimatedSlippagePercent).toBeCloseTo(11.111, 2);
+    });
+
+    it('surfaces insufficient depth in the reasoning', async () => {
+      orderBookMock.fetchMarketDepth.mockResolvedValue({
+        symbol: 'BTC/USD',
+        bids: [{ price: 44990, quantity: 1 }],
+        asks: [{ price: 45010, quantity: 1 }],
+        timestamp: new Date(),
+      });
+
+      const result = await service.estimateSlippage({
+        symbol: 'BTC/USD',
+        side: 'buy',
+        quantity: 10,
+      });
+
+      expect(result.reasoning).toContain('depth');
+    });
+
+    it('fails safely when the order book is malformed', async () => {
+      orderBookMock.fetchMarketDepth.mockRejectedValue(
+        new BadRequestException('Order book is crossed'),
+      );
+
+      await expect(
+        service.estimateSlippage({
+          symbol: 'BTC/USD',
+          side: 'buy',
+          quantity: 1,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('fails safely when a caller supplied book is empty', async () => {
+      await expect(
+        service.estimateSlippage(
+          { symbol: 'BTC/USD', side: 'buy', quantity: 1 },
+          { symbol: 'BTC/USD', bids: [], asks: [], timestamp: new Date() },
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -128,7 +258,7 @@ describe('SlippageCalculatorService', () => {
     it('should calculate total cost correctly', () => {
       const quantity = 5.5;
       const slippagePerUnit = 25;
-      
+
       const result = service.calculateActualSlippage(
         10000,
         10000 + slippagePerUnit,
@@ -208,7 +338,7 @@ describe('SlippageCalculatorService', () => {
     it('should increase tolerance in low liquidity', () => {
       const baseTolerance = 0.5;
       const lowLiquidity = 0.3;
-      
+
       const result = service.calculateDynamicTolerance(
         baseTolerance,
         lowLiquidity,
@@ -222,7 +352,7 @@ describe('SlippageCalculatorService', () => {
       const baseTolerance = 0.5;
       const normalLiquidity = 0.8;
       const highVolatility = 5.0;
-      
+
       const result = service.calculateDynamicTolerance(
         baseTolerance,
         normalLiquidity,
@@ -236,7 +366,7 @@ describe('SlippageCalculatorService', () => {
       const baseTolerance = 0.5;
       const veryLowLiquidity = 0.1;
       const extremeVolatility = 100;
-      
+
       const result = service.calculateDynamicTolerance(
         baseTolerance,
         veryLowLiquidity,
@@ -251,7 +381,7 @@ describe('SlippageCalculatorService', () => {
       const baseTolerance = 0.5;
       const goodLiquidity = 0.9;
       const lowVolatility = 0.5;
-      
+
       const result = service.calculateDynamicTolerance(
         baseTolerance,
         goodLiquidity,

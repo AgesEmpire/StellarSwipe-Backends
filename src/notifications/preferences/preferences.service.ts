@@ -22,6 +22,12 @@ export interface PreferencesResponse {
     timezone: string;
   };
   thresholds: Partial<Record<NotificationType, number>>;
+  digest: {
+    enabled: boolean;
+    frequency: 'hourly' | 'daily';
+    hour: number;
+  };
+  locale: string;
   updatedAt: Date;
 }
 
@@ -112,6 +118,22 @@ export class PreferencesService {
 
     if (dto.thresholds !== undefined) {
       preference.thresholds = { ...preference.thresholds, ...dto.thresholds };
+    }
+
+    if (dto.digest !== undefined) {
+      if (dto.digest.enabled !== undefined) {
+        preference.digestEnabled = dto.digest.enabled;
+      }
+      if (dto.digest.frequency !== undefined) {
+        preference.digestFrequency = dto.digest.frequency;
+      }
+      if (dto.digest.hour !== undefined) {
+        preference.digestHour = dto.digest.hour;
+      }
+    }
+
+    if (dto.locale !== undefined) {
+      preference.locale = dto.locale;
     }
 
     const saved = await this.preferenceRepository.save(preference);
@@ -208,6 +230,40 @@ export class PreferencesService {
     return minutesNow >= start || minutesNow < end;
   }
 
+  /**
+   * Whether a scheduled digest should be sent for `preference` right now.
+   * Honours the user's enable/disable switch, their configured frequency
+   * and hour, and defers (rather than sends) while they're in quiet
+   * hours — the digest is picked up on a later run instead of being
+   * silenced entirely.
+   */
+  isDigestDue(preference: NotificationPreference, at: Date = new Date()): boolean {
+    if (!preference.digestEnabled) {
+      return false;
+    }
+
+    if (this.isWithinQuietHours(preference, at)) {
+      return false;
+    }
+
+    if (preference.digestFrequency === 'hourly') {
+      return true;
+    }
+
+    const minutesNow = this.minutesInTimezone(at, preference.timezone);
+    const currentHour = Math.floor(minutesNow / 60);
+    return currentHour === (preference.digestHour ?? 9);
+  }
+
+  /**
+   * All users with digests enabled whose digest is due to run right now,
+   * per `isDigestDue`. Used by the scheduled digest job.
+   */
+  async findPreferencesDueForDigest(at: Date = new Date()): Promise<NotificationPreference[]> {
+    const candidates = await this.preferenceRepository.find({ where: { digestEnabled: true } });
+    return candidates.filter((preference) => this.isDigestDue(preference, at));
+  }
+
   private toMinutes(hhmm: string): number {
     const [hours, minutes] = hhmm.split(':').map(Number);
     return hours * 60 + minutes;
@@ -280,6 +336,12 @@ export class PreferencesService {
         timezone: preference.timezone,
       },
       thresholds: preference.thresholds || {},
+      digest: {
+        enabled: preference.digestEnabled,
+        frequency: preference.digestFrequency,
+        hour: preference.digestHour,
+      },
+      locale: preference.locale,
       updatedAt: preference.updatedAt,
     };
   }

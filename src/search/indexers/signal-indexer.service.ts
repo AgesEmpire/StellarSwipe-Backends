@@ -5,6 +5,11 @@ import { Signal } from '../../signals/entities/signal.entity';
 import { ElasticsearchConfigService } from '../services/elasticsearch.service';
 import { OnEvent } from '@nestjs/event-emitter';
 import { FeatureFlagsService } from '../../feature-flags/feature-flags.service';
+import {
+  BulkIndexResult,
+  failAllWithError,
+  parseBulkResponse,
+} from '../utils/bulk-index-result.util';
 
 const SEARCH_INDEX_REFRESH_FLAG = 'search-index-refresh';
 
@@ -84,26 +89,102 @@ export class SignalIndexerService {
     }
   }
 
-  async reindexAll(): Promise<void> {
+  /**
+   * Reindex every signal, reporting a per-document outcome rather than
+   * treating a partially failed bulk batch as fully successful. Documents
+   * that failed in the initial bulk request are retried individually once
+   * so a single transient/malformed document does not drop the rest of
+   * the batch.
+   */
+  async reindexAll(): Promise<BulkIndexResult> {
     this.logger.log('Starting full signal reindex...');
-    try {
-      const signals = await this.signalRepository.find({
-        relations: ['provider'],
-      });
 
-      const bulkBody = [];
-      for (const signal of signals) {
-        bulkBody.push({ index: { _index: this.indexName, _id: signal.id } });
-        bulkBody.push(this.mapSignalToDocument(signal));
-      }
+    const signals = await this.signalRepository.find({
+      relations: ['provider'],
+    });
 
-      if (bulkBody.length > 0) {
-        await this.elasticsearchService.bulk({ body: bulkBody });
-        this.logger.log(`Reindexed ${signals.length} signals`);
-      }
-    } catch (error) {
-      this.logger.error('Failed to reindex signals', error);
+    if (signals.length === 0) {
+      return { total: 0, succeeded: [], failed: [] };
     }
+
+    const ids = signals.map((signal) => signal.id);
+    const bulkBody: unknown[] = [];
+    for (const signal of signals) {
+      bulkBody.push({ index: { _index: this.indexName, _id: signal.id } });
+      bulkBody.push(this.mapSignalToDocument(signal));
+    }
+
+    let result: BulkIndexResult;
+    try {
+      const response = await this.elasticsearchService.bulk({ body: bulkBody });
+      result = parseBulkResponse(ids, response as any);
+    } catch (error) {
+      this.logger.error('Bulk signal reindex request failed entirely', error as Error);
+      result = failAllWithError(ids, error);
+    }
+
+    if (result.failed.length > 0) {
+      this.logger.warn(
+        `Signal reindex: ${result.succeeded.length}/${result.total} succeeded in bulk; retrying ${result.failed.length} failed document(s) individually`,
+      );
+      result = await this.retryFailedSignals(result, signals);
+    }
+
+    this.logger.log(
+      `Reindexed ${result.succeeded.length}/${result.total} signals` +
+        (result.failed.length > 0 ? ` (${result.failed.length} still failed)` : ''),
+    );
+    return result;
+  }
+
+  /**
+   * Retry the documents that failed in the initial bulk request, indexing
+   * each one individually so failures can be retried selectively instead
+   * of re-running the entire batch.
+   */
+  private async retryFailedSignals(
+    result: BulkIndexResult,
+    signals: Signal[],
+  ): Promise<BulkIndexResult> {
+    const signalsById = new Map(signals.map((signal) => [signal.id, signal]));
+    const recovered: string[] = [];
+    const stillFailed: BulkIndexResult['failed'] = [];
+
+    for (const failure of result.failed) {
+      const signal = signalsById.get(failure.id);
+      if (!signal) {
+        stillFailed.push(failure);
+        continue;
+      }
+
+      try {
+        await this.elasticsearchService.index({
+          index: this.indexName,
+          id: signal.id,
+          document: this.mapSignalToDocument(signal),
+        });
+        recovered.push(signal.id);
+      } catch (error) {
+        stillFailed.push({
+          id: failure.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (stillFailed.length > 0) {
+      this.logger.error(
+        `Signal reindex: ${stillFailed.length} document(s) could not be indexed after retry: ${stillFailed
+          .map((f) => f.id)
+          .join(', ')}`,
+      );
+    }
+
+    return {
+      total: result.total,
+      succeeded: [...result.succeeded, ...recovered],
+      failed: stillFailed,
+    };
   }
 
   private mapSignalToDocument(signal: Signal): any {
