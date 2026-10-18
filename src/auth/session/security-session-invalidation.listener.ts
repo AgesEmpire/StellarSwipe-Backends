@@ -8,6 +8,7 @@ export const SECURITY_SESSION_EVENTS = {
   TWO_FACTOR_BACKUP_CODES_REGENERATED: 'auth.2fa.backup_codes_regenerated',
   REFRESH_TOKEN_REUSE: 'security.refresh_token_reuse',
   ACCOUNT_COMPROMISED: 'security.account_compromised',
+  PASSWORD_RESET: 'auth.password.reset',
   INVALIDATION_FAILED: 'security.session_invalidation_failed',
 } as const;
 
@@ -45,6 +46,9 @@ export const SESSION_INVALIDATION_POLICY: Record<
     preserveCurrentSession: false,
   },
   [SECURITY_SESSION_EVENTS.ACCOUNT_COMPROMISED]: {
+    preserveCurrentSession: false,
+  },
+  [SECURITY_SESSION_EVENTS.PASSWORD_RESET]: {
     preserveCurrentSession: false,
   },
 };
@@ -101,6 +105,14 @@ export class SecuritySessionInvalidationListener {
   onAccountCompromised(payload: SecuritySessionEventPayload) {
     return this.invalidate(
       SECURITY_SESSION_EVENTS.ACCOUNT_COMPROMISED,
+      payload,
+    );
+  }
+
+  @OnEvent(SECURITY_SESSION_EVENTS.PASSWORD_RESET)
+  onPasswordReset(payload: SecuritySessionEventPayload) {
+    return this.invalidate(
+      SECURITY_SESSION_EVENTS.PASSWORD_RESET,
       payload,
     );
   }

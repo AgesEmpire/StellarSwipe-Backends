@@ -78,6 +78,17 @@ export class RefreshTokenService {
     }
   }
 
+  revokeAllForUser(userId: string): number {
+    let count = 0;
+    for (const record of this.store.values()) {
+      if (record.userId === userId && !record.revokedAt) {
+        record.revokedAt = new Date();
+        count++;
+      }
+    }
+    return count;
+  }
+
   get(id: string): RefreshTokenRecord | undefined {
     return this.store.get(id);
   }

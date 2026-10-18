@@ -70,6 +70,7 @@ describe('AuthService', () => {
                 refreshToken: 'mock-refresh-token',
                 expiresIn: 3600,
             }),
+            deleteAllUserSessions: jest.fn().mockResolvedValue(undefined),
         };
 
         sessionFingerprintServiceSpec = {
@@ -374,6 +375,59 @@ describe('AuthService', () => {
             expect(result.message).toBe('Account unlocked');
             expect(mockCacheStore.has(`auth_lockout:${kp.publicKey()}`)).toBeFalsy();
             expect(mockCacheStore.has(`auth_failed_attempts:${kp.publicKey()}`)).toBeFalsy();
+        });
+    });
+
+    describe('resetPassword session revocation (#1413)', () => {
+        const crypto = require('crypto');
+
+        it('revokes all active sessions upon successful password reset', async () => {
+            const selector = 'testselector1234';
+            const secret = 'testsecret5678testsecret5678test';
+            const token = `${selector}.${secret}`;
+            const userId = 'user-uuid-123';
+            const digest = crypto.createHash('sha256').update(secret).digest('hex');
+
+            mockCacheStore.set(`pwd_reset:${selector}`, {
+                userId,
+                digest,
+            });
+
+            const res = await service.resetPassword({
+                token,
+                newPassword: 'BrandNewSecurePassword123!',
+            });
+
+            // 1. Password was updated
+            expect(usersServiceSpec.updatePassword).toHaveBeenCalledWith(
+                userId,
+                expect.any(String),
+            );
+
+            // 2. All active user sessions were revoked atomically
+            expect(sessionManagerSpec.deleteAllUserSessions).toHaveBeenCalledWith(userId);
+
+            // 3. Response does not disclose whether prior sessions existed
+            expect(res).toEqual({
+                message: 'Password has been successfully reset',
+            });
+            expect(res).not.toHaveProperty('revokedSessions');
+            expect(res).not.toHaveProperty('sessionsCount');
+
+            // 4. Reset token was consumed
+            expect(mockCacheStore.has(`pwd_reset:${selector}`)).toBeFalsy();
+        });
+
+        it('does not revoke sessions if reset token is invalid or expired', async () => {
+            await expect(
+                service.resetPassword({
+                    token: 'invalid.token',
+                    newPassword: 'Password123!',
+                }),
+            ).rejects.toThrow(UnauthorizedException);
+
+            expect(usersServiceSpec.updatePassword).not.toHaveBeenCalled();
+            expect(sessionManagerSpec.deleteAllUserSessions).not.toHaveBeenCalled();
         });
     });
 });

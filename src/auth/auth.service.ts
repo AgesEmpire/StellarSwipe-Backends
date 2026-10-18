@@ -23,6 +23,9 @@ import { SessionFingerprintService } from './session/session-fingerprint.service
 import { EmailService } from '../email/email.service';
 import { PasswordHasherService } from './password/password-hasher.service';
 import { User } from '../users/entities/user.entity';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { RefreshTokenService } from './refresh-token/refresh-token.service';
+import { SECURITY_SESSION_EVENTS } from './session/security-session-invalidation.listener';
 import { Request } from 'express';
 
 @Injectable()
@@ -48,6 +51,8 @@ export class AuthService {
     private emailService: EmailService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @Optional() passwordHasher?: PasswordHasherService,
+    @Optional() private readonly refreshTokenService?: RefreshTokenService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {
     this.passwordHasher = passwordHasher ?? new PasswordHasherService();
   }
@@ -339,6 +344,16 @@ export class AuthService {
     // 3. Update password
     await this.usersService.updatePassword(record.userId, hashedPassword);
 
+    // 4. Atomically revoke all active refresh credentials and user sessions
+    await this.sessionManager.deleteAllUserSessions(record.userId);
+    this.refreshTokenService?.revokeAllForUser(record.userId);
+
+    // 5. Emit security event
+    this.events?.emit(SECURITY_SESSION_EVENTS.PASSWORD_RESET, {
+      userId: record.userId,
+    });
+
+    // 6. Return constant shape that never discloses whether prior sessions existed
     return { message: 'Password has been successfully reset' };
   }
 
