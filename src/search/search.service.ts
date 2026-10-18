@@ -13,6 +13,7 @@ import {
   AutocompleteResultDto,
   SearchFacetBucket,
 } from './dto/search-result.dto';
+import { validateSearchFilters } from './utils/search-filter-validator';
 
 @Injectable()
 export class SearchService {
@@ -130,41 +131,43 @@ export class SearchService {
       },
     };
 
-    if (searchQuery.filters) {
-      if (searchQuery.filters.assetPair && searchQuery.filters.assetPair.length > 0) {
+    const filters = validateSearchFilters(searchQuery.filters);
+
+    if (filters) {
+      if (filters.assetPair && filters.assetPair.length > 0) {
         query.query.bool.filter.push({
-          terms: { assetPair: searchQuery.filters.assetPair },
+          terms: { assetPair: filters.assetPair },
         });
       }
 
-      if (searchQuery.filters.action && searchQuery.filters.action.length > 0) {
+      if (filters.action && filters.action.length > 0) {
         query.query.bool.filter.push({
-          terms: { action: searchQuery.filters.action },
+          terms: { action: filters.action },
         });
       }
 
-      if (searchQuery.filters.providerId && searchQuery.filters.providerId.length > 0) {
+      if (filters.providerId && filters.providerId.length > 0) {
         query.query.bool.filter.push({
-          terms: { providerId: searchQuery.filters.providerId },
+          terms: { providerId: filters.providerId },
         });
       }
 
-      if (searchQuery.filters.dateRange) {
+      if (filters.dateRange) {
         query.query.bool.filter.push({
           range: {
             createdAt: {
-              gte: searchQuery.filters.dateRange.from,
-              lte: searchQuery.filters.dateRange.to,
+              gte: filters.dateRange.from,
+              lte: filters.dateRange.to,
             },
           },
         });
       }
 
-      if (searchQuery.filters.minWinRate !== undefined) {
+      if (filters.minWinRate !== undefined) {
         query.query.bool.filter.push({
           range: {
             winRate: {
-              gte: searchQuery.filters.minWinRate,
+              gte: filters.minWinRate,
             },
           },
         });

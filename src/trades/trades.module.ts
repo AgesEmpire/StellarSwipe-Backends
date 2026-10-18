@@ -59,6 +59,7 @@ import { TradeDlqCleanupService } from './services/trade-dlq-cleanup.service';
 import { DeadLetterService, DEAD_LETTER_QUEUE } from '../jobs/dead-letter.service';
 import { AtomicTransactionHelper } from '../common/database/atomic-transaction.helper';
 import { DataLoaderModule } from '../common/dataloader/dataloader.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { DataLoaderModule } from '../common/dataloader/dataloader.module';
     ScheduleModule.forRoot(),
     WebsocketModule,
     AuditModule,
+    AuthorizationModule,
     NotificationsModule,
     CanaryRoutingModule,
     DataLoaderModule,
