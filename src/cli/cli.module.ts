@@ -13,12 +13,14 @@ import { ClearCacheCommand } from './commands/maintenance/clear-cache.command';
 import { MigrateDataCommand } from './commands/maintenance/migrate-data.command';
 import { ReindexSearchCommand } from './commands/maintenance/reindex-search.command';
 import { GenerateReportCommand } from './commands/analytics/generate-report.command';
+import { SearchReindexCheckpoint } from '../search/entities/search-reindex-checkpoint.entity';
+import { SearchReindexCheckpointService } from '../search/services/search-reindex-checkpoint.service';
 
 @Module({
   imports: [
     ConfigModule,
     CacheModule.register(),
-    TypeOrmModule.forFeature([User, Signal]),
+    TypeOrmModule.forFeature([User, Signal, SearchReindexCheckpoint]),
   ],
   providers: [
     ListUsersCommand,
@@ -30,6 +32,7 @@ import { GenerateReportCommand } from './commands/analytics/generate-report.comm
     MigrateDataCommand,
     ReindexSearchCommand,
     GenerateReportCommand,
+    SearchReindexCheckpointService,
   ],
   exports: [
     ListUsersCommand,

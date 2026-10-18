@@ -23,8 +23,6 @@ const NON_RELEASABLE_STATUSES = new Set<TradeStatus>([
   TradeStatus.CONFIRMED,
 ]);
 
-const MAX_DEDUPE_KEYS = 10_000;
-
 export function toSafeFailureMessage(reason?: string): string {
   const code = (reason ?? '').trim().toUpperCase();
   return SAFE_FAILURE_REASONS[code] ?? DEFAULT_FAILURE_MESSAGE;
@@ -33,7 +31,6 @@ export function toSafeFailureMessage(reason?: string): string {
 @Injectable()
 export class TradeEventListener {
   private readonly logger = new Logger(TradeEventListener.name);
-  private readonly notifiedFailures = new Set<string>();
 
   constructor(
     @Optional() private readonly notificationService?: NotificationService,
@@ -167,19 +164,18 @@ export class TradeEventListener {
 
   async notifyUserOfFailure(event: TradeFailedEvent): Promise<void> {
     if (!this.notificationService) return;
-    // Retries of the same failure must not produce duplicate notifications.
-    const key = `${event.tradeId}:${event.correlationId ?? ''}`;
-    if (this.notifiedFailures.has(key)) {
-      this.logger.debug(`Skipping duplicate failure notification for trade ${event.tradeId}`);
-      return;
-    }
-    this.notifiedFailures.add(key);
-    if (this.notifiedFailures.size > MAX_DEDUPE_KEYS) {
-      this.notifiedFailures.delete(this.notifiedFailures.values().next().value as string);
-    }
+
+    // Retries of the same failure (redelivered event, listener restart,
+    // multiple instances) must not produce duplicate notifications. Rather
+    // than tracking this in an in-process Set — which forgets everything on
+    // restart and is invisible to other instances — the domain event's
+    // stable identity is persisted on the notification row behind a unique
+    // database constraint, so a retried call deterministically reuses the
+    // existing notification instead of creating another one.
+    const eventId = `trade.failed:${event.tradeId}:${event.correlationId ?? event.tradeId}`;
 
     try {
-      await this.notificationService.send({
+      const { deduplicated } = await this.notificationService.sendForEvent(eventId, {
         userId: event.userId,
         type: NotificationType.TRADE_FAILED,
         title: 'Trade failed',
@@ -187,8 +183,11 @@ export class TradeEventListener {
         channel: NotificationChannel.IN_APP,
         metadata: { tradeId: event.tradeId, correlationId: event.correlationId },
       });
+
+      if (deduplicated) {
+        this.logger.debug(`Skipping duplicate failure notification for trade ${event.tradeId}`);
+      }
     } catch (error) {
-      this.notifiedFailures.delete(key); // allow a later retry to deliver
       this.logger.error(`Failure notification not sent for trade ${event.tradeId}`, {
         correlationId: event.correlationId,
         error: (error as Error).message,
