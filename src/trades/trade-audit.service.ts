@@ -89,6 +89,27 @@ export class TradeAuditService {
     });
   }
 
+  /**
+   * Records a soft-deleted trade being restored, including the roles the
+   * actor held at the time. Backs the restore history requirement for
+   * soft-delete restores (see RestoreOptions.onRestored in soft-delete.helper.ts).
+   */
+  async logTradeRestored(
+    trade: Trade,
+    restoredByRoles: string[],
+    ctx: TradeAuditContext = {},
+  ): Promise<void> {
+    await this.auditService.log({
+      userId: trade.userId,
+      action: AuditAction.TRADE_MODIFIED,
+      resource: 'trade',
+      resourceId: trade.id,
+      status: AuditStatus.SUCCESS,
+      metadata: { ...this.safeTradePayload(trade), restoreAction: 'restored', restoredByRoles },
+      ...ctx,
+    });
+  }
+
   // ---------------------------------------------------------------------------
 
   /** Strip wallet private keys / secrets; keep only compliance-relevant fields */
