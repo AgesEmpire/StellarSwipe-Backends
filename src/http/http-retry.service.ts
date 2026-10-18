@@ -4,6 +4,8 @@ import { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { BulkheadRejectedError } from '../stellar/bulkhead/bulkhead';
 import { ProviderConcurrencyService } from './provider-concurrency.service';
+import { RetryBudgetService } from './retry-budget.service';
+import { parseRetryAfterMs, resolveMaxRetryAfterMs } from './rate-limit-response.config';
 
 /**
  * Options controlling retry behaviour for a single request.
@@ -99,6 +101,8 @@ export class HttpRetryService {
     private readonly httpService: HttpService,
     @Optional()
     private readonly providerConcurrency?: ProviderConcurrencyService,
+    @Optional()
+    private readonly retryBudget?: RetryBudgetService,
   ) {}
 
   async get<T = any>(
@@ -175,6 +179,11 @@ export class HttpRetryService {
       provider && this.providerConcurrency
         ? () => this.providerConcurrency!.execute(provider, fn)
         : fn;
+    // Shared retry-budget key: scoped to the provider when known, otherwise
+    // a single "default" bucket shared by every un-attributed outbound call.
+    // This bounds the *rate* of retries across all callers hitting the same
+    // dependency, not just the attempts of a single call (see #1376).
+    const budgetKey = provider ?? 'default';
     let lastError: Error;
 
     for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
@@ -194,7 +203,15 @@ export class HttpRetryService {
           throw error;
         }
 
-        const delay = this.computeDelay(attempt, opts);
+        if (this.retryBudget && !this.retryBudget.tryConsume(budgetKey)) {
+          this.logger.error(
+            `[HttpRetry] ${label} retry budget for "${budgetKey}" exhausted — ` +
+              `failing fast after ${attempt} attempt(s) instead of retrying: ${error.message}`,
+          );
+          throw error;
+        }
+
+        const delay = this.computeDelay(attempt, opts, error, provider);
         this.logger.warn(
           `[HttpRetry] ${label} attempt ${attempt}/${opts.maxAttempts} failed ` +
             `(${error.message}). Retrying in ${delay}ms…`,
@@ -235,8 +252,27 @@ export class HttpRetryService {
    *
    *   delay = min(baseDelayMs * 2^(attempt-1), maxDelayMs)
    *   if jitter: delay *= uniform(0.8, 1.2)
+   *
+   * When `error` is a 429 response carrying a `Retry-After` header (#1374),
+   * that provider hint takes precedence over the exponential guess — it is
+   * used as-is, clamped to that provider's configured maximum wait, instead
+   * of our own backoff. Non-429 errors and 429s without a usable header
+   * fall back to the exponential formula unchanged.
    */
-  computeDelay(attempt: number, opts: RetryDefaults): number {
+  computeDelay(
+    attempt: number,
+    opts: RetryDefaults,
+    error?: any,
+    provider?: string,
+  ): number {
+    if (error?.response?.status === 429) {
+      const retryAfterMs = parseRetryAfterMs(error.response.headers?.['retry-after']);
+      if (retryAfterMs !== undefined) {
+        const cap = resolveMaxRetryAfterMs(provider ?? 'default');
+        return Math.min(retryAfterMs, cap);
+      }
+    }
+
     const exponential = opts.baseDelayMs * Math.pow(2, attempt - 1);
     const capped = Math.min(exponential, opts.maxDelayMs);
     if (!opts.jitter) return capped;
