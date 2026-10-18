@@ -14,6 +14,26 @@ export interface CircuitBreakerOptions {
   recoveryTimeMs?: number;
   /** Number of successful probes in HALF_OPEN before closing. Default: 2 */
   successThreshold?: number;
+  /**
+   * Maximum number of concurrent probe requests allowed through while the
+   * circuit is HALF_OPEN. Default: 1.
+   *
+   * Without this bound, every caller waiting on a recovering dependency
+   * would be let through the instant the recovery timer elapses — a probe
+   * "stampede" that can re-overwhelm a dependency that just started coming
+   * back up. Extra calls beyond this limit are rejected immediately (same
+   * as the OPEN state) until a probe slot frees up.
+   */
+  halfOpenMaxProbes?: number;
+}
+
+/** A single recorded manual (operator-triggered) action against a circuit. */
+export interface CircuitAuditEntry {
+  circuit: string;
+  action: 'MANUAL_RESET';
+  actor: string;
+  at: Date;
+  previousState: CircuitState;
 }
 
 interface CircuitStats {
@@ -22,6 +42,8 @@ interface CircuitStats {
   successes: number;
   lastFailureAt?: Date;
   openedAt?: Date;
+  /** Probe requests currently in flight while state === HALF_OPEN. */
+  probesInFlight: number;
 }
 
 /** Numeric encoding for Prometheus gauge: CLOSED=0, HALF_OPEN=1, OPEN=2 */
@@ -61,7 +83,11 @@ export class CircuitBreakerService {
     failureThreshold: 5,
     recoveryTimeMs: 30_000,
     successThreshold: 2,
+    halfOpenMaxProbes: 1,
   };
+
+  /** In-memory audit trail of manual (operator-triggered) circuit actions. */
+  private readonly auditTrail: CircuitAuditEntry[] = [];
 
   // Prometheus metrics – optional so the service remains usable without a registry
   private stateGauge?: Gauge;
@@ -120,6 +146,27 @@ export class CircuitBreakerService {
       }
     }
 
+    // Bound how many probes may run concurrently while recovering: once the
+    // circuit is HALF_OPEN, only `halfOpenMaxProbes` calls are let through at
+    // a time. Everyone else is rejected exactly like OPEN, so a crowd of
+    // waiting callers can't flood a dependency that's still coming back up.
+    let countedAsProbe = false;
+    if (circuit.state === CircuitState.HALF_OPEN) {
+      if (circuit.probesInFlight >= opts.halfOpenMaxProbes) {
+        this.logger.warn(
+          `[CircuitBreaker] "${name}" is HALF_OPEN with ${circuit.probesInFlight} probe(s) ` +
+            `already in flight (limit ${opts.halfOpenMaxProbes}) — rejecting request`,
+        );
+        this.callsCounter?.inc({ circuit: name, outcome: 'rejected' });
+        if (fallback) return fallback();
+        throw new ServiceUnavailableException(
+          `Service "${name}" is temporarily unavailable. Please try again later.`,
+        );
+      }
+      circuit.probesInFlight += 1;
+      countedAsProbe = true;
+    }
+
     try {
       const result = await fn();
       this.callsCounter?.inc({ circuit: name, outcome: 'success' });
@@ -130,6 +177,10 @@ export class CircuitBreakerService {
       this.onFailure(name, circuit, opts);
       if (fallback) return fallback();
       throw error;
+    } finally {
+      if (countedAsProbe) {
+        circuit.probesInFlight = Math.max(0, circuit.probesInFlight - 1);
+      }
     }
   }
 
@@ -147,16 +198,43 @@ export class CircuitBreakerService {
     return result;
   }
 
-  /** Manually reset a circuit to CLOSED (admin use). */
-  reset(name: string): void {
+  /**
+   * Manually reset a circuit to CLOSED — the operator control for recovering
+   * a circuit after confirming the dependency it guards has been restored,
+   * without waiting for the automatic half-open probe cycle.
+   *
+   * `actor` identifies who authorized the action (e.g. an admin user id) and
+   * is required so the action lands in the audit trail returned by
+   * {@link getAuditLog}; callers that omit it get `'unknown'` recorded
+   * rather than silently skipping the audit entry.
+   */
+  reset(name: string, actor = 'unknown'): void {
     const circuit = this.circuits.get(name);
+    const previousState = circuit?.state ?? CircuitState.CLOSED;
     if (circuit) {
-      const prev = circuit.state;
       this.circuits.delete(name);
-      this.transitionsCounter?.inc({ circuit: name, from: prev, to: CircuitState.CLOSED });
+      this.transitionsCounter?.inc({ circuit: name, from: previousState, to: CircuitState.CLOSED });
       this.stateGauge?.set({ circuit: name }, STATE_VALUE[CircuitState.CLOSED]);
     }
-    this.logger.log(`[CircuitBreaker] "${name}" manually reset to CLOSED`);
+    this.auditTrail.push({
+      circuit: name,
+      action: 'MANUAL_RESET',
+      actor,
+      at: new Date(),
+      previousState,
+    });
+    this.logger.log(`[CircuitBreaker] "${name}" manually reset to CLOSED by "${actor}"`);
+  }
+
+  /**
+   * Returns the audit trail of manual circuit actions, most recent first.
+   * Pass `name` to filter to a single circuit.
+   */
+  getAuditLog(name?: string): CircuitAuditEntry[] {
+    const entries = name
+      ? this.auditTrail.filter((e) => e.circuit === name)
+      : [...this.auditTrail];
+    return entries.slice().reverse();
   }
 
   // ---------------------------------------------------------------------------
@@ -165,7 +243,12 @@ export class CircuitBreakerService {
 
   private getOrCreate(name: string): CircuitStats {
     if (!this.circuits.has(name)) {
-      const stats: CircuitStats = { state: CircuitState.CLOSED, failures: 0, successes: 0 };
+      const stats: CircuitStats = {
+        state: CircuitState.CLOSED,
+        failures: 0,
+        successes: 0,
+        probesInFlight: 0,
+      };
       this.circuits.set(name, stats);
       this.stateGauge?.set({ circuit: name }, STATE_VALUE[CircuitState.CLOSED]);
     }

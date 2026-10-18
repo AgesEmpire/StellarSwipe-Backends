@@ -38,6 +38,7 @@ import { FieldAuthorizationPlugin } from './plugins/field-auth.plugin';
 import { SlowFieldLoggingPlugin } from './plugins/slow-field-logging.plugin';
 import { GqlCompressionPlugin } from './plugins/gql-compression.plugin';
 import { PersistedQueryPlugin } from './plugins/persisted-query.plugin';
+import { ResolverTimeoutInterceptor } from './interceptors/resolver-timeout.interceptor';
 
 // ─── Resolvers ────────────────────────────────────────────────────────────────
 import { SignalResolver } from './resolvers/signal.resolver';
@@ -239,6 +240,9 @@ import { AssetsService } from '../assets/assets.service';
     // Guard
     GqlAuthGuard,
     Reflector,
+
+    // Interceptors
+    ResolverTimeoutInterceptor,
 
     // Exception filter
     { provide: APP_FILTER, useClass: GraphqlExceptionFilter },

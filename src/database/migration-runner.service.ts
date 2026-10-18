@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, MigrationInterface } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { AdvisoryLockService } from '../common/database/advisory-lock.service';
+import { MIGRATIONS_LOCK_NAME } from './migration/migration.service';
 
 export interface MigrationStatus {
   name: string;
@@ -19,12 +21,43 @@ export interface MigrationRunResult {
 export class MigrationRunnerService {
   private readonly logger = new Logger(MigrationRunnerService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly advisoryLockService: AdvisoryLockService,
+  ) {}
 
   /**
    * Run all pending migrations. Rolls back the last applied migration on failure.
+   *
+   * Issue #1369: acquires the shared `MIGRATIONS_LOCK_NAME` Postgres advisory
+   * lock (also used by MigrationService) before touching the schema, so this
+   * runner and any other application instance attempting a migration run at
+   * the same time can never execute concurrently. The lock is session-scoped,
+   * so an abandoned/crashed holder's lock is released automatically by
+   * Postgres when its connection drops — recovery is bounded without needing
+   * a manual unlock step.
    */
   async runMigrations(): Promise<MigrationRunResult> {
+    const acquired = await this.advisoryLockService.tryAcquire(MIGRATIONS_LOCK_NAME);
+    if (!acquired) {
+      this.logger.warn(
+        'Migration run skipped: another runner already holds the migrations advisory lock',
+      );
+      return {
+        executed: [],
+        skipped: [],
+        failed: 'Another migration run is already in progress',
+      };
+    }
+
+    try {
+      return await this.runMigrationsLocked();
+    } finally {
+      await this.advisoryLockService.release(MIGRATIONS_LOCK_NAME);
+    }
+  }
+
+  private async runMigrationsLocked(): Promise<MigrationRunResult> {
     this.logger.log('Starting migration run...');
     const executed: string[] = [];
     const skipped: string[] = [];
@@ -57,8 +90,28 @@ export class MigrationRunnerService {
 
   /**
    * Revert the last executed migration.
+   *
+   * Issue #1369: guarded by the same migrations advisory lock as
+   * {@link runMigrations} so a revert can't race a concurrent run/revert
+   * from another instance.
    */
   async revertLastMigration(): Promise<{ reverted: string | null; error?: string }> {
+    const acquired = await this.advisoryLockService.tryAcquire(MIGRATIONS_LOCK_NAME);
+    if (!acquired) {
+      this.logger.warn(
+        'Migration revert skipped: another runner already holds the migrations advisory lock',
+      );
+      return { reverted: null, error: 'Another migration operation is already in progress' };
+    }
+
+    try {
+      return await this.revertLastMigrationLocked();
+    } finally {
+      await this.advisoryLockService.release(MIGRATIONS_LOCK_NAME);
+    }
+  }
+
+  private async revertLastMigrationLocked(): Promise<{ reverted: string | null; error?: string }> {
     this.logger.log('Reverting last migration...');
 
     try {

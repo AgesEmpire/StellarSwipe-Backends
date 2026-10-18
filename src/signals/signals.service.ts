@@ -3,6 +3,7 @@ import {
   Logger,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
@@ -27,26 +28,64 @@ export interface PaginatedSignalsDto {
   hasPrev: boolean;
 }
 
-export type SignalCancellationActor = 'provider' | 'administrator';
-
-export interface SignalCancellationMetadata {
-  reason: string;
-  actor: SignalCancellationActor;
-  actorId?: string;
-  cancelledAt: string;
+/**
+ * Provider suspension state, tracked in-memory for enforcement and auditing.
+ * Suspended providers cannot create new signals or accept new followers.
+ */
+export interface ProviderSuspension {
+  providerId: string;
+  suspended: boolean;
+  reason: string | null;
+  actorId: string | null;
+  suspendedAt: Date | null;
+  liftedAt: Date | null;
 }
 
-export interface CancelSignalOptions {
-  reason: string;
-  actor: SignalCancellationActor;
-  actorId?: string;
-  currentVersion?: number;
+export interface SuspensionAuditEntry {
+  providerId: string;
+  action: 'suspend' | 'unsuspend';
+  actorId: string;
+  reason: string | null;
+  timestamp: Date;
 }
+
+/**
+ * Configurable publication limits applied per provider.
+ * - maxSignalsPerWindow: max signals published within windowMs
+ * - maxActiveSignals: max outstanding (ACTIVE) signals at any time
+ */
+export interface SignalPublicationLimits {
+  maxSignalsPerWindow: number;
+  windowMs: number;
+  maxActiveSignals: number;
+}
+
+export const DEFAULT_SIGNAL_PUBLICATION_LIMITS: SignalPublicationLimits = {
+  maxSignalsPerWindow: 10,
+  windowMs: 60 * 60 * 1000,
+  maxActiveSignals: 50,
+};
+
+/**
+ * Identifies which publication limit was exceeded so callers can surface it.
+ */
+export type SignalPublicationLimitType =
+  | 'frequency'
+  | 'active_signals';
 
 @Injectable()
 export class SignalsService {
   private static readonly FEED_KEY = `${CachePrefix.SIGNAL}feed`;
   private readonly logger = new Logger(SignalsService.name);
+  private readonly suspensions = new Map<string, ProviderSuspension>();
+  private readonly suspensionAudit: SuspensionAuditEntry[] = [];
+
+  private readonly publicationLimits = new Map<
+    string,
+    SignalPublicationLimits
+  >();
+  private readonly publicationTimestamps = new Map<string, number[]>();
+  private readonly publicationLocks = new Map<string, Promise<void>>();
 
   constructor(
     @InjectRepository(Signal)
@@ -55,6 +94,213 @@ export class SignalsService {
     private readonly quotaService: SignalQuotaService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  /**
+   * Configure publication limits for a provider. Falls back to defaults.
+   */
+  setPublicationLimits(
+    providerId: string,
+    limits: Partial<SignalPublicationLimits>,
+  ): SignalPublicationLimits {
+    const merged: SignalPublicationLimits = {
+      ...DEFAULT_SIGNAL_PUBLICATION_LIMITS,
+      ...this.publicationLimits.get(providerId),
+      ...limits,
+    };
+    this.publicationLimits.set(providerId, merged);
+    return merged;
+  }
+
+  getPublicationLimits(providerId: string): SignalPublicationLimits {
+    return (
+      this.publicationLimits.get(providerId) ?? {
+        ...DEFAULT_SIGNAL_PUBLICATION_LIMITS,
+      }
+    );
+  }
+
+  /**
+   * Suspend a provider. Requires an authorized actor and a reason.
+   * The transition is recorded in the audit log.
+   */
+  async suspendProvider(
+    providerId: string,
+    actorId: string,
+    reason: string,
+  ): Promise<ProviderSuspension> {
+    if (!providerId || !actorId) {
+      throw new BadRequestException('providerId and actorId are required');
+    }
+    if (!reason || !reason.trim()) {
+      throw new BadRequestException('A reason is required to suspend a provider');
+    }
+
+    const existing = this.suspensions.get(providerId);
+    if (existing?.suspended) {
+      throw new ConflictException('Provider is already suspended');
+    }
+
+    const now = new Date();
+    const suspension: ProviderSuspension = {
+      providerId,
+      suspended: true,
+      reason: reason.trim(),
+      actorId,
+      suspendedAt: now,
+      liftedAt: null,
+    };
+    this.suspensions.set(providerId, suspension);
+    this.recordSuspensionAudit({
+      providerId,
+      action: 'suspend',
+      actorId,
+      reason: suspension.reason,
+      timestamp: now,
+    });
+    this.emitSafely('provider.suspended', suspension);
+    return suspension;
+  }
+
+  /**
+   * Lift a provider suspension. Requires an authorized actor.
+   * The transition is recorded in the audit log.
+   */
+  async unsuspendProvider(
+    providerId: string,
+    actorId: string,
+    reason?: string,
+  ): Promise<ProviderSuspension> {
+    if (!providerId || !actorId) {
+      throw new BadRequestException('providerId and actorId are required');
+    }
+
+    const existing = this.suspensions.get(providerId);
+    if (!existing?.suspended) {
+      throw new ConflictException('Provider is not currently suspended');
+    }
+
+    const now = new Date();
+    const suspension: ProviderSuspension = {
+      ...existing,
+      suspended: false,
+      liftedAt: now,
+    };
+    this.suspensions.set(providerId, suspension);
+    this.recordSuspensionAudit({
+      providerId,
+      action: 'unsuspend',
+      actorId,
+      reason: reason?.trim() || null,
+      timestamp: now,
+    });
+    this.emitSafely('provider.unsuspended', suspension);
+    return suspension;
+  }
+
+  /**
+   * Returns true when the provider is currently suspended.
+   */
+  isProviderSuspended(providerId: string): boolean {
+    return this.suspensions.get(providerId)?.suspended === true;
+  }
+
+  /**
+   * Returns the audit trail of suspension transitions.
+   */
+  getSuspensionAudit(providerId?: string): SuspensionAuditEntry[] {
+    if (!providerId) return [...this.suspensionAudit];
+    return this.suspensionAudit.filter((e) => e.providerId === providerId);
+  }
+
+  private recordSuspensionAudit(entry: SuspensionAuditEntry): void {
+    this.suspensionAudit.push(entry);
+    this.logger.log(
+      `Provider ${entry.providerId} ${entry.action} by ${entry.actorId}` +
+        (entry.reason ? `: ${entry.reason}` : ''),
+    );
+  }
+
+  /**
+   * Guard used by follower-acceptance flows. Throws when the provider is
+   * suspended so it cannot accept new followers.
+   */
+  assertProviderCanAcceptFollowers(providerId: string): void {
+    if (this.isProviderSuspended(providerId)) {
+      throw new ForbiddenException(
+        'Suspended providers cannot accept new followers',
+      );
+    }
+  }
+
+  /**
+   * Serialize publication-limit checks per provider so the check-and-consume
+   * step is atomic (no race between concurrent publishes).
+   */
+  private async withPublicationLock<T>(
+    providerId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.publicationLocks.get(providerId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.publicationLocks.set(
+      providerId,
+      previous.then(() => current),
+    );
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.publicationLocks.get(providerId) === current) {
+        this.publicationLocks.delete(providerId);
+      }
+    }
+  }
+
+  /**
+   * Atomically enforce publication limits for a provider and record the
+   * publication. Throws ForbiddenException identifying the exceeded limit.
+   */
+  private async enforcePublicationLimits(providerId: string): Promise<void> {
+    await this.withPublicationLock(providerId, async () => {
+      const limits = this.getPublicationLimits(providerId);
+      const now = Date.now();
+
+      const timestamps = (this.publicationTimestamps.get(providerId) ?? [])
+        .filter((ts) => now - ts < limits.windowMs);
+
+      if (timestamps.length >= limits.maxSignalsPerWindow) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          limit: 'frequency' as SignalPublicationLimitType,
+          message: `Signal publication frequency limit exceeded: max ${limits.maxSignalsPerWindow} signals per ${limits.windowMs}ms`,
+          maxSignalsPerWindow: limits.maxSignalsPerWindow,
+          windowMs: limits.windowMs,
+        });
+      }
+
+      const activeCount = await this.signalRepository.count({
+        where: { providerId, status: SignalStatus.ACTIVE },
+      });
+
+      if (activeCount >= limits.maxActiveSignals) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          limit: 'active_signals' as SignalPublicationLimitType,
+          message: `Outstanding active signal limit exceeded: max ${limits.maxActiveSignals} active signals`,
+          maxActiveSignals: limits.maxActiveSignals,
+        });
+      }
+
+      timestamps.push(now);
+      this.publicationTimestamps.set(providerId, timestamps);
+    });
+  }
 
   async create(createSignalDto: CreateSignalDto): Promise<Signal> {
     if (
@@ -67,12 +313,23 @@ export class SignalsService {
       );
     }
 
+    // Suspended providers cannot create new signals
+    if (this.isProviderSuspended(createSignalDto.providerId)) {
+      throw new ForbiddenException(
+        'Suspended providers cannot create new signals',
+      );
+    }
+
     // Enforce quota — throws ForbiddenException when exceeded
     await this.quotaService.checkAndConsume(
       createSignalDto.providerId,
       createSignalDto.tier ?? 'basic',
       createSignalDto.isStaked ?? false,
     );
+
+    // Enforce publication limits atomically — throws ForbiddenException
+    // identifying the applicable limit when exceeded
+    await this.enforcePublicationLimits(createSignalDto.providerId);
 
     const signal = this.signalRepository.create({
       providerId: createSignalDto.providerId,
@@ -136,187 +393,18 @@ export class SignalsService {
       if (!id || !timestamp) {
         throw new Error('Invalid cursor format');
       }
-      return { id, timestamp: parseInt(timestamp, 10) };
+      return { id, timestamp: Number(timestamp) };
     } catch {
-      throw new BadRequestException('Invalid cursor format');
+      throw new BadRequestException('Invalid pagination cursor');
     }
-  }
-
-  /**
-   * Cursor-based paginated signals feed endpoint.
-   * Returns the most recent signals with cursor for pagination.
-   *
-   * Cursor-based pagination is preferred over offset pagination for feeds
-   * because it remains stable when new records are inserted between pages.
-   *
-   * @param query - Contains optional cursor and limit (default 20, max 50)
-   * @returns Paginated response with data, nextCursor, and hasMore flag
-   */
-  async findAll(
-    query?: PaginatedSignalsQueryDto,
-  ): Promise<PaginatedSignalsResponseDto> {
-    const limit = Math.min(Math.max(query?.limit ?? 20, 1), 50);
-    let filters: any = {};
-
-    // If a cursor is provided, decode it and filter for signals created before it
-    if (query?.cursor) {
-      const { timestamp } = this.decodeCursor(query.cursor);
-      filters.createdAt = LessThan(new Date(timestamp));
-    }
-
-    // Fetch limit + 1 to determine if there are more results
-    const signals = await this.signalRepository.find({
-      where: filters,
-      relations: ['provider'],
-      order: { createdAt: 'DESC' },
-      take: limit + 1,
-    });
-
-    const hasMore = signals.length > limit;
-    const data = hasMore ? signals.slice(0, limit) : signals;
-
-    // Generate next cursor from the last signal if there are more results
-    const nextCursor =
-      hasMore && data.length > 0
-        ? this.encodeCursor(data[data.length - 1])
-        : undefined;
-
-    return {
-      data,
-      nextCursor,
-      hasMore,
-      limit,
-    };
-  }
-
-  /**
-   * Paginated signal feed with eager-loaded provider relation
-   * to prevent N+1 queries when controllers access signal.provider.
-   *
-   * Uses skip/take for backward-compatible offset pagination.
-   */
-  async findPaginated(
-    page = 1,
-    limit = 20,
-    sortBy: 'createdAt' | 'confidenceScore' | 'successRate' = 'createdAt',
-    asset?: string,
-  ): Promise<PaginatedSignalsDto> {
-    const safeLimit = Math.min(Math.max(limit, 1), 100);
-    const offset = (Math.max(page, 1) - 1) * safeLimit;
-
-    const qb = this.signalRepository
-      .createQueryBuilder('signal')
-      .leftJoinAndSelect('signal.provider', 'provider')
-      .orderBy(`signal.${sortBy}`, 'DESC');
-
-    if (asset) {
-      qb.where('signal.base_asset = :asset OR signal.counter_asset = :asset', {
-        asset,
-      });
-    }
-
-    const [data, total] = await qb
-      .skip(offset)
-      .take(safeLimit)
-      .getManyAndCount();
-    const totalPages = Math.ceil(total / safeLimit);
-
-    return {
-      data,
-      total,
-      limit: safeLimit,
-      offset,
-      page,
-      totalPages,
-      hasNext: page < totalPages,
-      hasPrev: page > 1,
-    };
-  }
-
-  /**
-   * Batch-load signals by IDs in a single query.
-   * Use with BatchLoaderService to prevent N+1 when resolving signal relations.
-   */
-  async findByIds(ids: string[]): Promise<Signal[]> {
-    if (ids.length === 0) return [];
-    return this.signalRepository
-      .createQueryBuilder('signal')
-      .leftJoinAndSelect('signal.provider', 'provider')
-      .where('signal.id IN (:...ids)', { ids })
-      .getMany();
-  }
-
-  async updateSignalStatus(
-    id: string,
-    status: SignalStatus,
-    currentVersion?: number,
-  ): Promise<Signal | null> {
-    if (currentVersion !== undefined) {
-      const result = await this.signalRepository.update(
-        { id, version: currentVersion },
-        { status, version: currentVersion + 1 },
-      );
-      if (result.affected === 0) {
-        throw new ConflictException(
-          'Signal was updated by another request. Please retry with the latest version.',
-        );
-      }
-    } else {
-      await this.signalRepository.update(id, { status });
-    }
-
-    await this.cacheService.del(`${CachePrefix.SIGNAL}${id}`);
-    const updated = await this.signalRepository.findOneBy({ id });
-    if (updated) {
-      this.emitSafely('signal.updated', updated);
-    }
-    return updated;
-  }
-
-  /**
-   * Apply a partial update to a signal's mutable fields, guarded by an
-   * optimistic version check. Clients must supply the version they last
-   * observed; if the stored version has advanced, the update is rejected
-   * with a ConflictException and no data is overwritten.
-   */
-  async updateSignalFields(
-    id: string,
-    changes: Partial<Signal>,
-    currentVersion: number,
-  ): Promise<Signal> {
-    if (currentVersion === undefined || currentVersion === null) {
-      throw new BadRequestException(
-        'currentVersion is required when editing signal fields',
-      );
-    }
-
-    const result = await this.signalRepository.update(
-      { id, version: currentVersion },
-      { ...changes, version: currentVersion + 1 } as any,
-    );
-
-    if (result.affected === 0) {
-      throw new ConflictException(
-        'Signal was updated by another request. Please retry with the latest version.',
-      );
-    }
-
-    await this.cacheService.del(`${CachePrefix.SIGNAL}${id}`);
-    const updated = await this.signalRepository.findOneBy({ id });
-    if (!updated) {
-      throw new BadRequestException('Signal not found');
-    }
-    this.emitSafely('signal.updated', updated);
-    return updated;
   }
 
   private emitSafely(event: string, payload: unknown): void {
     try {
       this.eventEmitter.emit(event, payload);
-    } catch (error) {
-      this.logger.error(
-        `Failed to emit ${event}: ${(error as Error).message}`,
-        (error as Error).stack,
+    } catch (err) {
+      this.logger.warn(
+        `Failed to emit ${event}: ${(err as Error)?.message ?? err}`,
       );
     }
   }

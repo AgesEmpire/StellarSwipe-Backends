@@ -1,7 +1,11 @@
 import { Resolver, Query, Args, ID, Int } from '@nestjs/graphql';
-import { UseGuards, Logger } from '@nestjs/common';
+import { UseGuards, UseInterceptors, Logger } from '@nestjs/common';
 
 import { GqlAuthGuard } from '../guards/gql-auth.guard';
+import {
+  ResolverTimeout,
+  ResolverTimeoutInterceptor,
+} from '../interceptors/resolver-timeout.interceptor';
 import { TradeType, PaginatedTradesType, TradeSummaryType } from '../types/trade.type';
 import { TradeFilterInput } from '../inputs/trade-filter.input';
 import { PaginationInput } from '../inputs/pagination.input';
@@ -37,6 +41,10 @@ export class TradeResolver {
     return this.tradesService.findOneForUser(id, user.id);
   }
 
+  // Issue #1385: aggregates the user's full trade history, so it gets an
+  // explicit execution budget rather than running unbounded.
+  @ResolverTimeout(4000)
+  @UseInterceptors(ResolverTimeoutInterceptor)
   @Query(() => TradeSummaryType, {
     description: 'Aggregated stats for the authenticated user\'s trades',
   })

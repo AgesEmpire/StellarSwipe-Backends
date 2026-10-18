@@ -5,6 +5,18 @@ import { SocketEvent, SocketRoom, contestLeaderboardRoom } from '../dto/socket-e
 const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_TIMEOUT_MS = 65000;
 
+/** Default cap on concurrent WebSocket connections a single account may hold at once. */
+const DEFAULT_MAX_CONNECTIONS_PER_ACCOUNT = 5;
+
+/**
+ * Per-account concurrent connection cap, configurable via env so gateway
+ * capacity can be tuned without a code change. `0` or a negative value
+ * disables enforcement entirely.
+ */
+export const WS_MAX_CONNECTIONS_PER_ACCOUNT = Number(
+  process.env.WS_MAX_CONNECTIONS_PER_ACCOUNT ?? DEFAULT_MAX_CONNECTIONS_PER_ACCOUNT,
+);
+
 @Injectable()
 export class SocketManagerService {
   private readonly logger = new Logger(SocketManagerService.name);
@@ -47,6 +59,53 @@ export class SocketManagerService {
     }
     const sockets = await this.server.in(this.getUserRoom(userId)).fetchSockets();
     return sockets.length > 0;
+  }
+
+  /**
+   * Counts the account's currently-admitted connections, excluding `client`
+   * itself (it has not joined its account room yet at connection time).
+   * Reads through `fetchSockets()` on the account room, so — with a
+   * clustered adapter (e.g. Redis) configured — the count reflects every
+   * node in the fleet, not just this process. Falls back to `0` before the
+   * server is initialised, which only matters in tests.
+   */
+  async countActiveConnections(accountId: string, excludeSocketId?: string): Promise<number> {
+    if (!this.server) {
+      return 0;
+    }
+    const sockets = await this.server.in(this.getUserRoom(accountId)).fetchSockets();
+    return excludeSocketId
+      ? sockets.filter((socket) => socket.id !== excludeSocketId).length
+      : sockets.length;
+  }
+
+  /**
+   * Enforces the per-account concurrent connection cap (issue #1386).
+   * Returns `true` when `client` may proceed to join its account room,
+   * `false` when the account is already at or above `maxConnections` and
+   * the caller should reject/close this connection instead.
+   *
+   * Passing `maxConnections <= 0` disables enforcement.
+   */
+  async enforceConnectionLimit(
+    accountId: string,
+    client: Socket,
+    maxConnections: number = WS_MAX_CONNECTIONS_PER_ACCOUNT,
+  ): Promise<boolean> {
+    if (maxConnections <= 0) {
+      return true;
+    }
+
+    const activeCount = await this.countActiveConnections(accountId, client.id);
+    if (activeCount >= maxConnections) {
+      this.logger.warn(
+        `Rejecting WS connection ${client.id} for account ${accountId}: ` +
+          `${activeCount} active connections already at or above limit ${maxConnections}`,
+      );
+      return false;
+    }
+
+    return true;
   }
 
   emitNotification(userId: string, payload: unknown): void {

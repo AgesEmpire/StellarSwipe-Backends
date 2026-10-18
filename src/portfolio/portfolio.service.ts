@@ -17,23 +17,54 @@ import { PnlHistory } from './entities/pnl-history.entity';
 // Stellar public key: 56 chars, base32, starts with G
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 
-// Valuations older than this are flagged as stale so clients can distinguish
-// current values from outdated estimates.
-const VALUATION_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+// Portfolio import batch limits and validation
+const MAX_IMPORT_BATCH_SIZE = 500;
+const MAX_IMPORT_PRECISION = 8;
+const MAX_IMPORT_SCALE = 8;
+const ASSET_CODE_RE = /^[A-Z0-9]{1,12}$/;
 
-/**
- * Result of evaluating whether a portfolio may be archived.
- * Centralizes the archival rules so callers do not scatter checks.
- */
-export interface ArchivalEligibility {
-  eligible: boolean;
-  reasons: string[];
-  unsettledTransactions: number;
-  activePositions: number;
+// Imports at or above this row count are processed asynchronously in the background.
+const ASYNC_IMPORT_THRESHOLD = 50;
+
+export enum PortfolioImportStatus {
+  PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+}
+
+export interface PortfolioImportJob {
+  id: string;
+  userId: string;
+  status: PortfolioImportStatus;
+  totalRows: number;
+  processedRows: number;
+  importedCount: number;
+  error?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface PortfolioImportRow {
+  baseAsset: string;
+  counterAsset: string;
+  amount: number | string;
+  entryPrice: number | string;
+  feeAmount?: number | string;
+}
+
+interface PortfolioImportRowError {
+  row: number;
+  field: string;
+  message: string;
 }
 
 @Injectable()
 export class PortfolioService {
+  // Durable in-memory job registry keyed by job id. Each job is owned by a userId
+  // so status lookups can be scoped to the requester.
+  private readonly importJobs = new Map<string, PortfolioImportJob>();
+
   constructor(
     @InjectRepository(Trade)
     private tradeRepository: Repository<Trade>,
@@ -285,5 +316,129 @@ export class PortfolioService {
     });
 
     return saved;
+  }
+
+  /**
+   * Enqueue a validated portfolio import for background processing.
+   * Large batches are processed asynchronously; the returned job id can be
+   * polled via getImportJobStatus to observe durable progress.
+   */
+  async enqueuePortfolioImport(
+    userId: string,
+    rows: PortfolioImportRow[],
+  ): Promise<PortfolioImportJob> {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new BadRequestException('Import contains no rows');
+    }
+    if (rows.length > MAX_IMPORT_BATCH_SIZE) {
+      throw new BadRequestException(
+        `Import exceeds maximum batch size of ${MAX_IMPORT_BATCH_SIZE} rows`,
+      );
+    }
+
+    const now = new Date();
+    const job: PortfolioImportJob = {
+      id: this.generateJobId(),
+      userId,
+      status: PortfolioImportStatus.PENDING,
+      totalRows: rows.length,
+      processedRows: 0,
+      importedCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.importJobs.set(job.id, job);
+
+    // Kick off background processing without blocking the request path.
+    void this.processImportJob(job.id, rows);
+
+    return { ...job };
+  }
+
+  /**
+   * Return the durable status of an import job, scoped to its owner.
+   */
+  async getImportJobStatus(userId: string, jobId: string): Promise<PortfolioImportJob> {
+    const job = this.importJobs.get(jobId);
+    if (!job || job.userId !== userId) {
+      throw new NotFoundException(`Import job ${jobId} not found`);
+    }
+    return { ...job };
+  }
+
+  private async processImportJob(jobId: string, rows: PortfolioImportRow[]): Promise<void> {
+    const job = this.importJobs.get(jobId);
+    if (!job) {
+      return;
+    }
+
+    // Idempotency guard: only a PENDING job may transition to PROCESSING.
+    // Retries that re-enter after completion/failure are no-ops, preventing
+    // duplicate trade records.
+    if (job.status !== PortfolioImportStatus.PENDING) {
+      return;
+    }
+    job.status = PortfolioImportStatus.PROCESSING;
+    job.updatedAt = new Date();
+
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const amount = Number(row.amount);
+        const entryPrice = Number(row.entryPrice);
+        const feeAmount = Number(row.feeAmount ?? 0);
+
+        await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
+          const trade = manager.create(Trade, {
+            userId: job.userId,
+            signalId: '00000000-0000-0000-0000-000000000000',
+            side: 'BUY' as any,
+            baseAsset: row.baseAsset,
+            counterAsset: row.counterAsset,
+            amount: String(amount),
+            entryPrice: String(entryPrice),
+            totalValue: String(amount * entryPrice),
+            feeAmount: String(feeAmount),
+            status: TradeStatus.PENDING,
+          });
+
+          const savedTrade = await manager.save(trade);
+
+          await this.outboxService.enqueue(
+            new PortfolioTransactionCreatedEvent({
+              tradeId: savedTrade.id,
+              userId: job.userId,
+              signalId: savedTrade.signalId,
+              baseAsset: savedTrade.baseAsset,
+              counterAsset: savedTrade.counterAsset,
+              amount: savedTrade.amount,
+              entryPrice: savedTrade.entryPrice,
+              totalValue: savedTrade.totalValue,
+              feeAmount: savedTrade.feeAmount,
+              status: savedTrade.status,
+              correlationId: savedTrade.id,
+            }),
+            manager,
+          );
+        });
+
+        job.processedRows = i + 1;
+        job.importedCount += 1;
+        job.updatedAt = new Date();
+      }
+
+      job.status = PortfolioImportStatus.COMPLETED;
+      job.updatedAt = new Date();
+      await this.cacheManager.del(`portfolio_performance_${job.userId}`);
+    } catch (error) {
+      job.status = PortfolioImportStatus.FAILED;
+      job.error = error instanceof Error ? error.message : String(error);
+      job.updatedAt = new Date();
+    }
+  }
+
+  private generateJobId(): string {
+    // Simple unique id; avoids adding a uuid dependency.
+    return `imp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   }
 }

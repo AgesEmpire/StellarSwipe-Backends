@@ -7,6 +7,7 @@ import {
   Param,
   UseGuards,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiKeysService } from './api-keys.service';
@@ -28,6 +29,11 @@ export class ApiKeysController {
     @Request() req: any,
     @Body() dto: CreateApiKeyDto,
   ): Promise<ApiKeyResponseDto> {
+    if (!req.user?.emailVerified) {
+      throw new ForbiddenException(
+        'A verified email is required to create an API key',
+      );
+    }
     return this.apiKeysService.create(req.userId, dto);
   }
 

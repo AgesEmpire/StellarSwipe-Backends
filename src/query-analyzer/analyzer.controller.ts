@@ -21,6 +21,7 @@ import { QueryAnalyzerService } from './query-analyzer.service';
 import {
   SubmitQueryAnalysisDto,
   BulkQueryIngestionDto,
+  BulkQueryIngestionResponseDto,
   QueryFilterDto,
   MarkOptimizationAppliedDto,
   QueryAnalysisResultDto,
@@ -49,9 +50,13 @@ export class AnalyzerController {
   @Post('submit/bulk')
   @ApiOperation({
     summary: 'Submit multiple slow queries for analysis in one call',
+    description:
+      'Each query is submitted independently; a failing query does not block the others, and the ' +
+      'response reports a per-query outcome (submitted/failed) rather than only an aggregate count.',
   })
+  @ApiResponse({ status: 202, type: BulkQueryIngestionResponseDto })
   @HttpCode(HttpStatus.ACCEPTED)
-  async submitBulk(@Body() dto: BulkQueryIngestionDto) {
+  async submitBulk(@Body() dto: BulkQueryIngestionDto): Promise<BulkQueryIngestionResponseDto> {
     return this.analyzerService.submitBulk(dto);
   }
 
