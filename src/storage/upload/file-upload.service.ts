@@ -4,6 +4,7 @@ import {
   BadRequestException,
   PayloadTooLargeException,
   UnsupportedMediaTypeException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
@@ -18,6 +19,11 @@ import {
   DEFAULT_MAX_FILE_SIZE,
 } from './interfaces/file-upload.interface';
 import { FileUploadResponseDto } from './dto/file-upload-response.dto';
+import {
+  ArchiveImportGuardService,
+  ArchiveLimits,
+  ArchiveExtractionResult,
+} from './security/archive-import-guard.service';
 
 /**
  * FileUploadService
@@ -28,16 +34,22 @@ import { FileUploadResponseDto } from './dto/file-upload-response.dto';
  * - File name sanitization (path traversal prevention)
  * - Secure temp storage with random file names
  * - Content hash computation for deduplication
+ * - Bounded archive import inspection (decompression bomb protection)
  */
 @Injectable()
 export class FileUploadService {
   private readonly logger = new Logger(FileUploadService.name);
   private readonly uploadDir: string;
+  private readonly archiveGuard: ArchiveImportGuardService;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional() archiveGuard?: ArchiveImportGuardService,
+  ) {
     this.uploadDir =
       this.configService.get<string>('UPLOAD_DIR') ??
       path.resolve('/tmp', 'stellarswipe-uploads');
+    this.archiveGuard = archiveGuard ?? new ArchiveImportGuardService();
 
     if (!fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true, mode: 0o700 });
@@ -285,8 +297,103 @@ export class FileUploadService {
     }
   }
 
+  /**
+   * Safely extracts and imports an archive (ZIP or GZIP) while enforcing
+   * bounds on compressed size, expanded size, entry count, expansion ratio,
+   * and nesting depth before any entry is processed or persisted.
+   * Rejected archives and temporary files are cleaned up automatically.
+   */
+  async importArchive(
+    archive: {
+      buffer?: Buffer;
+      tempFilePath?: string;
+      originalname: string;
+      mimetype?: string;
+    },
+    limits?: ArchiveLimits,
+    fileOptions?: FileUploadOptions,
+  ): Promise<{
+    extraction: ArchiveExtractionResult;
+    storedFiles: FileUploadResponseDto[];
+  }> {
+    const extraction = await this.archiveGuard.inspectAndExtract(
+      {
+        buffer: archive.buffer,
+        tempFilePath: archive.tempFilePath,
+        originalName: archive.originalname,
+      },
+      limits,
+    );
+
+    const storedFiles: FileUploadResponseDto[] = [];
+    try {
+      for (const entry of extraction.entries) {
+        const ext = path.extname(entry.name).toLowerCase();
+        const inferredMime = this.inferMimeTypeFromExtension(ext);
+        const stored = await this.storeFile(
+          {
+            buffer: entry.data,
+            originalname: path.basename(entry.name),
+            mimetype: inferredMime,
+            size: entry.uncompressedSize,
+          },
+          fileOptions,
+        );
+        storedFiles.push(stored);
+      }
+
+      if (archive.tempFilePath && fs.existsSync(archive.tempFilePath)) {
+        try {
+          await fs.promises.unlink(archive.tempFilePath);
+        } catch {
+          // ignore cleanup failure on already removed temp file
+        }
+      }
+
+      return { extraction, storedFiles };
+    } catch (error) {
+      // Roll back any already persisted files if a later entry fails validation
+      for (const stored of storedFiles) {
+        this.deleteFile(stored.storagePath);
+      }
+      if (archive.tempFilePath && fs.existsSync(archive.tempFilePath)) {
+        try {
+          await fs.promises.unlink(archive.tempFilePath);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+      throw error;
+    }
+  }
+
+  private inferMimeTypeFromExtension(ext: string): string {
+    switch (ext) {
+      case '.csv':
+        return 'text/csv';
+      case '.json':
+        return 'application/json';
+      case '.txt':
+        return 'text/plain';
+      case '.pdf':
+        return 'application/pdf';
+      case '.png':
+        return 'image/png';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.gif':
+        return 'image/gif';
+      case '.webp':
+        return 'image/webp';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
   getUploadDir(): string {
     return this.uploadDir;
   }
 }
+
 

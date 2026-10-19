@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MalwareScanService } from './malware-scan.service';
 import { FileSecurityPipe } from './file-security.pipe';
+import { ArchiveImportGuardService } from './archive-import-guard.service';
 
 /**
  * Import into any module exposing upload endpoints, then apply
@@ -11,7 +12,8 @@ import { FileSecurityPipe } from './file-security.pipe';
  * existing providers.
  */
 @Module({
-  providers: [MalwareScanService, FileSecurityPipe],
-  exports: [MalwareScanService, FileSecurityPipe],
+  providers: [MalwareScanService, FileSecurityPipe, ArchiveImportGuardService],
+  exports: [MalwareScanService, FileSecurityPipe, ArchiveImportGuardService],
 })
 export class FileSecurityModule {}
+

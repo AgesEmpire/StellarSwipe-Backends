@@ -22,3 +22,12 @@ export const SAFE_FILENAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\.[a-zA-Z
 export const DISALLOWED_EXTENSIONS = [
   '.exe', '.dll', '.sh', '.bat', '.cmd', '.ps1', '.js', '.php', '.jar', '.msi', '.com', '.scr',
 ];
+
+/** Archive import security bounds to block decompression bombs. */
+export const MAX_ARCHIVE_COMPRESSED_BYTES = 5 * 1024 * 1024; // 5 MB
+export const MAX_ARCHIVE_EXPANDED_BYTES = 25 * 1024 * 1024; // 25 MB
+export const MAX_ARCHIVE_SINGLE_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+export const MAX_ARCHIVE_ENTRY_COUNT = 100;
+export const MAX_ARCHIVE_EXPANSION_RATIO = 25;
+export const MAX_ARCHIVE_NESTING_DEPTH = 0;
+
