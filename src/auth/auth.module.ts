@@ -37,6 +37,7 @@ import { WebauthnService } from './webauthn/webauthn.service';
 import { WebauthnCredential } from './webauthn/entities/webauthn-credential.entity';
 import { ChallengeStoreService } from './challenge/challenge-store.service';
 import { PasswordHasherService } from './password/password-hasher.service';
+import { OAuthStateService } from './social/oauth-state.service';
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { PasswordHasherService } from './password/password-hasher.service';
     WebauthnService,
     ChallengeStoreService,
     PasswordHasherService,
+    OAuthStateService,
   ],
   exports: [
     AuthService,
@@ -105,6 +107,7 @@ import { PasswordHasherService } from './password/password-hasher.service';
     RefreshTokenCleanupService,
     ChallengeStoreService,
     PasswordHasherService,
+    OAuthStateService,
   ],
 })
 export class AuthModule {}

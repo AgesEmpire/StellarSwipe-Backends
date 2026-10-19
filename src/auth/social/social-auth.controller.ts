@@ -1,8 +1,9 @@
-import { Controller, Get, Req, Res, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Req, Res, Post, Body, UseGuards, Query } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { TwitterOauthService } from './twitter-oauth.service';
+import { OAuthStateService } from './oauth-state.service';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 
 @ApiTags('Social Auth')
 @Controller('auth/social')
@@ -10,19 +11,39 @@ export class SocialAuthController {
     constructor(
         private readonly twitterService: TwitterOauthService,
         private readonly jwtService: JwtService,
+        private readonly oauthStateService: OAuthStateService,
     ) { }
 
     @Get('twitter')
     // @UseGuards(AuthGuard('twitter')) // In production, we'd use the passport strategy
     @ApiOperation({ summary: 'Initiate Twitter OAuth flow (Mocked for now)' })
     async twitterLogin(@Res() res: any) {
-        // In production, passport handles redirect to Twitter
-        res.redirect('/auth/social/twitter/callback?mock=true');
+        // Generate an atomic, short-lived OAuth state value
+        const state = await this.oauthStateService.generateState({
+            provider: 'twitter',
+            redirectUri: '/auth/social/twitter/callback',
+        });
+
+        // In production, passport handles redirect to Twitter with state parameter
+        res.redirect(`/auth/social/twitter/callback?mock=true&state=${state}`);
     }
 
     @Get('twitter/callback')
-    @ApiOperation({ summary: 'Twitter OAuth callback' })
-    async twitterCallback(@Req() req: any, @Res() res: any) {
+    @ApiOperation({ summary: 'Twitter OAuth callback with atomic state validation' })
+    @ApiQuery({ name: 'state', required: false, description: 'Single-use OAuth state parameter' })
+    async twitterCallback(
+        @Req() req: any,
+        @Res() res: any,
+        @Query('state') state?: string,
+    ) {
+        // When state is provided, atomically consume it (rejecting replays, expired, or concurrent attempts)
+        if (state) {
+            await this.oauthStateService.consumeState({
+                state,
+                provider: 'twitter',
+            });
+        }
+
         // Mock profile for demonstration if requested
         const mockProfile = req.query.mock === 'true' ? {
             id: 'mock_twitter_id',
