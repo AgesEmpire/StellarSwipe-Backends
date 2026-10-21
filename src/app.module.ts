@@ -1,9 +1,17 @@
-import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
+import {
+  Injectable,
+  Module,
+  MiddlewareConsumer,
+  NestModule,
+  OnApplicationBootstrap,
+  RequestMethod,
+} from '@nestjs/common';
 import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { InjectDataSource, TypeOrmModule } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { BullModule } from '@nestjs/bull';
 // import { CacheModule } from '@nestjs/cache-manager';
 import { stellarConfig } from './config/stellar.config';
@@ -122,6 +130,103 @@ import { PrivacyModule } from './privacy/privacy.module';
 import { TracingModule } from './tracing/tracing.module';
 import { SearchModule } from './search/search.module';
 
+const REQUIRED_TIMESTAMP_PRECISION = 3;
+const DATABASE_TIME_ZONE_PATTERN = /^[A-Za-z0-9_+/:.-]+$/;
+
+function getDatabaseSessionOptions(timeZone: string): string {
+  if (!DATABASE_TIME_ZONE_PATTERN.test(timeZone)) {
+    throw new Error(
+      'DATABASE_TIME_ZONE must be a PostgreSQL time zone name without whitespace or quotes.',
+    );
+  }
+
+  return `-c TimeZone=${timeZone}`;
+}
+
+export async function validateDatabaseTimestampSettings(
+  query: (sql: string, parameters?: unknown[]) => Promise<unknown>,
+  expectedTimeZone: string,
+): Promise<void> {
+  getDatabaseSessionOptions(expectedTimeZone);
+
+  const result = await query(
+    `SELECT current_setting('TimeZone') AS session_time_zone,
+            COALESCE(
+              array_agg(
+                format('%I.%I.%I', schema_name, table_name, column_name)
+                ORDER BY schema_name, table_name, column_name
+              ) FILTER (WHERE timestamp_precision < $1),
+              ARRAY[]::text[]
+            ) AS low_precision_columns
+       FROM (
+         SELECT n.nspname AS schema_name,
+                c.relname AS table_name,
+                a.attname AS column_name,
+                CASE
+                  WHEN a.atttypmod < 0 THEN 6
+                  ELSE a.atttypmod - 4
+                END AS timestamp_precision
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE a.attnum > 0
+            AND NOT a.attisdropped
+            AND a.atttypid IN ('timestamp'::regtype, 'timestamptz'::regtype)
+            AND c.relkind IN ('r', 'p')
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+       ) timestamp_columns`,
+    [REQUIRED_TIMESTAMP_PRECISION],
+  );
+
+  const [settings] = result as Array<{
+    session_time_zone: string;
+    low_precision_columns: string[];
+  }>;
+  if (!settings) {
+    throw new Error(
+      'Database timestamp settings check returned no session settings.',
+    );
+  }
+
+  if (settings.session_time_zone !== expectedTimeZone) {
+    throw new Error(
+      `Database session time zone is ${JSON.stringify(settings.session_time_zone)}; ` +
+        `expected ${JSON.stringify(expectedTimeZone)}. Set DATABASE_TIME_ZONE and verify the database connection settings.`,
+    );
+  }
+
+  const lowPrecisionColumns = settings.low_precision_columns ?? [];
+  if (lowPrecisionColumns.length > 0) {
+    throw new Error(
+      `Database timestamp precision must be at least ${REQUIRED_TIMESTAMP_PRECISION} digits ` +
+        `(milliseconds); update these columns: ${lowPrecisionColumns.join(', ')}.`,
+    );
+  }
+}
+
+@Injectable()
+class DatabaseTimestampSettingsCheck implements OnApplicationBootstrap {
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectDataSource() private readonly primaryDataSource: DataSource,
+    @InjectDataSource('replica') private readonly replicaDataSource: DataSource,
+  ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    const timeZone =
+      this.configService.get<string>('DATABASE_TIME_ZONE') ?? 'UTC';
+
+    await validateDatabaseTimestampSettings(
+      (sql, parameters) => this.primaryDataSource.query(sql, parameters),
+      timeZone,
+    );
+    await validateDatabaseTimestampSettings(
+      (sql, parameters) => this.replicaDataSource.query(sql, parameters),
+      timeZone,
+    );
+  }
+}
+
 @Module({
   imports: [
     ThrottlerModule.forRoot({
@@ -171,6 +276,9 @@ import { SearchModule } from './search/search.module';
         ],
         ssl: configService.get<boolean>('database.ssl') ?? false,
         extra: {
+          options: getDatabaseSessionOptions(
+            configService.get<string>('DATABASE_TIME_ZONE') ?? 'UTC',
+          ),
           min: configService.get<number>('connectionPool.min') ?? 10,
           max: configService.get<number>('connectionPool.max') ?? 30,
           idleTimeoutMillis:
@@ -204,6 +312,9 @@ import { SearchModule } from './search/search.module';
         entities: ['dist/**/*.entity{.ts,.js}'],
         ssl: configService.get<boolean>('database.replica.ssl') ?? false,
         extra: {
+          options: getDatabaseSessionOptions(
+            configService.get<string>('DATABASE_TIME_ZONE') ?? 'UTC',
+          ),
           min: configService.get<number>('connectionPoolReplica.min') ?? 5,
           max: configService.get<number>('connectionPoolReplica.max') ?? 20,
           statement_timeout:
@@ -320,6 +431,7 @@ import { SearchModule } from './search/search.module';
   ],
   controllers: [],
   providers: [
+    DatabaseTimestampSettingsCheck,
     {
       provide: APP_INTERCEPTOR,
       useClass: RequestIdInterceptor,
