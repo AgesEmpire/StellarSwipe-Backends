@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 import { AdvisoryLockService } from '../../src/common/database/advisory-lock.service';
 import { MigrationRunnerService } from '../../src/database/migration-runner.service';
+import { validateDatabaseTimestampSettings } from '../../src/app.module';
 
 /**
  * Issue #1369 — Prevent concurrent execution of TypeORM migration runners.
@@ -34,6 +35,75 @@ describe('Migration runner concurrency (Issue #1369)', () => {
     dataSourceB = new DataSource({ ...connectionOptions, name: 'runner-b' });
     await dataSourceA.initialize();
     await dataSourceB.initialize();
+  });
+
+  describe('Database timestamp settings', () => {
+    let dataSource: DataSource;
+
+    beforeAll(async () => {
+      dataSource = new DataSource({
+        type: 'postgres',
+        host: process.env.DATABASE_HOST || 'localhost',
+        port: parseInt(process.env.DATABASE_PORT || '5432', 10),
+        username: process.env.DATABASE_USER || 'test',
+        password: process.env.DATABASE_PASSWORD || 'test',
+        database: process.env.DATABASE_NAME || 'test',
+      });
+      await dataSource.initialize();
+    });
+
+    afterAll(async () => {
+      if (dataSource?.isInitialized) {
+        await dataSource.destroy();
+      }
+    });
+
+    const validateSession = async (timeZone: string) => {
+      const queryRunner = dataSource.createQueryRunner();
+      await queryRunner.connect();
+      try {
+        await queryRunner.query(`SET TIME ZONE '${timeZone}'`);
+        await validateDatabaseTimestampSettings(
+          (sql, parameters) => queryRunner.query(sql, parameters),
+          'UTC',
+        );
+      } finally {
+        await queryRunner.release();
+      }
+    };
+
+    it('accepts the supported UTC session and millisecond-capable schema', async () => {
+      await expect(validateSession('UTC')).resolves.toBeUndefined();
+    });
+
+    it('rejects a session time zone that differs from the application setting', async () => {
+      await expect(validateSession('America/Los_Angeles')).rejects.toThrow(
+        /session time zone.*expected "UTC"/,
+      );
+    });
+
+    it('rejects persisted timestamp columns with insufficient precision', async () => {
+      const queryRunner = dataSource.createQueryRunner();
+      await queryRunner.connect();
+      try {
+        await queryRunner.query(
+          'CREATE TEMP TABLE timestamp_precision_probe (created_at timestamp(0))',
+        );
+        await queryRunner.query(`SET TIME ZONE 'UTC'`);
+
+        await expect(
+          validateDatabaseTimestampSettings(
+            (sql, parameters) => queryRunner.query(sql, parameters),
+            'UTC',
+          ),
+        ).rejects.toThrow(
+          /precision must be at least 3 digits.*timestamp_precision_probe\.created_at/,
+        );
+      } finally {
+        await queryRunner.query('DROP TABLE IF EXISTS timestamp_precision_probe');
+        await queryRunner.release();
+      }
+    });
   });
 
   afterAll(async () => {
