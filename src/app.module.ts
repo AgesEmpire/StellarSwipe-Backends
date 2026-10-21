@@ -1,9 +1,17 @@
-import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
+import {
+  Injectable,
+  Module,
+  MiddlewareConsumer,
+  NestModule,
+  OnApplicationBootstrap,
+  RequestMethod,
+} from '@nestjs/common';
 import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { InjectDataSource, TypeOrmModule } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { BullModule } from '@nestjs/bull';
 // import { CacheModule } from '@nestjs/cache-manager';
 import { stellarConfig } from './config/stellar.config';
@@ -121,6 +129,263 @@ import { WatchlistModule } from './watchlist/watchlist.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TracingModule } from './tracing/tracing.module';
 import { SearchModule } from './search/search.module';
+
+export type CriticalConstraintExpectation = {
+  schemaName: string;
+  tableName: string;
+  constraintName?: string;
+  kind: 'unique' | 'foreign';
+  columns: string[];
+  referencedSchema?: string;
+  referencedTable?: string;
+  referencedColumns?: string[];
+  migration: string;
+};
+
+// Keep this list aligned with constraints created by the named migrations.
+// Validation uses PostgreSQL catalogs only; it never reads application rows.
+const CRITICAL_DATABASE_CONSTRAINTS: CriticalConstraintExpectation[] = [
+  {
+    schemaName: 'public',
+    tableName: 'users',
+    constraintName: 'UQ_users_username',
+    kind: 'unique',
+    columns: ['username'],
+    migration: '1737561600000-CreateUserTables',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'sessions',
+    constraintName: 'UQ_sessions_token',
+    kind: 'unique',
+    columns: ['token'],
+    migration: '1737561600000-CreateUserTables',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'sessions',
+    constraintName: 'FK_sessions_user',
+    kind: 'foreign',
+    columns: ['userId'],
+    referencedSchema: 'public',
+    referencedTable: 'users',
+    referencedColumns: ['id'],
+    migration: '1737561600000-CreateUserTables',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'user_preferences',
+    constraintName: 'FK_user_preferences_user',
+    kind: 'foreign',
+    columns: ['userId'],
+    referencedSchema: 'public',
+    referencedTable: 'users',
+    referencedColumns: ['id'],
+    migration: '1737561600000-CreateUserTables',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'refresh_tokens',
+    constraintName: 'UQ_refresh_tokens_hash',
+    kind: 'unique',
+    columns: ['token_hash'],
+    migration: '1750000000000-AddRefreshTokens',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'user_roles',
+    constraintName: 'IDX_user_roles_user_id_role_id',
+    kind: 'unique',
+    columns: ['userId', 'roleId'],
+    migration: '1705000000234-CreateUserRolesTable',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'user_roles',
+    kind: 'foreign',
+    columns: ['roleId'],
+    referencedSchema: 'public',
+    referencedTable: 'roles',
+    referencedColumns: ['id'],
+    migration: '1705000000234-CreateUserRolesTable',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'role_permissions',
+    kind: 'foreign',
+    columns: ['roleId'],
+    referencedSchema: 'public',
+    referencedTable: 'roles',
+    referencedColumns: ['id'],
+    migration: '1705000000234-CreateUserRolesTable',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'role_permissions',
+    kind: 'foreign',
+    columns: ['permissionId'],
+    referencedSchema: 'public',
+    referencedTable: 'permissions',
+    referencedColumns: ['id'],
+    migration: '1705000000234-CreateUserRolesTable',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'two_factor_auth',
+    constraintName: 'UQ_two_factor_auth_user_id',
+    kind: 'unique',
+    columns: ['userId'],
+    migration: '20260825000000-CreateTwoFactorAuthTable',
+  },
+  {
+    schemaName: 'public',
+    tableName: 'webauthn_credentials',
+    constraintName: 'UQ_webauthn_credentials_credential_id',
+    kind: 'unique',
+    columns: ['credentialId'],
+    migration: '1751000000000-CreateWebauthnCredentials',
+  },
+];
+
+export async function validateCriticalDatabaseConstraints(
+  query: (sql: string, parameters?: unknown[]) => Promise<unknown>,
+  expectations: CriticalConstraintExpectation[] = CRITICAL_DATABASE_CONSTRAINTS,
+): Promise<void> {
+  if (expectations.length === 0) {
+    return;
+  }
+
+  const result = (await query(
+    `WITH expected AS (
+       SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS item(
+           schema_name text,
+           table_name text,
+           constraint_name text,
+           kind text,
+           columns text[],
+           referenced_schema text,
+           referenced_table text,
+           referenced_columns text[],
+           migration text
+         )
+     )
+     SELECT e.schema_name AS "schemaName",
+            e.table_name AS "tableName",
+            e.constraint_name AS "constraintName",
+            e.kind, e.columns,
+            e.referenced_schema AS "referencedSchema",
+            e.referenced_table AS "referencedTable",
+            e.referenced_columns AS "referencedColumns",
+            e.migration
+       FROM expected e
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class tbl ON tbl.oid = c.conrelid
+          JOIN pg_namespace tbl_ns ON tbl_ns.oid = tbl.relnamespace
+          LEFT JOIN pg_class ref_tbl ON ref_tbl.oid = c.confrelid
+          LEFT JOIN pg_namespace ref_ns ON ref_ns.oid = ref_tbl.relnamespace
+         WHERE tbl_ns.nspname = e.schema_name
+           AND tbl.relname = e.table_name
+           AND (e.constraint_name IS NULL OR c.conname = e.constraint_name)
+           AND c.convalidated
+           AND (
+             (e.kind = 'unique' AND c.contype IN ('u', 'p')
+               AND ARRAY(
+                 SELECT a.attname::text
+                   FROM unnest(c.conkey) WITH ORDINALITY key_col(attnum, ord)
+                   JOIN pg_attribute a
+                     ON a.attrelid = tbl.oid AND a.attnum = key_col.attnum
+                  ORDER BY key_col.ord
+               ) = e.columns)
+             OR
+             (e.kind = 'foreign' AND c.contype = 'f'
+               AND ARRAY(
+                 SELECT a.attname::text
+                   FROM unnest(c.conkey) WITH ORDINALITY key_col(attnum, ord)
+                   JOIN pg_attribute a
+                     ON a.attrelid = tbl.oid AND a.attnum = key_col.attnum
+                  ORDER BY key_col.ord
+               ) = e.columns
+               AND ref_ns.nspname = e.referenced_schema
+               AND ref_tbl.relname = e.referenced_table
+               AND ARRAY(
+                 SELECT a.attname::text
+                   FROM unnest(c.confkey) WITH ORDINALITY key_col(attnum, ord)
+                   JOIN pg_attribute a
+                     ON a.attrelid = ref_tbl.oid AND a.attnum = key_col.attnum
+                  ORDER BY key_col.ord
+               ) = e.referenced_columns)
+           )
+      )
+        AND NOT (
+          e.kind = 'unique'
+          AND EXISTS (
+            SELECT 1
+              FROM pg_index i
+              JOIN pg_class tbl ON tbl.oid = i.indrelid
+              JOIN pg_namespace tbl_ns ON tbl_ns.oid = tbl.relnamespace
+              JOIN pg_class idx ON idx.oid = i.indexrelid
+             WHERE tbl_ns.nspname = e.schema_name
+               AND tbl.relname = e.table_name
+               AND (e.constraint_name IS NULL OR idx.relname = e.constraint_name)
+               AND i.indisunique AND i.indisvalid AND i.indislive
+               AND i.indpred IS NULL AND i.indexprs IS NULL
+               AND i.indnkeyatts = cardinality(e.columns)
+               AND ARRAY(
+                 SELECT a.attname::text
+                   FROM unnest(i.indkey) WITH ORDINALITY key_col(attnum, ord)
+                   JOIN pg_attribute a
+                     ON a.attrelid = tbl.oid AND a.attnum = key_col.attnum
+                  WHERE key_col.ord <= i.indnkeyatts
+                  ORDER BY key_col.ord
+               ) = e.columns
+          )
+        )
+      ORDER BY e.schema_name, e.table_name, e.constraint_name`,
+    [JSON.stringify(expectations)],
+  )) as CriticalConstraintExpectation[];
+
+  if (result.length > 0) {
+    const details = result
+      .map((constraint) => {
+        const name = constraint.constraintName
+          ? ` ${constraint.constraintName}`
+          : '';
+        const columns = constraint.columns.join(', ');
+        const reference =
+          constraint.kind === 'foreign'
+            ? ` -> ${constraint.referencedSchema}.${constraint.referencedTable}(${constraint.referencedColumns?.join(', ')})`
+            : '';
+        return `- ${constraint.schemaName}.${constraint.tableName}${name} ` +
+          `(${constraint.kind}: ${columns}${reference}); expected from migration ${constraint.migration}`;
+      })
+      .join('\n');
+
+    throw new Error(
+      `Database schema is missing ${result.length} critical constraint(s):\n${details}\n` +
+        'Apply the listed migrations before starting the application.',
+    );
+  }
+}
+
+@Injectable()
+class CriticalDatabaseConstraintsCheck implements OnApplicationBootstrap {
+  constructor(
+    @InjectDataSource() private readonly primaryDataSource: DataSource,
+    @InjectDataSource('replica') private readonly replicaDataSource: DataSource,
+  ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await validateCriticalDatabaseConstraints((sql, parameters) =>
+      this.primaryDataSource.query(sql, parameters),
+    );
+    await validateCriticalDatabaseConstraints((sql, parameters) =>
+      this.replicaDataSource.query(sql, parameters),
+    );
+  }
+}
 
 @Module({
   imports: [
@@ -320,6 +585,7 @@ import { SearchModule } from './search/search.module';
   ],
   controllers: [],
   providers: [
+    CriticalDatabaseConstraintsCheck,
     {
       provide: APP_INTERCEPTOR,
       useClass: RequestIdInterceptor,
