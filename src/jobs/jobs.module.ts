@@ -10,6 +10,8 @@ import { DeadLetterController } from './dead-letter.controller';
 import { AuthModule } from '../auth/auth.module';
 import { ApiKeysModule } from '../api-keys/api-keys.module';
 import { DistributedLockService } from '../common/services/distributed-lock.service';
+import { QueueModule } from '../queue/queue.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
     ConfigModule,
     AuthModule,
     ApiKeysModule,
+    AuthorizationModule,
+    QueueModule,
   ],
   controllers: [JobsController, DeadLetterController],
   providers: [
