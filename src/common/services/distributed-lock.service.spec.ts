@@ -1,5 +1,8 @@
 import { ConfigService } from '@nestjs/config';
-import { DistributedLockService } from './distributed-lock.service';
+import {
+  DistributedLockService,
+  LockExecutionContext,
+} from './distributed-lock.service';
 
 // Mock ioredis so no real Redis connection is needed
 jest.mock('ioredis', () => {
@@ -14,6 +17,7 @@ jest.mock('ioredis', () => {
 import Redis from 'ioredis';
 
 const LOCK_PREFIX = 'stellarswipe:lock:';
+const FENCE_PREFIX = 'stellarswipe:fence:';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function makeLockService(): { service: DistributedLockService; redis: jest.Mocked<any> } {
@@ -36,26 +40,27 @@ describe('DistributedLockService', () => {
   });
 
   describe('acquire', () => {
-    it('returns an ownership token when Redis SET NX succeeds (lock acquired)', async () => {
+    it('returns an ownership token when atomic lease acquisition succeeds', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue('OK');
+      redis.eval.mockResolvedValue(1);
 
       const token = await service.acquire('test-job', 5000);
 
       expect(token).toEqual(expect.any(String));
       expect(token).toMatch(UUID_RE);
-      expect(redis.set).toHaveBeenCalledWith(
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call("incr"'),
+        2,
         `${LOCK_PREFIX}test-job`,
+        `${FENCE_PREFIX}test-job`,
         token,
-        'PX',
         5000,
-        'NX',
       );
     });
 
-    it('returns null when lock is already held (SET NX returns null)', async () => {
+    it('returns null when lock is already held', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue(null);
+      redis.eval.mockResolvedValue(null);
 
       const result = await service.acquire('test-job', 5000);
       expect(result).toBeNull();
@@ -63,13 +68,25 @@ describe('DistributedLockService', () => {
 
     it('issues a different token on each acquisition', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue('OK');
+      redis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
 
       const token1 = await service.acquire('test-job', 5000);
       const token2 = await service.acquire('test-job', 5000);
 
       expect(token1).not.toEqual(token2);
     });
+
+    it.each([0, 99, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+      'rejects invalid or unbounded TTL %s',
+      async (ttlMs) => {
+        const { service, redis } = makeLockService();
+
+        await expect(service.acquire('test-job', ttlMs)).rejects.toThrow(
+          /Lock TTL must be an integer/,
+        );
+        expect(redis.eval).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('release (ownership-safe)', () => {
@@ -139,6 +156,14 @@ describe('DistributedLockService', () => {
 
       await expect(service.renew('test-job', 'token-abc', 10000)).resolves.toBe(false);
     });
+
+    it('rejects an out-of-range renewal TTL', async () => {
+      const { service, redis } = makeLockService();
+
+      await expect(service.renew('test-job', 'token-abc', 24 * 60 * 60 * 1000 + 1))
+        .rejects.toThrow(/Lock TTL must be an integer/);
+      expect(redis.eval).not.toHaveBeenCalled();
+    });
   });
 
   describe('expiry (crashed worker recovery)', () => {
@@ -146,18 +171,18 @@ describe('DistributedLockService', () => {
       const { service, redis } = makeLockService();
 
       // First worker acquires the lock and then "crashes" — never calls release().
-      redis.set.mockResolvedValueOnce('OK');
+      redis.eval.mockResolvedValueOnce(1);
       const firstToken = await service.acquire('crash-job', 1000);
       expect(firstToken).not.toBeNull();
 
-      // A second acquire attempt while the key is still alive in Redis is blocked by NX.
-      redis.set.mockResolvedValueOnce(null);
+      // A second acquire attempt while the lease is still alive is blocked.
+      redis.eval.mockResolvedValueOnce(false);
       const blocked = await service.acquire('crash-job', 1000);
       expect(blocked).toBeNull();
 
-      // Once Redis expires the key (TTL elapsed), NX succeeds again for a new worker —
+      // Once Redis expires the key (TTL elapsed), acquisition succeeds for a new worker —
       // the crashed holder never permanently blocks the lock.
-      redis.set.mockResolvedValueOnce('OK');
+      redis.eval.mockResolvedValueOnce(2);
       const secondToken = await service.acquire('crash-job', 1000);
       expect(secondToken).not.toBeNull();
       expect(secondToken).not.toEqual(firstToken);
@@ -167,32 +192,61 @@ describe('DistributedLockService', () => {
   describe('withLock', () => {
     it('runs the function and returns result when lock is acquired', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue('OK');
       redis.eval.mockResolvedValue(1);
 
       const fn = jest.fn().mockResolvedValue('done');
-      const { ran, result } = await service.withLock('my-job', 5000, fn);
+      const { ran, result, fencingToken } = await service.withLock('my-job', 5000, fn);
 
       expect(ran).toBe(true);
       expect(result).toBe('done');
+      expect(fencingToken).toBe(1);
+      expect(fn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fencingToken: 1,
+          signal: expect.any(AbortSignal),
+          assertCurrent: expect.any(Function),
+        }),
+      );
       expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('increments the fencing token for each successful lease', async () => {
+      const { service, redis } = makeLockService();
+      redis.eval
+        .mockResolvedValue(1)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(2);
+      const observedFences: number[] = [];
+
+      await service.withLock('fenced-job', 5000, async ({ fencingToken }) => {
+        observedFences.push(fencingToken);
+      });
+      await service.withLock('fenced-job', 5000, async ({ fencingToken }) => {
+        observedFences.push(fencingToken);
+      });
+
+      expect(observedFences).toEqual([1, 2]);
     });
 
     it('releases using the same token it acquired with', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue('OK');
       redis.eval.mockResolvedValue(1);
 
       await service.withLock('my-job', 5000, async () => 'done');
 
-      const [, , keyArg, tokenArg] = redis.eval.mock.calls[0];
+      const releaseCall = redis.eval.mock.calls.find(([script]) =>
+        script.includes('redis.call("del"'),
+      );
+      const [, , keyArg, tokenArg] = releaseCall!;
       expect(keyArg).toBe(`${LOCK_PREFIX}my-job`);
       expect(tokenArg).toMatch(UUID_RE);
     });
 
     it('skips execution and returns ran=false when lock is already held', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue(null); // lock held by another replica
+      redis.eval.mockResolvedValue(false); // lock held by another replica
 
       const fn = jest.fn();
       const { ran } = await service.withLock('my-job', 5000, fn);
@@ -203,7 +257,6 @@ describe('DistributedLockService', () => {
 
     it('releases the lock even when the function throws', async () => {
       const { service, redis } = makeLockService();
-      redis.set.mockResolvedValue('OK');
       redis.eval.mockResolvedValue(1);
 
       const fn = jest.fn().mockRejectedValue(new Error('Job crashed'));
@@ -217,11 +270,10 @@ describe('DistributedLockService', () => {
       const { service: instance2, redis: redis2 } = makeLockService();
 
       // Instance 1 acquires the lock
-      redis1.set.mockResolvedValue('OK');
       redis1.eval.mockResolvedValue(1);
 
       // Instance 2 finds the lock already held
-      redis2.set.mockResolvedValue(null);
+      redis2.eval.mockResolvedValue(false);
 
       const job = jest.fn().mockResolvedValue('completed');
 
@@ -235,11 +287,68 @@ describe('DistributedLockService', () => {
       expect(job).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects a delayed former owner after another lease receives a newer fence', async () => {
+      const { service, redis } = makeLockService();
+      redis.eval.mockResolvedValueOnce(1);
+
+      let context!: LockExecutionContext;
+      let startJob!: () => void;
+      let continueJob!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startJob = resolve;
+      });
+      const waitForContinuation = new Promise<void>((resolve) => {
+        continueJob = resolve;
+      });
+      const protectedCommit = jest.fn();
+      const formerOwnerRun = service.withLock('fenced-job', 5000, async (lockContext) => {
+        context = lockContext;
+        startJob();
+        await waitForContinuation;
+        await lockContext.assertCurrent();
+        protectedCommit();
+        return 'committed';
+      });
+      await started;
+
+      redis.eval.mockResolvedValueOnce(2).mockResolvedValueOnce(0);
+      const replacementOwner = await service.acquire('fenced-job', 5000);
+      expect(replacementOwner).not.toBeNull();
+      expect(context.fencingToken).toBe(1);
+      await expect(context.assertCurrent()).rejects.toThrow('Lease ownership');
+      expect(context.signal.aborted).toBe(true);
+
+      continueJob();
+      await expect(formerOwnerRun).rejects.toThrow('Lease ownership');
+      expect(protectedCommit).not.toHaveBeenCalled();
+    });
+
+    it('aborts the handler and rejects its result when lease renewal fails', async () => {
+      jest.useFakeTimers();
+      try {
+        const { service, redis } = makeLockService();
+        redis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+        const run = service.withLock(
+          'expired-job',
+          600,
+          ({ signal }) =>
+            new Promise<string>((resolve) => {
+              signal.addEventListener('abort', () => resolve('finished'), { once: true });
+            }),
+        );
+
+        await jest.advanceTimersByTimeAsync(210);
+
+        await expect(run).rejects.toThrow('Lease ownership');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('periodically renews the lease while the guarded function runs', async () => {
       jest.useFakeTimers();
       try {
         const { service, redis } = makeLockService();
-        redis.set.mockResolvedValue('OK');
         redis.eval.mockResolvedValue(1);
 
         let resolveFn: () => void;
@@ -280,17 +389,17 @@ describe('DistributedLockService', () => {
 
       // First run acquires but the process "crashes" mid-job — fn never resolves,
       // and we simulate no release happening (redis key just expires naturally).
-      redis.set.mockResolvedValueOnce('OK');
+      redis.eval.mockResolvedValueOnce(1);
       const crashedToken = await service.acquire('recovering-job', 2000);
       expect(crashedToken).not.toBeNull();
 
       // A concurrent worker is blocked while the key is still live.
-      redis.set.mockResolvedValueOnce(null);
+      redis.eval.mockResolvedValueOnce(false);
       const { ran: blockedRan } = await service.withLock('recovering-job', 2000, jest.fn());
       expect(blockedRan).toBe(false);
 
       // After TTL expiry in Redis, a fresh worker can acquire and run normally.
-      redis.set.mockResolvedValueOnce('OK');
+      redis.eval.mockResolvedValueOnce(2);
       redis.eval.mockResolvedValue(1);
       const fn = jest.fn().mockResolvedValue('recovered');
       const { ran, result } = await service.withLock('recovering-job', 2000, fn);
