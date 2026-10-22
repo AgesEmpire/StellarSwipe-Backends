@@ -54,6 +54,13 @@ const DEAD_LETTER_OPERATOR_ROLES: ReadonlySet<string> = new Set([
 const MAX_DEAD_LETTER_RETRY_BATCH = 50;
 
 /**
+ * Maximum number of outbound notification frames buffered per WebSocket
+ * client. Once a slow client's buffer reaches this bound, further frames are
+ * dropped and the client is disconnected so memory use stays bounded.
+ */
+const MAX_WS_BUFFERED_FRAMES = 100;
+
+/**
  * Public provider profile / trading configuration fields whose changes are
  * considered important enough to notify opted-in subscribers about.
  */
@@ -133,6 +140,38 @@ export interface SmsOptOutEvent {
   occurredAt: Date;
 }
 
+/**
+ * Minimal outbound WebSocket client surface required for backpressure. A
+ * client is considered saturated when its buffered amount exceeds the
+ * configured bound.
+ */
+export interface NotificationWebSocketClient {
+  readonly bufferedAmount: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+/**
+ * Outcome of attempting to deliver a notification frame to a WebSocket client.
+ */
+export type WebSocketDeliveryOutcome = 'sent' | 'dropped' | 'disconnected';
+
+/**
+ * Filters accepted by the inbox unread count endpoint. Mirrors the filtering
+ * supported by the inbox listing API so counts stay consistent with it.
+ */
+export interface UnreadCountFilters {
+  type?: NotificationType;
+  channel?: NotificationChannel;
+}
+
+/**
+ * Result of an unread notification count query.
+ */
+export interface UnreadCountResult {
+  unreadCount: number;
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -155,12 +194,122 @@ export class NotificationsService {
    */
   private readonly smsOptOutEvents: SmsOptOutEvent[] = [];
 
+  /**
+   * Per-client outbound frame buffer used to bound WebSocket memory use.
+   * Keyed by client identity; each entry holds the frames awaiting flush.
+   */
+  private readonly wsOutboundBuffers = new Map<
+    NotificationWebSocketClient,
+    string[]
+  >();
+
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
     @InjectQueue(NOTIFICATION_QUEUE)
     private readonly notificationQueue: Queue,
   ) {}
+
+  /**
+   * Count the unread notifications for the authenticated user. The unread
+   * definition matches the inbox API (read state is `isRead === false`), and
+   * the query is always scoped to the requesting user so one user can never
+   * observe another user's unread count.
+   *
+   * @param userId The authenticated user requesting the count
+   * @param filters Optional filters consistent with the inbox API
+   * @returns The unread count for the user
+   */
+  async getUnreadCount(
+    userId: string,
+    filters: UnreadCountFilters = {},
+  ): Promise<UnreadCountResult> {
+    if (!userId) {
+      throw new ForbiddenException('A user is required to count notifications');
+    }
+
+    const where: Record<string, unknown> = {
+      userId,
+      isRead: false,
+    };
+
+    if (filters.type !== undefined) {
+      where.type = filters.type;
+    }
+    if (filters.channel !== undefined) {
+      where.channel = filters.channel;
+    }
+
+    const unreadCount = await this.notificationRepository.count({ where });
+    return { unreadCount };
+  }
+
+  /**
+   * Deliver a notification frame to a WebSocket client with bounded
+   * buffering. Slow clients that cannot keep up have frames dropped once the
+   * per-client buffer is saturated, and are disconnected predictably rather
+   * than allowing unbounded memory growth.
+   *
+   * @param client The target WebSocket client
+   * @param frame The serialized notification frame
+   * @returns The delivery outcome for observability and testing
+   */
+  deliverToWebSocket(
+    client: NotificationWebSocketClient,
+    frame: string,
+  ): WebSocketDeliveryOutcome {
+    const buffer = this.wsOutboundBuffers.get(client) ?? [];
+
+    // Saturated: drop the frame and disconnect the slow client.
+    if (
+      buffer.length >= MAX_WS_BUFFERED_FRAMES ||
+      client.bufferedAmount >= MAX_WS_BUFFERED_FRAMES
+    ) {
+      this.wsOutboundBuffers.delete(client);
+      this.logger.warn(
+        `WebSocket client saturated (buffered=${buffer.length}); dropping frame and disconnecting`,
+      );
+      try {
+        client.close(1013, 'Notification buffer overflow');
+      } catch (error) {
+        this.logger.warn(
+          `Failed to close saturated WebSocket client: ${(error as Error).message}`,
+        );
+      }
+      return 'disconnected';
+    }
+
+    try {
+      client.send(frame);
+    } catch (error) {
+      this.wsOutboundBuffers.delete(client);
+      this.logger.warn(
+        `Failed to send WebSocket frame: ${(error as Error).message}`,
+      );
+      return 'dropped';
+    }
+
+    // Track the frame until the client drains its buffer.
+    buffer.push(frame);
+    this.wsOutboundBuffers.set(client, buffer);
+    return 'sent';
+  }
+
+  /**
+   * Release buffered frames for a client once it has drained, or when it
+   * disconnects. Keeps the per-client buffer from growing without bound.
+   */
+  releaseWebSocketBuffer(client: NotificationWebSocketClient): void {
+    this.wsOutboundBuffers.delete(client);
+  }
+
+  /**
+   * Number of frames currently buffered for a client. Exposed for tests and
+   * operational visibility into slow-client behavior.
+   */
+  getWebSocketBufferedCount(client: NotificationWebSocketClient): number {
+    return this.wsOutboundBuffers.get(client)?.length ?? 0;
+  }
 
   /**
    * Record and persist an SMS opt-out (or opt-in) event for a user. The
@@ -176,257 +325,4 @@ export class NotificationsService {
     userId: string,
     optedOut: boolean,
     reason?: string,
-  ): Promise<SmsOptOutEvent> {
-    const event: SmsOptOutEvent = {
-      userId,
-      optedOut,
-      reason,
-      occurredAt: new Date(),
-    };
-
-    this.smsOptOutEvents.push(event);
-    this.smsOptOutState.set(userId, optedOut);
-
-    this.logger.log(
-      `Persisted SMS ${optedOut ? 'opt-out' : 'opt-in'} event for user ${userId}`,
-    );
-
-    return event;
-  }
-
-  /**
-   * Whether the user is currently opted out of SMS. Defaults to opted-in
-   * when no preference has been recorded.
-   */
-  isSmsOptedOut(userId: string): boolean {
-    return this.smsOptOutState.get(userId) === true;
-  }
-
-  /**
-   * Return the persisted SMS opt-out events for a user (most recent last).
-   */
-  getSmsOptOutEvents(userId: string): SmsOptOutEvent[] {
-    return this.smsOptOutEvents.filter((event) => event.userId === userId);
-  }
-
-  /**
-   * Create and queue a notification for delivery
-   * @param userId The user ID to send the notification to
-   * @param type The type of notification (trade success/failure/alert)
-   * @param title The notification title
-   * @param message The notification message
-   * @param channel The delivery channel (email, push, or both)
-   * @param metadata Additional data to include with the notification
-   * @returns The created notification record
-   */
-  async createAndQueueNotification(
-    userId: string,
-    type: NotificationType,
-    title: string,
-    message: string,
-    channel: NotificationChannel,
-    metadata: Record<string, any> = {},
-  ): Promise<Notification> {
-    this.logger.log(`Creating notification for user ${userId}`);
-
-    // Enforce SMS opt-out centrally before any queued SMS dispatch.
-    if (channel === NotificationChannel.SMS && this.isSmsOptedOut(userId)) {
-      this.logger.warn(
-        `Skipping queued SMS notification for opted-out user ${userId}`,
-      );
-      throw new ForbiddenException('User has opted out of SMS notifications');
-    }
-
-    // Create notification record
-    const notification = this.notificationRepository.create({
-      userId,
-      type,
-      title,
-      message,
-      channel,
-      metadata,
-      status: 'PENDING',
-    });
-
-    const savedNotification = await this.notificationRepository.save(notification);
-
-    // Queue the notification for processing (NORMAL priority)
-    await this.notificationQueue.add('send-notification', {
-      notificationId: savedNotification.id,
-    }, {
-      priority: 100, // NORMAL
-      // Job options
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 5000,
-      },
-    });
-
-    this.logger.log(`Queued notification ${savedNotification.id} for processing`);
-    return savedNotification;
-  }
-
-  /**
-   * Immediately dispatch an SMS notification, consulting the current opt-out
-   * preference before sending.
-   *
-   * @param userId The user ID to send the SMS to
-   * @param type The type of notification
-   * @param title The notification title
-   * @param message The notification message
-   * @param metadata Additional data to include with the notification
-   * @returns The created notification record
-   */
-  async sendSmsNotification(
-    userId: string,
-    type: NotificationType,
-    title: string,
-    message: string,
-    metadata: Record<string, any> = {},
-  ): Promise<Notification> {
-    if (this.isSmsOptedOut(userId)) {
-      this.logger.warn(
-        `Skipping immediate SMS notification for opted-out user ${userId}`,
-      );
-      throw new ForbiddenException('User has opted out of SMS notifications');
-    }
-
-    const notification = this.notificationRepository.create({
-      userId,
-      type,
-      title,
-      message,
-      channel: NotificationChannel.SMS,
-      metadata,
-      status: 'PENDING',
-    });
-
-    const savedNotification = await this.notificationRepository.save(notification);
-    this.logger.log(`Dispatched immediate SMS notification ${savedNotification.id}`);
-    return savedNotification;
-  }
-
-  /**
-   * Detect important changes between two versions of a provider's public
-   * profile / trading configuration. Only watched fields are considered.
-   *
-   * @param previous The provider profile before the update
-   * @param next The provider profile after the update
-   * @returns The list of detected changes (empty when nothing relevant changed)
-   */
-  detectProviderProfileChanges(
-    previous: Record<string, any>,
-    next: Record<string, any>,
-  ): ProviderProfileChange[] {
-    const changes: ProviderProfileChange[] = [];
-
-    for (const field of PROVIDER_PROFILE_WATCHED_FIELDS) {
-      const previousValue = previous?.[field];
-      const newValue = next?.[field];
-
-      if (!this.valuesEqual(previousValue, newValue)) {
-        changes.push({ field, previousValue, newValue });
-      }
-    }
-
-    return changes;
-  }
-
-  /**
-   * Notify opted-in subscribers about important provider profile changes.
-   *
-   * - Only subscribers with `optedIn === true` are notified.
-   * - Events are deduplicated per provider/field/new value so subscribers do
-   *   not receive repeated notifications for the same change.
-   * - Delivery failures are logged and reported in the result so they can be
-   *   retried; the underlying queue also applies retry/backoff.
-   *
-   * @param providerId The provider whose profile changed
-   * @param previous The provider profile before the update
-   * @param next The provider profile after the update
-   * @param subscribers The candidate subscribers (opt-in is enforced here)
-   * @param channel The delivery channel to use
-   * @returns A summary of the dispatch outcome
-   */
-  async notifyProviderProfileChanges(
-    providerId: string,
-    previous: Record<string, any>,
-    next: Record<string, any>,
-    subscribers: ProviderProfileSubscriber[],
-    channel: NotificationChannel = NotificationChannel.PUSH,
-  ): Promise<ProviderProfileChangeDispatchResult> {
-    const result: ProviderProfileChangeDispatchResult = {
-      changes: [],
-      notified: [],
-      skipped: [],
-      failed: [],
-    };
-
-    const changes = this.detectProviderProfileChanges(previous, next);
-    if (changes.length === 0) {
-      return result;
-    }
-
-    // Deduplicate: drop changes already dispatched for this provider.
-    const freshChanges = changes.filter((change) => {
-      const key = this.profileChangeKey(providerId, change);
-      if (this.dispatchedProfileChanges.has(key)) {
-        return false;
-      }
-      return true;
-    });
-
-    result.changes = freshChanges;
-    if (freshChanges.length === 0) {
-      this.logger.debug(`No new provider profile changes to notify for ${providerId}`);
-      return result;
-    }
-
-    const optedInSubscribers = (subscribers ?? []).filter((s) => s && s.optedIn === true);
-    if (optedInSubscribers.length === 0) {
-      this.logger.debug(`No opted-in subscribers for provider ${providerId}`);
-      return result;
-    }
-
-    for (const subscriber of optedInSubscribers) {
-      // Enforce SMS opt-out centrally for provider profile dispatches too.
-      if (channel === NotificationChannel.SMS && this.isSmsOptedOut(subscriber.userId)) {
-        result.skipped.push(subscriber.userId);
-        continue;
-      }
-
-      try {
-        await this.createAndQueueNotification(
-          subscriber.userId,
-          NotificationType.PROVIDER_PROFILE_CHANGED,
-          `Provider ${providerId} updated`,
-          `Provider ${providerId} changed ${freshChanges.map((c) => c.field).join(', ')}`,
-          channel,
-          { providerId, changes: freshChanges },
-        );
-        result.notified.push(subscriber.userId);
-      } catch (error) {
-        this.logger.error(
-          `Failed to notify subscriber ${subscriber.userId} of provider ${providerId} changes`,
-          error instanceof Error ? error.stack : undefined,
-        );
-        result.failed.push(subscriber.userId);
-      }
-    }
-
-    for (const change of freshChanges) {
-      this.dispatchedProfileChanges.add(this.profileChangeKey(providerId, change));
-    }
-
-    return result;
-  }
-
-  private profileChangeKey(providerId: string, change: ProviderProfileChange): string {
-    return `${providerId}:${change.field}:${JSON.stringify(change.newValue)}`;
-  }
-
-  private valuesEqual(a: unknown, b: unknown): boolean {
-    return JSON.stringify(a) === JSON.stringify(b);
-  }
-}
+  ): Promise<
