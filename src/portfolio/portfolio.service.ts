@@ -26,6 +26,19 @@ const ASSET_CODE_RE = /^[A-Z0-9]{1,12}$/;
 // Imports at or above this row count are processed asynchronously in the background.
 const ASYNC_IMPORT_THRESHOLD = 50;
 
+// Rebalance preview: trade amounts are quantized to this many decimal places.
+const REBALANCE_PRECISION = 8;
+
+// Rebalance preview: allocations below this fraction of the target are ignored
+// to avoid emitting dust trades caused by floating point noise.
+const REBALANCE_DUST_THRESHOLD = 1e-8;
+
+// Profit breakdown: values are quantized to this many decimal places.
+const PROFIT_PRECISION = 8;
+
+// Profit breakdown: floating point tolerance for reconciliation checks.
+const PROFIT_RECONCILE_EPSILON = 1e-6;
+
 export enum PortfolioImportStatus {
   PENDING = 'PENDING',
   PROCESSING = 'PROCESSING',
@@ -59,6 +72,64 @@ interface PortfolioImportRowError {
   message: string;
 }
 
+export interface RebalanceTargetAllocation {
+  asset: string;
+  targetWeight: number;
+}
+
+export interface RebalancePreviewTrade {
+  asset: string;
+  side: 'BUY' | 'SELL';
+  currentWeight: number;
+  targetWeight: number;
+  currentValue: number;
+  targetValue: number;
+  amount: number;
+}
+
+export interface RebalancePreviewResult {
+  totalValue: number;
+  trades: RebalancePreviewTrade[];
+  insufficientData: boolean;
+  missingPrices: string[];
+}
+
+/**
+ * A single open lot tracked for FIFO cost basis accounting.
+ */
+export interface ProfitLot {
+  asset: string;
+  quantity: number;
+  costBasis: number;
+}
+
+/**
+ * Realized and unrealized profit components for a single asset.
+ * `supported` is false when a reliable price or cost basis is unavailable;
+ * in that case the numeric fields are reported as 0 and the reason is set.
+ */
+export interface AssetProfitBreakdown {
+  asset: string;
+  realizedProfit: number;
+  unrealizedProfit: number;
+  totalProfit: number;
+  supported: boolean;
+  reason?: string;
+}
+
+/**
+ * Portfolio-level profit breakdown. `realizedProfit + unrealizedProfit`
+ * reconciles to `totalProfit` for all supported assets.
+ */
+export interface PortfolioProfitBreakdown {
+  realizedProfit: number;
+  unrealizedProfit: number;
+  totalProfit: number;
+  reconciled: boolean;
+  assets: AssetProfitBreakdown[];
+  unsupportedAssets: string[];
+}
+
 @Injectable()
 export class PortfolioService {
   // Durable in-memory job registry keyed by job id. Each job is owned by a userId
@@ -77,6 +148,18 @@ export class PortfolioService {
     private pnlCalculator: PnlCalculatorService,
     private readonly outboxService: OutboxService,
   ) {}
+
+  /**
+   * Quantizes a numeric amount to a fixed number of decimal places so that
+   * preview output is deterministic and free of floating point noise.
+   */
+  private quantize(value: number, precision: number = REBALANCE_PRECISION): number {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    const factor = Math.pow(10, precision);
+    return Math.round(value * factor) / factor;
+  }
 
   /**
    * Builds consistent freshness metadata for a valuation response.
@@ -98,57 +181,179 @@ export class PortfolioService {
   }
 
   /**
-   * Centralized archival eligibility rules for a portfolio.
-   * A portfolio is ineligible when it has unsettled transactions or active
-   * positions. Evaluation is read-only and repeat-safe.
+   * Computes realized and unrealized profit components for a user's portfolio.
+   *
+   * Cost basis rules (documented):
+   * - Executed BUY trades open lots at their entry price (FIFO queue per asset).
+   * - Executed SELL trades consume the oldest open lots first (FIFO). Realized
+   *   profit for a sell is `proceeds - consumedCostBasis`.
+   * - Unrealized profit for remaining open lots is `marketValue - remainingCostBasis`
+   *   using the current market price for each asset.
+   *
+   * Assets with no reliable market price (for unrealized) or a sell that exceeds
+   * available lots (no reliable cost basis) are marked unsupported rather than
+   * silently producing a number. `realizedProfit + unrealizedProfit` reconciles
+   * to `totalProfit` across supported assets.
    */
-  async evaluateArchivalEligibility(userId: string): Promise<ArchivalEligibility> {
+  async getProfitBreakdown(userId: string): Promise<PortfolioProfitBreakdown> {
     const trades = await this.tradeRepository.find({
-      where: { userId },
-      select: ['id', 'status'],
+      where: { userId, status: TradeStatus.COMPLETED },
+      order: { createdAt: 'ASC' },
     });
 
-    const unsettledTransactions = trades.filter(
-      (t) => t.status === TradeStatus.PENDING,
-    ).length;
-    const activePositions = trades.filter(
-      (t) => t.status === TradeStatus.EXECUTING,
-    ).length;
+    // FIFO lot queues keyed by base asset.
+    const lots = new Map<string, ProfitLot[]>();
+    const realizedByAsset = new Map<string, number>();
+    const unsupported = new Set<string>();
+    const unsupportedReasons = new Map<string, string>();
 
-    const reasons: string[] = [];
-    if (unsettledTransactions > 0) {
-      reasons.push(
-        `Portfolio has ${unsettledTransactions} unsettled transaction(s)`,
-      );
+    const markUnsupported = (asset: string, reason: string) => {
+      unsupported.add(asset);
+      if (!unsupportedReasons.has(asset)) {
+        unsupportedReasons.set(asset, reason);
+      }
+    };
+
+    for (const trade of trades) {
+      const asset = trade.baseAsset;
+      const quantity = Number(trade.amount);
+      const price = Number(trade.entryPrice);
+
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        markUnsupported(asset, 'Invalid trade quantity');
+        continue;
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        markUnsupported(asset, 'Missing cost basis (entry price)');
+        continue;
+      }
+
+      const side = String(trade.side || '').toUpperCase();
+
+      if (side === 'BUY') {
+        const queue = lots.get(asset) || [];
+        queue.push({ asset, quantity, costBasis: quantity * price });
+        lots.set(asset, queue);
+      } else if (side === 'SELL') {
+        const queue = lots.get(asset) || [];
+        let remaining = quantity;
+        let consumedCost = 0;
+
+        while (remaining > 0 && queue.length > 0) {
+          const lot = queue[0];
+          const take = Math.min(lot.quantity, remaining);
+          const unitCost = lot.quantity > 0 ? lot.costBasis / lot.quantity : 0;
+          consumedCost += take * unitCost;
+          lot.quantity -= take;
+          lot.costBasis -= take * unitCost;
+          remaining -= take;
+          if (lot.quantity <= 1e-12) {
+            queue.shift();
+          }
+        }
+
+        if (remaining > 1e-12) {
+          // Sold more than we have lots for: cost basis is unreliable.
+          markUnsupported(asset, 'Sell exceeds available cost basis lots');
+          continue;
+        }
+
+        const proceeds = quantity * price;
+        const realized = proceeds - consumedCost;
+        realizedByAsset.set(asset, (realizedByAsset.get(asset) || 0) + realized);
+      }
     }
-    if (activePositions > 0) {
-      reasons.push(`Portfolio has ${activePositions} active position(s)`);
+
+    // Collect all assets that have open lots or realized profit.
+    const assetSet = new Set<string>([
+      ...lots.keys(),
+      ...realizedByAsset.keys(),
+      ...unsupported,
+    ]);
+    const assets = [...assetSet].sort();
+
+    // Fetch current market prices for assets with open lots.
+    const symbols = assets
+      .filter((a) => (lots.get(a) || []).length > 0)
+      .map((a) => a);
+    const prices = symbols.length > 0 ? await this.priceService.getMultiplePrices(symbols) : {};
+
+    const breakdowns: AssetProfitBreakdown[] = [];
+    let totalRealized = 0;
+    let totalUnrealized = 0;
+
+    for (const asset of assets) {
+      const realized = realizedByAsset.get(asset) || 0;
+      const queue = lots.get(asset) || [];
+      const remainingCost = queue.reduce((sum, lot) => sum + lot.costBasis, 0);
+      const remainingQty = queue.reduce((sum, lot) => sum + lot.quantity, 0);
+
+      let unrealized = 0;
+      let supported = !unsupported.has(asset);
+      let reason = unsupportedReasons.get(asset);
+
+      if (remainingQty > 1e-12) {
+        const price = prices[asset];
+        if (price === undefined || price === null || !Number.isFinite(Number(price))) {
+          supported = false;
+          reason = reason || 'Missing market price for unrealized valuation';
+        } else {
+          unrealized = remainingQty * Number(price) - remainingCost;
+        }
+      }
+
+      const realizedQ = this.quantize(realized, PROFIT_PRECISION);
+      const unrealizedQ = this.quantize(unrealized, PROFIT_PRECISION);
+
+      if (supported) {
+        totalRealized += realizedQ;
+        totalUnrealized += unrealizedQ;
+      }
+
+      breakdowns.push({
+        asset,
+        realizedProfit: supported ? realizedQ : 0,
+        unrealizedProfit: supported ? unrealizedQ : 0,
+        totalProfit: supported ? this.quantize(realizedQ + unrealizedQ, PROFIT_PRECISION) : 0,
+        supported,
+        ...(reason ? { reason } : {}),
+      });
     }
+
+    const realizedProfit = this.quantize(totalRealized, PROFIT_PRECISION);
+    const unrealizedProfit = this.quantize(totalUnrealized, PROFIT_PRECISION);
+    const totalProfit = this.quantize(realizedProfit + unrealizedProfit, PROFIT_PRECISION);
+    const reconciled =
+      Math.abs(realizedProfit + unrealizedProfit - totalProfit) <= PROFIT_RECONCILE_EPSILON;
 
     return {
-      eligible: reasons.length === 0,
-      reasons,
-      unsettledTransactions,
-      activePositions,
+      realizedProfit,
+      unrealizedProfit,
+      totalProfit,
+      reconciled,
+      assets: breakdowns,
+      unsupportedAssets: [...unsupported].sort(),
     };
   }
 
   /**
-   * Archives a portfolio after validating eligibility. Ineligible portfolios
-   * are rejected; eligible archival is repeat-safe (idempotent).
+   * Calculates proposed trades to reach a target allocation without submitting
+   * orders or mutating holdings. The result is deterministic for the same
+   * inputs: trades are ordered by asset and amounts are quantized.
    */
-  async archivePortfolio(userId: string): Promise<ArchivalEligibility> {
-    const eligibility = await this.evaluateArchivalEligibility(userId);
-    if (!eligibility.eligible) {
-      throw new BadRequestException({
-        message: 'Portfolio is not eligible for archival',
-        reasons: eligibility.reasons,
-      });
+  async previewRebalance(
+    userId: string,
+    targets: RebalanceTargetAllocation[],
+  ): Promise<RebalancePreviewResult> {
+    if (!Array.isArray(targets) || targets.length === 0) {
+      throw new BadRequestException('At least one target allocation is required');
     }
-    return eligibility;
-  }
 
-  async getPositions(userId: string): Promise<PositionDetailDto[]> {
+    const weightSum = targets.reduce((sum, t) => sum + Number(t.targetWeight || 0), 0);
+    if (Math.abs(weightSum - 1) > 1e-6) {
+      throw new BadRequestException('Target weights must sum to 1');
+    }
+
     const openTrades = await this.tradeRepository.find({
       where: {
         userId,
@@ -157,288 +362,87 @@ export class PortfolioService {
       order: { createdAt: 'DESC' },
     });
 
-    if (openTrades.length === 0) {
-      return [];
-    }
-
     const symbols = [...new Set(openTrades.map((t) => `${t.baseAsset}/${t.counterAsset}`))];
-    const prices = await this.priceService.getMultiplePrices(symbols);
+    const prices = symbols.length > 0 ? await this.priceService.getMultiplePrices(symbols) : {};
 
-    return openTrades.map((trade) => {
+    // Aggregate current holdings value per asset symbol.
+    const currentValues = new Map<string, number>();
+    const missingPrices: string[] = [];
+
+    for (const trade of openTrades) {
       const pair = `${trade.baseAsset}/${trade.counterAsset}`;
-      const currentPrice = prices[pair] || Number(trade.entryPrice);
-      const unrealizedPnL = this.pnlCalculator.calculateUnrealizedPnL(trade, currentPrice);
-
-      return {
-        id: trade.id,
-        assetSymbol: pair,
-        amount: Number(trade.amount),
-        entryPrice: Number(trade.entryPrice),
-        currentPrice: currentPrice,
-        unrealizedPnL: unrealizedPnL,
-        side: trade.side,
-        openedAt: trade.executedAt || trade.createdAt,
-      };
-    });
-  }
-
-  async getHistory(userId: string, page: number = 1, limit: number = 10): Promise<{ data: Trade[]; total: number }> {
-    const [data, total] = await this.tradeRepository.findAndCount({
-      where: {
-        userId,
-        status: TradeStatus.COMPLETED,
-      },
-      order: { closedAt: 'DESC', updatedAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
-
-    return { data, total };
-  }
-
-  async getPerformance(userId: string): Promise<PortfolioSummaryDto> {
-    const cacheKey = `portfolio_performance_${userId}`;
-    const cachedData = await this.cacheManager.get<PortfolioSummaryDto>(cacheKey);
-    if (cachedData) {
-      return cachedData;
+      const price = prices[pair];
+      if (price === undefined || price === null || !Number.isFinite(Number(price))) {
+        if (!missingPrices.includes(pair)) {
+          missingPrices.push(pair);
+        }
+        continue;
+      }
+      const value = Number(trade.amount) * Number(price);
+      currentValues.set(pair, (currentValues.get(pair) || 0) + value);
     }
 
-    const allTrades = await this.tradeRepository.find({
-      where: { userId },
-      order: { createdAt: 'DESC' },
-    });
-
-    let realizedPnL = 0;
-    let unrealizedPnL = 0;
-    let openPositions = 0;
-    let winningTrades = 0;
-    let closedTradesCount = 0;
-    let bestTrade: TradeDetail | undefined;
-    let worstTrade: TradeDetail | undefined;
-
-    const openTrades = allTrades.filter((t) => 
-      t.status === TradeStatus.EXECUTING || t.status === TradeStatus.PENDING
+    const totalValue = this.quantize(
+      [...currentValues.values()].reduce((sum, v) => sum + v, 0),
     );
-    
-    const openTradeSymbols = openTrades.map((t) => `${t.baseAsset}/${t.counterAsset}`);
-    const uniqueSymbols = [...new Set(openTradeSymbols)];
-    const prices = uniqueSymbols.length > 0 ? await this.priceService.getMultiplePrices(uniqueSymbols) : {};
 
-    let totalValue = 0;
+    const insufficientData = missingPrices.length > 0 || totalValue <= 0;
 
-    for (const trade of allTrades) {
-      if (trade.status === TradeStatus.COMPLETED) {
-        const pnl = Number(trade.profitLoss || 0);
-        closedTradesCount++;
-        if (pnl > 0) winningTrades++;
-        
-        const tradeDetail: TradeDetail = {
-          id: trade.id,
-          side: trade.side,
-          baseAsset: trade.baseAsset,
-          counterAsset: trade.counterAsset,
-          amount: Number(trade.amount),
-          entryPrice: Number(trade.entryPrice),
-          exitPrice: trade.exitPrice ? Number(trade.exitPrice) : undefined,
-          profitLoss: pnl,
-          profitLossPercentage: trade.profitLossPercentage ? Number(trade.profitLossPercentage) : undefined,
-          executedAt: trade.executedAt,
-          closedAt: trade.closedAt,
-        };
+    // Build a deterministic, sorted set of assets to consider.
+    const assetSet = new Set<string>([
+      ...currentValues.keys(),
+      ...targets.map((t) => t.asset),
+    ]);
+    const assets = [...assetSet].sort();
 
-        if (!bestTrade || pnl > bestTrade.profitLoss) {
-          bestTrade = tradeDetail;
-        }
-        if (!worstTrade || pnl < worstTrade.profitLoss) {
-          worstTrade = tradeDetail;
-        }
-      } else if (trade.status === TradeStatus.EXECUTING || trade.status === TradeStatus.PENDING) {
-        openPositions++;
-        const pair = `${trade.baseAsset}/${trade.counterAsset}`;
-        const currentPrice = prices[pair] || Number(trade.entryPrice);
-        const positionPnL = this.pnlCalculator.calculateUnrealizedPnL(trade, currentPrice);
-        unrealizedPnL += positionPnL;
-        totalValue += Number(trade.amount) * currentPrice;
-      }
+    const targetByAsset = new Map<string, number>();
+    for (const t of targets) {
+      targetByAsset.set(t.asset, Number(t.targetWeight || 0));
     }
 
-    const pnlBreakdown = this.pnlCalculator.calculatePortfolioPnl(allTrades, prices);
-    realizedPnL = pnlBreakdown.realizedPnL;
-    unrealizedPnL = pnlBreakdown.unrealizedPnL;
+    const trades: RebalancePreviewTrade[] = [];
 
-    const winRate = closedTradesCount > 0 ? (winningTrades / closedTradesCount) * 100 : 0;
+    for (const asset of assets) {
+      const currentValue = currentValues.get(asset) || 0;
+      const targetWeight = targetByAsset.get(asset) || 0;
+      const targetValue = totalValue * targetWeight;
+      const delta = targetValue - currentValue;
 
-    const result: PortfolioSummaryDto = {
-      totalValue,
-      unrealizedPnL,
-      realizedPnL,
-      openPositions,
-      winRate,
-      bestTrade,
-      worstTrade,
-      freshness: this.buildFreshness('live', new Date()),
-    };
+      const currentWeight = totalValue > 0 ? currentValue / totalValue : 0;
 
-    await this.cacheManager.set(cacheKey, result, 300000); // 5 minutes TTL
-    return result;
-  }
+      if (Math.abs(delta) < REBALANCE_DUST_THRESHOLD) {
+        continue;
+      }
 
-  // Unrealized PnL is delegated to PnlCalculatorService for fee inclusion.
+      const price = prices[asset];
+      const amount = price && Number.isFinite(Number(price)) && Number(price) > 0
+        ? this.quantize(Math.abs(delta) / Number(price))
+        : this.quantize(Math.abs(delta));
 
-  async addTransaction(userId: string, dto: AddTransactionDto): Promise<Trade> {
-    const saved = await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
-      const trade = manager.create(Trade, {
-        userId,
-        signalId: dto.signalId ?? '00000000-0000-0000-0000-000000000000',
-        side: dto.side,
-        baseAsset: dto.baseAsset,
-        counterAsset: dto.counterAsset,
-        amount: String(dto.amount),
-        entryPrice: String(dto.entryPrice),
-        totalValue: String(dto.amount * dto.entryPrice),
-        feeAmount: String(dto.feeAmount ?? 0),
-        status: TradeStatus.PENDING,
+      if (amount <= 0) {
+        continue;
+      }
+
+      trades.push({
+        asset,
+        side: delta > 0 ? 'BUY' : 'SELL',
+        currentWeight: this.quantize(currentWeight),
+        targetWeight: this.quantize(targetWeight),
+        currentValue: this.quantize(currentValue),
+        targetValue: this.quantize(targetValue),
+        amount,
       });
-
-      const savedTrade = await manager.save(trade);
-
-      await this.outboxService.enqueue(
-        new PortfolioTransactionCreatedEvent({
-          tradeId: savedTrade.id,
-          userId,
-          signalId: savedTrade.signalId,
-          baseAsset: savedTrade.baseAsset,
-          counterAsset: savedTrade.counterAsset,
-        }),
-      );
-
-      return savedTrade;
-    });
-
-    return saved;
-  }
-
-  /**
-   * Enqueue a validated portfolio import for background processing.
-   * Large batches are processed asynchronously; the returned job id can be
-   * polled via getImportJobStatus to observe durable progress.
-   */
-  async enqueuePortfolioImport(
-    userId: string,
-    rows: PortfolioImportRow[],
-  ): Promise<PortfolioImportJob> {
-    if (!Array.isArray(rows) || rows.length === 0) {
-      throw new BadRequestException('Import contains no rows');
-    }
-    if (rows.length > MAX_IMPORT_BATCH_SIZE) {
-      throw new BadRequestException(
-        `Import exceeds maximum batch size of ${MAX_IMPORT_BATCH_SIZE} rows`,
-      );
     }
 
-    const now = new Date();
-    const job: PortfolioImportJob = {
-      id: this.generateJobId(),
-      userId,
-      status: PortfolioImportStatus.PENDING,
-      totalRows: rows.length,
-      processedRows: 0,
-      importedCount: 0,
-      createdAt: now,
-      updatedAt: now,
+    return {
+      totalValue,
+      trades,
+      insufficientData,
+      missingPrices: missingPrices.sort(),
     };
-    this.importJobs.set(job.id, job);
-
-    // Kick off background processing without blocking the request path.
-    void this.processImportJob(job.id, rows);
-
-    return { ...job };
   }
 
   /**
-   * Return the durable status of an import job, scoped to its owner.
-   */
-  async getImportJobStatus(userId: string, jobId: string): Promise<PortfolioImportJob> {
-    const job = this.importJobs.get(jobId);
-    if (!job || job.userId !== userId) {
-      throw new NotFoundException(`Import job ${jobId} not found`);
-    }
-    return { ...job };
-  }
+   * Centralized archival eligibility rules for a po
 
-  private async processImportJob(jobId: string, rows: PortfolioImportRow[]): Promise<void> {
-    const job = this.importJobs.get(jobId);
-    if (!job) {
-      return;
-    }
-
-    // Idempotency guard: only a PENDING job may transition to PROCESSING.
-    // Retries that re-enter after completion/failure are no-ops, preventing
-    // duplicate trade records.
-    if (job.status !== PortfolioImportStatus.PENDING) {
-      return;
-    }
-    job.status = PortfolioImportStatus.PROCESSING;
-    job.updatedAt = new Date();
-
-    try {
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const amount = Number(row.amount);
-        const entryPrice = Number(row.entryPrice);
-        const feeAmount = Number(row.feeAmount ?? 0);
-
-        await this.tradeRepository.manager.transaction(async (manager: EntityManager) => {
-          const trade = manager.create(Trade, {
-            userId: job.userId,
-            signalId: '00000000-0000-0000-0000-000000000000',
-            side: 'BUY' as any,
-            baseAsset: row.baseAsset,
-            counterAsset: row.counterAsset,
-            amount: String(amount),
-            entryPrice: String(entryPrice),
-            totalValue: String(amount * entryPrice),
-            feeAmount: String(feeAmount),
-            status: TradeStatus.PENDING,
-          });
-
-          const savedTrade = await manager.save(trade);
-
-          await this.outboxService.enqueue(
-            new PortfolioTransactionCreatedEvent({
-              tradeId: savedTrade.id,
-              userId: job.userId,
-              signalId: savedTrade.signalId,
-              baseAsset: savedTrade.baseAsset,
-              counterAsset: savedTrade.counterAsset,
-              amount: savedTrade.amount,
-              entryPrice: savedTrade.entryPrice,
-              totalValue: savedTrade.totalValue,
-              feeAmount: savedTrade.feeAmount,
-              status: savedTrade.status,
-              correlationId: savedTrade.id,
-            }),
-            manager,
-          );
-        });
-
-        job.processedRows = i + 1;
-        job.importedCount += 1;
-        job.updatedAt = new Date();
-      }
-
-      job.status = PortfolioImportStatus.COMPLETED;
-      job.updatedAt = new Date();
-      await this.cacheManager.del(`portfolio_performance_${job.userId}`);
-    } catch (error) {
-      job.status = PortfolioImportStatus.FAILED;
-      job.error = error instanceof Error ? error.message : String(error);
-      job.updatedAt = new Date();
-    }
-  }
-
-  private generateJobId(): string {
-    // Simple unique id; avoids adding a uuid dependency.
-    return `imp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  }
-}
+/* … truncated 4685 chars — edit only what you need near the top … */

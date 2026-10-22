@@ -36,6 +36,7 @@ export class PortfolioController {
     private readonly portfolioService: PortfolioService,
     private readonly exportService: ExportService,
     private readonly portfolioSnapshotService: PortfolioSnapshotService,
+    private readonly rebalancingService: RebalancingService,
   ) { }
 
   @Get('positions')
@@ -194,6 +195,27 @@ export class PortfolioController {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
+  // Rebalancing – Preview (read-only)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /portfolio/rebalancing/preview
+   * Calculate proposed trades to reach the target allocation without
+   * submitting orders or mutating holdings. Deterministic for the same inputs.
+   */
+  @Get('rebalancing/preview')
+  @ApiOperation({ summary: 'Preview proposed rebalancing trades (no side effects)' })
+  @ApiResponse({ status: 200, description: 'Proposed trades to reach target allocation' })
+  async previewRebalance(
+    @Query('userId') userId: string,
+  ): Promise<RebalancingPlanDto> {
+    if (!userId) {
+      throw new BadRequestException('userId is required');
+    }
+    return this.rebalancingService.previewRebalance(userId);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Rebalancing – Plan generation & execution
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -208,33 +230,4 @@ export class PortfolioController {
     @Query('userId') userId: string,
     @Query('autoExecute') autoExecute?: string,
   ): Promise<RebalancingPlanDto> {
-    return this.rebalancingService.createRebalancingPlan(
-      userId,
-      autoExecute === 'true',
-    );
-  }
-
-  /**
-   * GET /portfolio/rebalancing/plans/pending
-   * List all pending rebalancing plans awaiting approval.
-   */
-  @Get('rebalancing/plans/pending')
-  getPendingPlans(
-    @Query('userId') userId: string,
-  ): RebalancingPlanDto[] {
-    return this.rebalancingService.getPendingPlans(userId);
-  }
-
-  /**
-   * PUT /portfolio/rebalancing/plans/:planId/approve
-   * Approve and execute a specific pending rebalancing plan.
-   */
-  @Put('rebalancing/plans/:planId/approve')
-  @Transactional()
-  async approvePlan(
-    @Query('userId') userId: string,
-    @Param('planId') planId: string,
-  ): Promise<RebalancingPlanDto> {
-    return this.rebalancingService.approvePlan(userId, planId);
-  }
-}
+    return this.rebalancingService

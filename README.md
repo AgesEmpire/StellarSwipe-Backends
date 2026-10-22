@@ -720,3 +720,27 @@ MIT
 
 <!-- handsoff-issue-1332 -->
 - #1332: Prevent unsafe OAuth account linking conflicts
+
+<!-- handsoff-issue-1341 -->
+- #1341: Deduplicate Stellar deposits using transaction and operation identity
+
+<!-- handsoff-issue-1342 -->
+- #1342: Add configurable deposit confirmation policy by asset
+
+<!-- handsoff-issue-1343 -->
+- #1343: Prevent trustline removal while dependent balances exist
+
+<!-- handsoff-issue-1344 -->
+- #1344: Enforce sponsored transaction budget limits
+
+<!-- handsoff-issue-1353 -->
+- #1353: Add portfolio rebalance preview endpoint
+
+<!-- handsoff-issue-1354 -->
+- #1354: Add holdings cost basis correction workflow
+
+<!-- handsoff-issue-1355 -->
+- #1355: Separate realized and unrealized portfolio profit calculations
+
+<!-- handsoff-issue-1356 -->
+- #1356: Detect missing portfolio valuation snapshots
