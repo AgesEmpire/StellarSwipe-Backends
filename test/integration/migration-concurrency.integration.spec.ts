@@ -1,4 +1,4 @@
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { AdvisoryLockService } from '../../src/common/database/advisory-lock.service';
 import { MigrationRunnerService } from '../../src/database/migration-runner.service';
 import { validateDatabaseTimestampSettings } from '../../src/app.module';
