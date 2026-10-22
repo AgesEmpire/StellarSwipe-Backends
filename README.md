@@ -733,6 +733,18 @@ MIT
 <!-- handsoff-issue-1336 -->
 - #1336: Implement account suspension and reactivation workflow
 
+<!-- handsoff-issue-1337 -->
+- #1337: Add user consent withdrawal handling
+
+<!-- handsoff-issue-1338 -->
+- #1338: Implement user data retention policy evaluation service
+
+<!-- handsoff-issue-1339 -->
+- #1339: Handle out-of-order payment webhook events
+
+<!-- handsoff-issue-1340 -->
+- #1340: Reconcile unmatched incoming payment records
+
 <!-- handsoff-issue-1341 -->
 - #1341: Deduplicate Stellar deposits using transaction and operation identity
 
