@@ -43,6 +43,14 @@ export class WebsocketGateway
     try {
       const user = await this.wsJwtGuard.validateSocket(client);
 
+      // Issue #1334: enforce API key scopes during the handshake so sockets
+      // lacking the required scopes are denied before any event handling.
+      if (!this.hasRequiredScopes(user)) {
+        this.logger.warn(`Socket scope denied: ${client.id}`);
+        this.closeForbidden(client);
+        return;
+      }
+
       // Issue #1386: cap concurrent connections per account before the
       // socket is admitted to its account room, so rejected sockets never
       // count toward (or receive) that account's private traffic.
@@ -112,6 +120,16 @@ export class WebsocketGateway
     try {
       const user = this.wsJwtGuard.validateSocket(client);
 
+      // Issue #1334: protected rooms require the same API key scopes as the
+      // equivalent HTTP endpoints before the handler runs.
+      if (!this.hasRequiredScopes(user, this.getRequiredScopesForRoom(room))) {
+        this.logger.warn(
+          `Socket ${client.id} missing scopes for room ${room}`,
+        );
+        this.closeForbidden(client);
+        return false;
+      }
+
       if (room === SocketRoom.SIGNALS_FEED) {
         return true;
       }
@@ -128,8 +146,43 @@ export class WebsocketGateway
     }
   }
 
+  /** Issue #1334: scopes required to open a socket at all. */
+  private getRequiredScopesForConnection(): string[] {
+    return ['signals:read'];
+  }
+
+  /** Issue #1334: scopes required per protected room, mirroring HTTP policy. */
+  private getRequiredScopesForRoom(room: SocketRoom): string[] {
+    switch (room) {
+      case SocketRoom.SIGNALS_FEED:
+        return ['signals:read'];
+      case SocketRoom.LEADERBOARD_TOP100:
+        return ['leaderboard:read'];
+      default:
+        return [];
+    }
+  }
+
+  /** Issue #1334: API key scopes are carried on the validated socket user. */
+  private hasRequiredScopes(
+    user: { scopes?: string[] },
+    required: string[] = this.getRequiredScopesForConnection(),
+  ): boolean {
+    if (required.length === 0) {
+      return true;
+    }
+
+    const granted = user?.scopes ?? [];
+    return required.every((scope) => granted.includes(scope));
+  }
+
   private closeUnauthorized(client: Socket): void {
     this.closeWithCode(client, 4001, 'Unauthorized');
+  }
+
+  /** Issue #1334: closed when the API key lacks the required scopes. */
+  private closeForbidden(client: Socket): void {
+    this.closeWithCode(client, 4003, 'Forbidden');
   }
 
   /** Issue #1386: closed when the account is already at its concurrent-connection cap. */
