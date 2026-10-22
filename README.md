@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1347 -->
 - #1347: Normalize and validate signed transaction XDR input
+
+<!-- handsoff-issue-1348 -->
+- #1348: Persist ledger sequence with transaction confirmation records
