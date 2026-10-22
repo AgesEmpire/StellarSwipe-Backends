@@ -708,3 +708,15 @@ MIT
 
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
+
+<!-- handsoff-issue-1353 -->
+- #1353: Add portfolio rebalance preview endpoint
+
+<!-- handsoff-issue-1354 -->
+- #1354: Add holdings cost basis correction workflow
+
+<!-- handsoff-issue-1355 -->
+- #1355: Separate realized and unrealized portfolio profit calculations
+
+<!-- handsoff-issue-1356 -->
+- #1356: Detect missing portfolio valuation snapshots
