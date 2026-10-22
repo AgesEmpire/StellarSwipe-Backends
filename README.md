@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1354 -->
 - #1354: Add holdings cost basis correction workflow
+
+<!-- handsoff-issue-1355 -->
+- #1355: Separate realized and unrealized portfolio profit calculations
