@@ -709,6 +709,18 @@ MIT
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
 
+<!-- handsoff-issue-1329 -->
+- #1329: Implement MFA recovery code rotation
+
+<!-- handsoff-issue-1330 -->
+- #1330: Add trusted device enrollment and revocation
+
+<!-- handsoff-issue-1331 -->
+- #1331: Add endpoint to list and revoke active sessions
+
+<!-- handsoff-issue-1332 -->
+- #1332: Prevent unsafe OAuth account linking conflicts
+
 <!-- handsoff-issue-1341 -->
 - #1341: Deduplicate Stellar deposits using transaction and operation identity
 
