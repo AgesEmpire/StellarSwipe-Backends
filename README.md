@@ -807,3 +807,12 @@ MIT
 
 <!-- handsoff-issue-1418 -->
 - #1418: Keep uploaded files unavailable until required security scanning passes
+
+<!-- handsoff-issue-1419 -->
+- #1419: Isolate temporary upload paths by tenant and upload operation
+
+<!-- handsoff-issue-1420 -->
+- #1420: Verify uploaded content hashes before making files durable
+
+<!-- handsoff-issue-1421 -->
+- #1421: Neutralize spreadsheet formulas in generated CSV exports

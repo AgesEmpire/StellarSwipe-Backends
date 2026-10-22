@@ -1,8 +1,8 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { promises as fs } from 'fs';
-import { join } from 'path';
-import { randomUUID } from 'crypto';
+import { promises as fs, createReadStream } from 'fs';
+import { join, resolve, sep } from 'path';
+import { randomUUID, createHash } from 'crypto';
 import { MalwareScannerService } from './malware-scanner.service';
 
 export interface UploadedFile {
@@ -13,6 +13,18 @@ export interface UploadedFile {
   path?: string;
 }
 
+export interface StoreOptions {
+  tenantId: string;
+  operation: string;
+  /**
+   * Optional client-provided checksum of the uploaded content.
+   * Format: `<algorithm>:<hex digest>` where algorithm is one of
+   * `sha256` (default) or `sha512`. When omitted, the server still
+   * computes a digest but does not reject the upload.
+   */
+  checksum?: string;
+}
+
 export interface StoredFile {
   id: string;
   originalName: string;
@@ -21,9 +33,13 @@ export interface StoredFile {
   path: string;
   scanStatus: 'clean';
   scannedAt: Date;
+  checksum: string;
 }
 
 const DEFAULT_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+const SUPPORTED_CHECKSUM_ALGORITHMS = new Set<string>(['sha256', 'sha512']);
+const DEFAULT_CHECKSUM_ALGORITHM = 'sha256';
 
 const ALLOWED_MIME_TYPES = new Set<string>([
   'image/jpeg',
@@ -45,6 +61,8 @@ const ALLOWED_EXTENSIONS = new Set<string>([
   '.txt',
   '.csv',
 ]);
+
+const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
 
 interface SignatureRule {
   mimeTypes: string[];
@@ -100,7 +118,7 @@ export class UploadsService {
     this.maxSizeBytes = this.configService.get<number>('UPLOAD_MAX_SIZE_BYTES', DEFAULT_MAX_SIZE_BYTES);
   }
 
-  async store(file: UploadedFile): Promise<StoredFile> {
+  async store(file: UploadedFile, options: StoreOptions): Promise<StoredFile> {
     this.validateSize(file);
     this.validateType(file);
 
@@ -112,12 +130,23 @@ export class UploadsService {
       throw new BadRequestException('Uploaded file failed malware scanning');
     }
 
-    await fs.mkdir(this.uploadDir, { recursive: true });
+    const { algorithm, expected } = this.parseChecksum(options.checksum);
+    const computed = await this.computeDigest(file, algorithm);
+    if (expected && computed !== expected) {
+      if (file.path) {
+        await this.cleanup(file.path);
+      }
+      throw new BadRequestException('Uploaded file checksum does not match the provided value');
+    }
+
     const id = randomUUID();
     const extension = this.extensionOf(file.originalname);
-    const destination = join(this.uploadDir, `${id}${extension}`);
+    const destination = this.buildStoragePath(options, id, extension);
 
     try {
+      await fs.mkdir(join(this.uploadDir, this.safeSegment(options.tenantId), this.safeSegment(options.operation)), {
+        recursive: true,
+      });
       await fs.writeFile(destination, buffer);
     } catch (error) {
       await this.cleanup(destination);
@@ -136,7 +165,66 @@ export class UploadsService {
       path: destination,
       scanStatus: 'clean',
       scannedAt: new Date(),
+      checksum: `${algorithm}:${computed}`,
     };
+  }
+
+  private parseChecksum(checksum?: string): { algorithm: string; expected?: string } {
+    if (checksum === undefined || checksum === null || checksum === '') {
+      return { algorithm: DEFAULT_CHECKSUM_ALGORITHM };
+    }
+    if (typeof checksum !== 'string') {
+      throw new BadRequestException('Checksum must be a string');
+    }
+    const separator = checksum.indexOf(':');
+    const algorithm = separator >= 0 ? checksum.slice(0, separator).toLowerCase() : DEFAULT_CHECKSUM_ALGORITHM;
+    const digest = (separator >= 0 ? checksum.slice(separator + 1) : checksum).toLowerCase();
+    if (!SUPPORTED_CHECKSUM_ALGORITHMS.has(algorithm)) {
+      throw new BadRequestException(
+        `Unsupported checksum algorithm; supported: ${Array.from(SUPPORTED_CHECKSUM_ALGORITHMS).join(', ')}`,
+      );
+    }
+    if (!/^[0-9a-f]+$/.test(digest)) {
+      throw new BadRequestException('Checksum digest must be a hexadecimal string');
+    }
+    return { algorithm, expected: digest };
+  }
+
+  private async computeDigest(file: UploadedFile, algorithm: string): Promise<string> {
+    const hash = createHash(algorithm);
+    if (file.buffer) {
+      hash.update(file.buffer);
+      return hash.digest('hex');
+    }
+    if (file.path) {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
+        const stream = createReadStream(file.path as string);
+        stream.on('data', (chunk) => hash.update(chunk));
+        stream.on('error', rejectPromise);
+        stream.on('end', () => resolvePromise());
+      });
+      return hash.digest('hex');
+    }
+    throw new BadRequestException('Uploaded file has no content');
+  }
+
+  private buildStoragePath(options: StoreOptions, id: string, extension: string): string {
+    const tenantSegment = this.safeSegment(options.tenantId);
+    const operationSegment = this.safeSegment(options.operation);
+    const fileName = `${id}${extension}`;
+    const destination = resolve(this.uploadDir, tenantSegment, operationSegment, fileName);
+    const root = resolve(this.uploadDir);
+    if (destination !== root && !destination.startsWith(root + sep)) {
+      throw new BadRequestException('Resolved upload path escapes the upload directory');
+    }
+    return destination;
+  }
+
+  private safeSegment(value: string): string {
+    if (typeof value !== 'string' || !SAFE_SEGMENT.test(value)) {
+      throw new BadRequestException('Invalid upload scope identifier');
+    }
+    return value;
   }
 
   private validateSize(file: UploadedFile): void {
