@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1346 -->
 - #1346: Validate multisignature signer weights before transaction assembly
+
+<!-- handsoff-issue-1347 -->
+- #1347: Normalize and validate signed transaction XDR input
