@@ -720,3 +720,63 @@ MIT
 
 <!-- handsoff-issue-1348 -->
 - #1348: Persist ledger sequence with transaction confirmation records
+
+<!-- handsoff-issue-1329 -->
+- #1329: Implement MFA recovery code rotation
+
+<!-- handsoff-issue-1330 -->
+- #1330: Add trusted device enrollment and revocation
+
+<!-- handsoff-issue-1331 -->
+- #1331: Add endpoint to list and revoke active sessions
+
+<!-- handsoff-issue-1332 -->
+- #1332: Prevent unsafe OAuth account linking conflicts
+
+<!-- handsoff-issue-1333 -->
+- #1333: Add configurable login anomaly risk signals
+
+<!-- handsoff-issue-1334 -->
+- #1334: Enforce API key scopes on WebSocket connections
+
+<!-- handsoff-issue-1335 -->
+- #1335: Add API key quota counters by scope
+
+<!-- handsoff-issue-1336 -->
+- #1336: Implement account suspension and reactivation workflow
+
+<!-- handsoff-issue-1337 -->
+- #1337: Add user consent withdrawal handling
+
+<!-- handsoff-issue-1338 -->
+- #1338: Implement user data retention policy evaluation service
+
+<!-- handsoff-issue-1339 -->
+- #1339: Handle out-of-order payment webhook events
+
+<!-- handsoff-issue-1340 -->
+- #1340: Reconcile unmatched incoming payment records
+
+<!-- handsoff-issue-1341 -->
+- #1341: Deduplicate Stellar deposits using transaction and operation identity
+
+<!-- handsoff-issue-1342 -->
+- #1342: Add configurable deposit confirmation policy by asset
+
+<!-- handsoff-issue-1343 -->
+- #1343: Prevent trustline removal while dependent balances exist
+
+<!-- handsoff-issue-1344 -->
+- #1344: Enforce sponsored transaction budget limits
+
+<!-- handsoff-issue-1353 -->
+- #1353: Add portfolio rebalance preview endpoint
+
+<!-- handsoff-issue-1354 -->
+- #1354: Add holdings cost basis correction workflow
+
+<!-- handsoff-issue-1355 -->
+- #1355: Separate realized and unrealized portfolio profit calculations
+
+<!-- handsoff-issue-1356 -->
+- #1356: Detect missing portfolio valuation snapshots
