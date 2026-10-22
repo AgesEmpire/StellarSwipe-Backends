@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1339 -->
 - #1339: Handle out-of-order payment webhook events
+
+<!-- handsoff-issue-1340 -->
+- #1340: Reconcile unmatched incoming payment records
