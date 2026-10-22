@@ -708,3 +708,6 @@ MIT
 
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
+
+<!-- handsoff-issue-1349 -->
+- #1349: Reconcile provider follower counts with relationship records
