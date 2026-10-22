@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1330 -->
 - #1330: Add trusted device enrollment and revocation
+
+<!-- handsoff-issue-1331 -->
+- #1331: Add endpoint to list and revoke active sessions
