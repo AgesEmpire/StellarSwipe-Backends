@@ -721,6 +721,18 @@ MIT
 <!-- handsoff-issue-1332 -->
 - #1332: Prevent unsafe OAuth account linking conflicts
 
+<!-- handsoff-issue-1333 -->
+- #1333: Add configurable login anomaly risk signals
+
+<!-- handsoff-issue-1334 -->
+- #1334: Enforce API key scopes on WebSocket connections
+
+<!-- handsoff-issue-1335 -->
+- #1335: Add API key quota counters by scope
+
+<!-- handsoff-issue-1336 -->
+- #1336: Implement account suspension and reactivation workflow
+
 <!-- handsoff-issue-1341 -->
 - #1341: Deduplicate Stellar deposits using transaction and operation identity
 
