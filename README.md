@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1329 -->
 - #1329: Implement MFA recovery code rotation
+
+<!-- handsoff-issue-1330 -->
+- #1330: Add trusted device enrollment and revocation
