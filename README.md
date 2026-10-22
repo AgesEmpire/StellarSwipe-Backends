@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1351 -->
 - #1351: Handle partial fills in copy trading allocations
+
+<!-- handsoff-issue-1352 -->
+- #1352: Add pause and resume controls for copy trading relationships
