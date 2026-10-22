@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1335 -->
 - #1335: Add API key quota counters by scope
+
+<!-- handsoff-issue-1336 -->
+- #1336: Implement account suspension and reactivation workflow
