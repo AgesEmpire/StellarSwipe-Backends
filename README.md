@@ -810,3 +810,6 @@ MIT
 
 <!-- handsoff-issue-1420 -->
 - #1420: Verify uploaded content hashes before making files durable
+
+<!-- handsoff-issue-1421 -->
+- #1421: Neutralize spreadsheet formulas in generated CSV exports
