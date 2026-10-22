@@ -1,8 +1,8 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { promises as fs } from 'fs';
+import { promises as fs, createReadStream } from 'fs';
 import { join, resolve, sep } from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { MalwareScannerService } from './malware-scanner.service';
 
 export interface UploadedFile {
@@ -16,6 +16,13 @@ export interface UploadedFile {
 export interface StoreOptions {
   tenantId: string;
   operation: string;
+  /**
+   * Optional client-provided checksum of the uploaded content.
+   * Format: `<algorithm>:<hex digest>` where algorithm is one of
+   * `sha256` (default) or `sha512`. When omitted, the server still
+   * computes a digest but does not reject the upload.
+   */
+  checksum?: string;
 }
 
 export interface StoredFile {
@@ -26,9 +33,13 @@ export interface StoredFile {
   path: string;
   scanStatus: 'clean';
   scannedAt: Date;
+  checksum: string;
 }
 
 const DEFAULT_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+const SUPPORTED_CHECKSUM_ALGORITHMS = new Set<string>(['sha256', 'sha512']);
+const DEFAULT_CHECKSUM_ALGORITHM = 'sha256';
 
 const ALLOWED_MIME_TYPES = new Set<string>([
   'image/jpeg',
@@ -119,6 +130,15 @@ export class UploadsService {
       throw new BadRequestException('Uploaded file failed malware scanning');
     }
 
+    const { algorithm, expected } = this.parseChecksum(options.checksum);
+    const computed = await this.computeDigest(file, algorithm);
+    if (expected && computed !== expected) {
+      if (file.path) {
+        await this.cleanup(file.path);
+      }
+      throw new BadRequestException('Uploaded file checksum does not match the provided value');
+    }
+
     const id = randomUUID();
     const extension = this.extensionOf(file.originalname);
     const destination = this.buildStoragePath(options, id, extension);
@@ -145,7 +165,47 @@ export class UploadsService {
       path: destination,
       scanStatus: 'clean',
       scannedAt: new Date(),
+      checksum: `${algorithm}:${computed}`,
     };
+  }
+
+  private parseChecksum(checksum?: string): { algorithm: string; expected?: string } {
+    if (checksum === undefined || checksum === null || checksum === '') {
+      return { algorithm: DEFAULT_CHECKSUM_ALGORITHM };
+    }
+    if (typeof checksum !== 'string') {
+      throw new BadRequestException('Checksum must be a string');
+    }
+    const separator = checksum.indexOf(':');
+    const algorithm = separator >= 0 ? checksum.slice(0, separator).toLowerCase() : DEFAULT_CHECKSUM_ALGORITHM;
+    const digest = (separator >= 0 ? checksum.slice(separator + 1) : checksum).toLowerCase();
+    if (!SUPPORTED_CHECKSUM_ALGORITHMS.has(algorithm)) {
+      throw new BadRequestException(
+        `Unsupported checksum algorithm; supported: ${Array.from(SUPPORTED_CHECKSUM_ALGORITHMS).join(', ')}`,
+      );
+    }
+    if (!/^[0-9a-f]+$/.test(digest)) {
+      throw new BadRequestException('Checksum digest must be a hexadecimal string');
+    }
+    return { algorithm, expected: digest };
+  }
+
+  private async computeDigest(file: UploadedFile, algorithm: string): Promise<string> {
+    const hash = createHash(algorithm);
+    if (file.buffer) {
+      hash.update(file.buffer);
+      return hash.digest('hex');
+    }
+    if (file.path) {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
+        const stream = createReadStream(file.path as string);
+        stream.on('data', (chunk) => hash.update(chunk));
+        stream.on('error', rejectPromise);
+        stream.on('end', () => resolvePromise());
+      });
+      return hash.digest('hex');
+    }
+    throw new BadRequestException('Uploaded file has no content');
   }
 
   private buildStoragePath(options: StoreOptions, id: string, extension: string): string {
