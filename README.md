@@ -804,3 +804,6 @@ MIT
 
 <!-- handsoff-issue-1360 -->
 - #1360: Add notification inbox unread count endpoint
+
+<!-- handsoff-issue-1418 -->
+- #1418: Keep uploaded files unavailable until required security scanning passes
