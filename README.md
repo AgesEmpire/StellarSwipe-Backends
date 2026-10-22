@@ -708,3 +708,6 @@ MIT
 
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
+
+<!-- handsoff-issue-1333 -->
+- #1333: Add configurable login anomaly risk signals
