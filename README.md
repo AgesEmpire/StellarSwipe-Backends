@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1345 -->
 - #1345: Serialize Stellar account sequence allocation
+
+<!-- handsoff-issue-1346 -->
+- #1346: Validate multisignature signer weights before transaction assembly
