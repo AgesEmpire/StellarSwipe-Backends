@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1337 -->
 - #1337: Add user consent withdrawal handling
+
+<!-- handsoff-issue-1338 -->
+- #1338: Implement user data retention policy evaluation service
