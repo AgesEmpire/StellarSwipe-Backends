@@ -708,3 +708,6 @@ MIT
 
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
+
+<!-- handsoff-issue-1357 -->
+- #1357: Suppress email notifications after permanent bounce
