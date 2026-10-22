@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1349 -->
 - #1349: Reconcile provider follower counts with relationship records
+
+<!-- handsoff-issue-1350 -->
+- #1350: Enforce per-user copy trading exposure limits
