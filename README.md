@@ -792,3 +792,15 @@ MIT
 
 <!-- handsoff-issue-1356 -->
 - #1356: Detect missing portfolio valuation snapshots
+
+<!-- handsoff-issue-1357 -->
+- #1357: Suppress email notifications after permanent bounce
+
+<!-- handsoff-issue-1358 -->
+- #1358: Enforce SMS opt-out across notification workflows
+
+<!-- handsoff-issue-1359 -->
+- #1359: Apply WebSocket backpressure for slow notification clients
+
+<!-- handsoff-issue-1360 -->
+- #1360: Add notification inbox unread count endpoint
