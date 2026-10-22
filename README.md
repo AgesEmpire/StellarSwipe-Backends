@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1350 -->
 - #1350: Enforce per-user copy trading exposure limits
+
+<!-- handsoff-issue-1351 -->
+- #1351: Handle partial fills in copy trading allocations
