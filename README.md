@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1358 -->
 - #1358: Enforce SMS opt-out across notification workflows
+
+<!-- handsoff-issue-1359 -->
+- #1359: Apply WebSocket backpressure for slow notification clients
