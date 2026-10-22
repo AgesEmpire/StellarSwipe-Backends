@@ -8,6 +8,7 @@ import { StellarConfigService } from '../config/stellar.service';
 import { CacheModule } from '../cache/cache.module';
 import { AccountManagerService } from './account/account-manager.service';
 import { ReserveCalculatorService } from './account/reserve-calculator.service';
+import { SequenceAllocationService } from './account/sequence-allocation.service';
 import { TrustlineService } from './trustlines/trustline.service';
 import { TrustlineController } from './trustlines/trustline.controller';
 import { HorizonStreamController } from './services/horizon-stream.controller';
@@ -55,6 +56,7 @@ import { HttpRetryModule } from '../http/http.module';
   providers: [
     StellarConfigService,
     ReserveCalculatorService,
+    SequenceAllocationService,
     AccountManagerService,
     TrustlineService,
     HorizonStreamService,
@@ -73,6 +75,7 @@ import { HttpRetryModule } from '../http/http.module';
   exports: [
     StellarConfigService,
     AccountManagerService,
+    SequenceAllocationService,
     TrustlineService,
     ReserveCalculatorService,
     HorizonStreamService,

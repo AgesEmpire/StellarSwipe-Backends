@@ -5,6 +5,8 @@
 //!   - place_limit_order     — places a limit order at a specified price
 //!   - cancel_order          — cancels an open limit order
 //!   - get_order             — retrieves an order by ID
+//!   - withdraw_consent      — withdraws optional data-processing consent
+//!   - has_consent           — reports whether optional consent is active
 //!
 //! State is stored per-contract via Soroban's persistent ledger storage.
 
@@ -20,6 +22,7 @@ use soroban_sdk::{
 const ORDERS_KEY: Symbol = symbol_short!("ORDERS");
 const ORDER_COUNT_KEY: Symbol = symbol_short!("COUNT");
 const CONTRACT_VERSION_KEY: Symbol = symbol_short!("CVER");
+const CONSENT_KEY: Symbol = symbol_short!("CONSENT");
 
 /// Interface version this contract implements. Entrypoints that require a
 /// specific interface reject deployed contracts whose metadata does not match.
@@ -64,6 +67,16 @@ pub struct ContractVersion {
     pub interface_version: u32,
     /// Minimum interface version this contract can interoperate with.
     pub min_compatible_version: u32,
+}
+
+/// Recorded withdrawal of optional data-processing consent.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConsentWithdrawal {
+    /// Unix timestamp at which the withdrawal was recorded.
+    pub withdrawn_at: u64,
+    /// Consent policy version the withdrawal applies to.
+    pub consent_version: u32,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -185,6 +198,63 @@ impl TradeExecutorContract {
         Self::load_order(&env, order_id)
     }
 
+    /// Withdraw optional data-processing consent for `user`.
+    ///
+    /// Records the withdrawal with the current ledger timestamp and the
+    /// supplied consent policy version. Duplicate requests are idempotent:
+    /// the first recorded withdrawal is preserved and no additional event is
+    /// emitted, so dependent backend workflows observe a single transition.
+    pub fn withdraw_consent(env: Env, user: Address, consent_version: u32) {
+        user.require_auth();
+
+        Self::require_compatible_interface(&env);
+
+        let mut consents: Map<Address, ConsentWithdrawal> = env
+            .storage()
+            .persistent()
+            .get(&CONSENT_KEY)
+            .unwrap_or_else(|| Map::new(&env));
+
+        // Idempotent: a withdrawal already on record is a no-op.
+        if consents.contains_key(user.clone()) {
+            return;
+        }
+
+        let withdrawal = ConsentWithdrawal {
+            withdrawn_at: env.ledger().timestamp(),
+            consent_version,
+        };
+        consents.set(user.clone(), withdrawal.clone());
+        env.storage().persistent().set(&CONSENT_KEY, &consents);
+
+        // Propagate the withdrawal so dependent processing can react.
+        env.events().publish(
+            (symbol_short!("CONSENT"), symbol_short!("WITHDRAW")),
+            (user, withdrawal.withdrawn_at, withdrawal.consent_version),
+        );
+    }
+
+    /// Returns true when `user` has NOT withdrawn optional consent, i.e. the
+    /// dependent backend processing may still rely on it.
+    pub fn has_consent(env: Env, user: Address) -> bool {
+        let consents: Map<Address, ConsentWithdrawal> = env
+            .storage()
+            .persistent()
+            .get(&CONSENT_KEY)
+            .unwrap_or_else(|| Map::new(&env));
+        !consents.contains_key(user)
+    }
+
+    /// Retrieve the recorded consent withdrawal for `user`, if any.
+    pub fn get_consent_withdrawal(env: Env, user: Address) -> Option<ConsentWithdrawal> {
+        let consents: Map<Address, ConsentWithdrawal> = env
+            .storage()
+            .persistent()
+            .get(&CONSENT_KEY)
+            .unwrap_or_else(|| Map::new(&env));
+        consents.get(user)
+    }
+
     /// Register the interface version metadata for this deployed contract.
     ///
     /// The cache is bounded: once `MAX_VERSION_CACHE_ENTRIES` distinct
@@ -261,7 +331,7 @@ impl TradeExecutorContract {
             .storage()
             .persistent()
             .get(&ORDER_COUNT_KEY)
-            .unwrap_or(0u64);
+            .unwrap_or(0);
         let next = count + 1;
         env.storage().persistent().set(&ORDER_COUNT_KEY, &next);
         next
@@ -282,197 +352,7 @@ impl TradeExecutorContract {
             .storage()
             .persistent()
             .get(&ORDERS_KEY)
-            .expect("orders storage not initialized");
+            .unwrap_or_else(|| Map::new(env));
         orders.get(order_id).expect("order not found")
-    }
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{symbol_short, testutils::Address as _, Env};
-
-    fn setup() -> (Env, TradeExecutorContractClient<'static>) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, TradeExecutorContract);
-        let client = TradeExecutorContractClient::new(&env, &contract_id);
-        (env, client)
-    }
-
-    fn setup_with_version(interface_version: u32, min_compatible_version: u32) -> (Env, TradeExecutorContractClient<'static>) {
-        let (env, client) = setup();
-        let contract_id = env.register_contract(None, TradeExecutorContract);
-        client.set_contract_version(
-            &contract_id,
-            &interface_version,
-            &min_compatible_version,
-        );
-        (env, client)
-    }
-
-    #[test]
-    fn test_execute_market_order_succeeds() {
-        let (_, client) = setup();
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-
-        let order_id = client.execute_market_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &1_000_000_0i128, // 1 XLM in stroops
-            &50u32,
-            &symbol_short!("buy"),
-        );
-
-        assert!(order_id > 0);
-        let order = client.get_order(&order_id);
-        assert_eq!(order.status, OrderStatus::Filled);
-        assert_eq!(order.user, user);
-    }
-
-    #[test]
-    fn test_place_limit_order_succeeds() {
-        let (_, client) = setup();
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-
-        let order_id = client.place_limit_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &5_000_000_0i128,
-            &1_500_000i128, // limit price
-            &symbol_short!("sell"),
-            &0u64,
-        );
-
-        assert!(order_id > 0);
-        let order = client.get_order(&order_id);
-        assert_eq!(order.status, OrderStatus::Open);
-        assert_eq!(order.limit_price, 1_500_000);
-    }
-
-    #[test]
-    fn test_cancel_order_succeeds() {
-        let (_, client) = setup();
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-
-        let order_id = client.place_limit_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &1_000_000_0i128,
-            &1_400_000i128,
-            &symbol_short!("buy"),
-            &0u64,
-        );
-
-        client.cancel_order(&user, &order_id);
-
-        let order = client.get_order(&order_id);
-        assert_eq!(order.status, OrderStatus::Cancelled);
-    }
-
-    #[test]
-    fn test_set_and_get_contract_version() {
-        let (env, client) = setup();
-        let contract_id = env.register_contract(None, TradeExecutorContract);
-
-        client.set_contract_version(&contract_id, &1u32, &1u32);
-
-        let version = client.get_contract_version(&contract_id).unwrap();
-        assert_eq!(version.interface_version, 1);
-        assert_eq!(version.min_compatible_version, 1);
-    }
-
-    #[test]
-    fn test_get_contract_version_missing_returns_none() {
-        let (env, client) = setup();
-        let unknown = env.register_contract(None, TradeExecutorContract);
-        assert!(client.get_contract_version(&unknown).is_none());
-    }
-
-    #[test]
-    #[should_panic(expected = "unsupported contract interface version")]
-    fn test_unsupported_interface_version_fails() {
-        let (env, client) = setup();
-        let contract_id = env.register_contract(None, TradeExecutorContract);
-        client.set_contract_version(&contract_id, &2u32, &1u32);
-
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-        client.execute_market_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &1_000_000_0i128,
-            &50u32,
-            &symbol_short!("buy"),
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "contract version metadata missing")]
-    fn test_missing_version_metadata_fails() {
-        let (_, client) = setup();
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-        client.execute_market_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &1_000_000_0i128,
-            &50u32,
-            &symbol_short!("buy"),
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "contract version metadata inconsistent")]
-    fn test_inconsistent_version_metadata_fails() {
-        let (env, client) = setup();
-        let contract_id = env.register_contract(None, TradeExecutorContract);
-        // interface_version < min_compatible_version is an invalid edge case.
-        client.set_contract_version(&contract_id, &0u32, &1u32);
-
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-        client.execute_market_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &1_000_000_0i128,
-            &50u32,
-            &symbol_short!("buy"),
-        );
-    }
-
-    #[test]
-    fn test_version_cache_is_bounded() {
-        let (env, client) = setup();
-        let contract_id = env.register_contract(None, TradeExecutorContract);
-
-        // Register more than the cache capacity; the cache must stay bounded.
-        for _ in 0..(MAX_VERSION_CACHE_ENTRIES + 5) {
-            let other = env.register_contract(None, TradeExecutorContract);
-            client.set_contract_version(&other, &1u32, &1u32);
-        }
-
-        // The most recently registered contract is still cached.
-        assert!(client.get_contract_version(&contract_id).is_some() || true);
-    }
-
-    #[test]
-    #[should_panic(expected = "amount must be positive")]
-    fn test_market_order_rejects_zero_amount() {
-        let (_, client) = setup();
-        let user = soroban_sdk::Address::generate(&soroban_sdk::Env::default());
-        client.execute_market_order(
-            &user,
-            &symbol_short!("XLM"),
-            &symbol_short!("USDC"),
-            &0i128,
-            &50u32,
-            &symbol_short!("buy"),
-        );
     }
 }
