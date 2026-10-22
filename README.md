@@ -804,3 +804,6 @@ MIT
 
 <!-- handsoff-issue-1360 -->
 - #1360: Add notification inbox unread count endpoint
+
+<!-- handsoff-issue-1419 -->
+- #1419: Isolate temporary upload paths by tenant and upload operation

@@ -1,7 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { randomUUID } from 'crypto';
 import { MalwareScannerService } from './malware-scanner.service';
 
@@ -11,6 +11,11 @@ export interface UploadedFile {
   size: number;
   buffer?: Buffer;
   path?: string;
+}
+
+export interface StoreOptions {
+  tenantId: string;
+  operation: string;
 }
 
 export interface StoredFile {
@@ -45,6 +50,8 @@ const ALLOWED_EXTENSIONS = new Set<string>([
   '.txt',
   '.csv',
 ]);
+
+const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
 
 interface SignatureRule {
   mimeTypes: string[];
@@ -100,7 +107,7 @@ export class UploadsService {
     this.maxSizeBytes = this.configService.get<number>('UPLOAD_MAX_SIZE_BYTES', DEFAULT_MAX_SIZE_BYTES);
   }
 
-  async store(file: UploadedFile): Promise<StoredFile> {
+  async store(file: UploadedFile, options: StoreOptions): Promise<StoredFile> {
     this.validateSize(file);
     this.validateType(file);
 
@@ -112,12 +119,14 @@ export class UploadsService {
       throw new BadRequestException('Uploaded file failed malware scanning');
     }
 
-    await fs.mkdir(this.uploadDir, { recursive: true });
     const id = randomUUID();
     const extension = this.extensionOf(file.originalname);
-    const destination = join(this.uploadDir, `${id}${extension}`);
+    const destination = this.buildStoragePath(options, id, extension);
 
     try {
+      await fs.mkdir(join(this.uploadDir, this.safeSegment(options.tenantId), this.safeSegment(options.operation)), {
+        recursive: true,
+      });
       await fs.writeFile(destination, buffer);
     } catch (error) {
       await this.cleanup(destination);
@@ -137,6 +146,25 @@ export class UploadsService {
       scanStatus: 'clean',
       scannedAt: new Date(),
     };
+  }
+
+  private buildStoragePath(options: StoreOptions, id: string, extension: string): string {
+    const tenantSegment = this.safeSegment(options.tenantId);
+    const operationSegment = this.safeSegment(options.operation);
+    const fileName = `${id}${extension}`;
+    const destination = resolve(this.uploadDir, tenantSegment, operationSegment, fileName);
+    const root = resolve(this.uploadDir);
+    if (destination !== root && !destination.startsWith(root + sep)) {
+      throw new BadRequestException('Resolved upload path escapes the upload directory');
+    }
+    return destination;
+  }
+
+  private safeSegment(value: string): string {
+    if (typeof value !== 'string' || !SAFE_SEGMENT.test(value)) {
+      throw new BadRequestException('Invalid upload scope identifier');
+    }
+    return value;
   }
 
   private validateSize(file: UploadedFile): void {
