@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1334 -->
 - #1334: Enforce API key scopes on WebSocket connections
+
+<!-- handsoff-issue-1335 -->
+- #1335: Add API key quota counters by scope
