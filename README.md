@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1342 -->
 - #1342: Add configurable deposit confirmation policy by asset
+
+<!-- handsoff-issue-1343 -->
+- #1343: Prevent trustline removal while dependent balances exist
