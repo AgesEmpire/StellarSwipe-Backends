@@ -709,6 +709,18 @@ MIT
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
 
+<!-- handsoff-issue-1341 -->
+- #1341: Deduplicate Stellar deposits using transaction and operation identity
+
+<!-- handsoff-issue-1342 -->
+- #1342: Add configurable deposit confirmation policy by asset
+
+<!-- handsoff-issue-1343 -->
+- #1343: Prevent trustline removal while dependent balances exist
+
+<!-- handsoff-issue-1344 -->
+- #1344: Enforce sponsored transaction budget limits
+
 <!-- handsoff-issue-1353 -->
 - #1353: Add portfolio rebalance preview endpoint
 
