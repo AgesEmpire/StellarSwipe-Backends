@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1341 -->
 - #1341: Deduplicate Stellar deposits using transaction and operation identity
+
+<!-- handsoff-issue-1342 -->
+- #1342: Add configurable deposit confirmation policy by asset
