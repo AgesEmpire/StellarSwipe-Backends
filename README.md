@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1353 -->
 - #1353: Add portfolio rebalance preview endpoint
+
+<!-- handsoff-issue-1354 -->
+- #1354: Add holdings cost basis correction workflow
