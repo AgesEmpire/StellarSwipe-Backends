@@ -708,3 +708,6 @@ MIT
 
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
+
+<!-- handsoff-issue-1345 -->
+- #1345: Serialize Stellar account sequence allocation
