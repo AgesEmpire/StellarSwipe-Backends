@@ -709,6 +709,18 @@ MIT
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
 
+<!-- handsoff-issue-1345 -->
+- #1345: Serialize Stellar account sequence allocation
+
+<!-- handsoff-issue-1346 -->
+- #1346: Validate multisignature signer weights before transaction assembly
+
+<!-- handsoff-issue-1347 -->
+- #1347: Normalize and validate signed transaction XDR input
+
+<!-- handsoff-issue-1348 -->
+- #1348: Persist ledger sequence with transaction confirmation records
+
 <!-- handsoff-issue-1329 -->
 - #1329: Implement MFA recovery code rotation
 
