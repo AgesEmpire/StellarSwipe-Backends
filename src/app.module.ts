@@ -130,259 +130,99 @@ import { PrivacyModule } from './privacy/privacy.module';
 import { TracingModule } from './tracing/tracing.module';
 import { SearchModule } from './search/search.module';
 
-export type CriticalConstraintExpectation = {
-  schemaName: string;
-  tableName: string;
-  constraintName?: string;
-  kind: 'unique' | 'foreign';
-  columns: string[];
-  referencedSchema?: string;
-  referencedTable?: string;
-  referencedColumns?: string[];
-  migration: string;
-};
+const REQUIRED_TIMESTAMP_PRECISION = 3;
+const DATABASE_TIME_ZONE_PATTERN = /^[A-Za-z0-9_+/:.-]+$/;
 
-// Keep this list aligned with constraints created by the named migrations.
-// Validation uses PostgreSQL catalogs only; it never reads application rows.
-const CRITICAL_DATABASE_CONSTRAINTS: CriticalConstraintExpectation[] = [
-  {
-    schemaName: 'public',
-    tableName: 'users',
-    constraintName: 'UQ_users_username',
-    kind: 'unique',
-    columns: ['username'],
-    migration: '1737561600000-CreateUserTables',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'sessions',
-    constraintName: 'UQ_sessions_token',
-    kind: 'unique',
-    columns: ['token'],
-    migration: '1737561600000-CreateUserTables',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'sessions',
-    constraintName: 'FK_sessions_user',
-    kind: 'foreign',
-    columns: ['userId'],
-    referencedSchema: 'public',
-    referencedTable: 'users',
-    referencedColumns: ['id'],
-    migration: '1737561600000-CreateUserTables',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'user_preferences',
-    constraintName: 'FK_user_preferences_user',
-    kind: 'foreign',
-    columns: ['userId'],
-    referencedSchema: 'public',
-    referencedTable: 'users',
-    referencedColumns: ['id'],
-    migration: '1737561600000-CreateUserTables',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'refresh_tokens',
-    constraintName: 'UQ_refresh_tokens_hash',
-    kind: 'unique',
-    columns: ['token_hash'],
-    migration: '1750000000000-AddRefreshTokens',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'user_roles',
-    constraintName: 'IDX_user_roles_user_id_role_id',
-    kind: 'unique',
-    columns: ['userId', 'roleId'],
-    migration: '1705000000234-CreateUserRolesTable',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'user_roles',
-    kind: 'foreign',
-    columns: ['roleId'],
-    referencedSchema: 'public',
-    referencedTable: 'roles',
-    referencedColumns: ['id'],
-    migration: '1705000000234-CreateUserRolesTable',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'role_permissions',
-    kind: 'foreign',
-    columns: ['roleId'],
-    referencedSchema: 'public',
-    referencedTable: 'roles',
-    referencedColumns: ['id'],
-    migration: '1705000000234-CreateUserRolesTable',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'role_permissions',
-    kind: 'foreign',
-    columns: ['permissionId'],
-    referencedSchema: 'public',
-    referencedTable: 'permissions',
-    referencedColumns: ['id'],
-    migration: '1705000000234-CreateUserRolesTable',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'two_factor_auth',
-    constraintName: 'UQ_two_factor_auth_user_id',
-    kind: 'unique',
-    columns: ['userId'],
-    migration: '20260825000000-CreateTwoFactorAuthTable',
-  },
-  {
-    schemaName: 'public',
-    tableName: 'webauthn_credentials',
-    constraintName: 'UQ_webauthn_credentials_credential_id',
-    kind: 'unique',
-    columns: ['credentialId'],
-    migration: '1751000000000-CreateWebauthnCredentials',
-  },
-];
-
-export async function validateCriticalDatabaseConstraints(
-  query: (sql: string, parameters?: unknown[]) => Promise<unknown>,
-  expectations: CriticalConstraintExpectation[] = CRITICAL_DATABASE_CONSTRAINTS,
-): Promise<void> {
-  if (expectations.length === 0) {
-    return;
+function getDatabaseSessionOptions(timeZone: string): string {
+  if (!DATABASE_TIME_ZONE_PATTERN.test(timeZone)) {
+    throw new Error(
+      'DATABASE_TIME_ZONE must be a PostgreSQL time zone name without whitespace or quotes.',
+    );
   }
 
-  const result = (await query(
-    `WITH expected AS (
-       SELECT *
-         FROM jsonb_to_recordset($1::jsonb) AS item(
-           schema_name text,
-           table_name text,
-           constraint_name text,
-           kind text,
-           columns text[],
-           referenced_schema text,
-           referenced_table text,
-           referenced_columns text[],
-           migration text
-         )
-     )
-     SELECT e.schema_name AS "schemaName",
-            e.table_name AS "tableName",
-            e.constraint_name AS "constraintName",
-            e.kind, e.columns,
-            e.referenced_schema AS "referencedSchema",
-            e.referenced_table AS "referencedTable",
-            e.referenced_columns AS "referencedColumns",
-            e.migration
-       FROM expected e
-      WHERE NOT EXISTS (
-        SELECT 1
-          FROM pg_constraint c
-          JOIN pg_class tbl ON tbl.oid = c.conrelid
-          JOIN pg_namespace tbl_ns ON tbl_ns.oid = tbl.relnamespace
-          LEFT JOIN pg_class ref_tbl ON ref_tbl.oid = c.confrelid
-          LEFT JOIN pg_namespace ref_ns ON ref_ns.oid = ref_tbl.relnamespace
-         WHERE tbl_ns.nspname = e.schema_name
-           AND tbl.relname = e.table_name
-           AND (e.constraint_name IS NULL OR c.conname = e.constraint_name)
-           AND c.convalidated
-           AND (
-             (e.kind = 'unique' AND c.contype IN ('u', 'p')
-               AND ARRAY(
-                 SELECT a.attname::text
-                   FROM unnest(c.conkey) WITH ORDINALITY key_col(attnum, ord)
-                   JOIN pg_attribute a
-                     ON a.attrelid = tbl.oid AND a.attnum = key_col.attnum
-                  ORDER BY key_col.ord
-               ) = e.columns)
-             OR
-             (e.kind = 'foreign' AND c.contype = 'f'
-               AND ARRAY(
-                 SELECT a.attname::text
-                   FROM unnest(c.conkey) WITH ORDINALITY key_col(attnum, ord)
-                   JOIN pg_attribute a
-                     ON a.attrelid = tbl.oid AND a.attnum = key_col.attnum
-                  ORDER BY key_col.ord
-               ) = e.columns
-               AND ref_ns.nspname = e.referenced_schema
-               AND ref_tbl.relname = e.referenced_table
-               AND ARRAY(
-                 SELECT a.attname::text
-                   FROM unnest(c.confkey) WITH ORDINALITY key_col(attnum, ord)
-                   JOIN pg_attribute a
-                     ON a.attrelid = ref_tbl.oid AND a.attnum = key_col.attnum
-                  ORDER BY key_col.ord
-               ) = e.referenced_columns)
-           )
-      )
-        AND NOT (
-          e.kind = 'unique'
-          AND EXISTS (
-            SELECT 1
-              FROM pg_index i
-              JOIN pg_class tbl ON tbl.oid = i.indrelid
-              JOIN pg_namespace tbl_ns ON tbl_ns.oid = tbl.relnamespace
-              JOIN pg_class idx ON idx.oid = i.indexrelid
-             WHERE tbl_ns.nspname = e.schema_name
-               AND tbl.relname = e.table_name
-               AND (e.constraint_name IS NULL OR idx.relname = e.constraint_name)
-               AND i.indisunique AND i.indisvalid AND i.indislive
-               AND i.indpred IS NULL AND i.indexprs IS NULL
-               AND i.indnkeyatts = cardinality(e.columns)
-               AND ARRAY(
-                 SELECT a.attname::text
-                   FROM unnest(i.indkey) WITH ORDINALITY key_col(attnum, ord)
-                   JOIN pg_attribute a
-                     ON a.attrelid = tbl.oid AND a.attnum = key_col.attnum
-                  WHERE key_col.ord <= i.indnkeyatts
-                  ORDER BY key_col.ord
-               ) = e.columns
-          )
-        )
-      ORDER BY e.schema_name, e.table_name, e.constraint_name`,
-    [JSON.stringify(expectations)],
-  )) as CriticalConstraintExpectation[];
+  return `-c TimeZone=${timeZone}`;
+}
 
-  if (result.length > 0) {
-    const details = result
-      .map((constraint) => {
-        const name = constraint.constraintName
-          ? ` ${constraint.constraintName}`
-          : '';
-        const columns = constraint.columns.join(', ');
-        const reference =
-          constraint.kind === 'foreign'
-            ? ` -> ${constraint.referencedSchema}.${constraint.referencedTable}(${constraint.referencedColumns?.join(', ')})`
-            : '';
-        return `- ${constraint.schemaName}.${constraint.tableName}${name} ` +
-          `(${constraint.kind}: ${columns}${reference}); expected from migration ${constraint.migration}`;
-      })
-      .join('\n');
+export async function validateDatabaseTimestampSettings(
+  query: (sql: string, parameters?: unknown[]) => Promise<unknown>,
+  expectedTimeZone: string,
+): Promise<void> {
+  getDatabaseSessionOptions(expectedTimeZone);
 
+  const result = await query(
+    `SELECT current_setting('TimeZone') AS session_time_zone,
+            COALESCE(
+              array_agg(
+                format('%I.%I.%I', schema_name, table_name, column_name)
+                ORDER BY schema_name, table_name, column_name
+              ) FILTER (WHERE timestamp_precision < $1),
+              ARRAY[]::text[]
+            ) AS low_precision_columns
+       FROM (
+         SELECT n.nspname AS schema_name,
+                c.relname AS table_name,
+                a.attname AS column_name,
+                CASE
+                  WHEN a.atttypmod < 0 THEN 6
+                  ELSE a.atttypmod - 4
+                END AS timestamp_precision
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE a.attnum > 0
+            AND NOT a.attisdropped
+            AND a.atttypid IN ('timestamp'::regtype, 'timestamptz'::regtype)
+            AND c.relkind IN ('r', 'p')
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+       ) timestamp_columns`,
+    [REQUIRED_TIMESTAMP_PRECISION],
+  );
+
+  const [settings] = result as Array<{
+    session_time_zone: string;
+    low_precision_columns: string[];
+  }>;
+  if (!settings) {
     throw new Error(
-      `Database schema is missing ${result.length} critical constraint(s):\n${details}\n` +
-        'Apply the listed migrations before starting the application.',
+      'Database timestamp settings check returned no session settings.',
+    );
+  }
+
+  if (settings.session_time_zone !== expectedTimeZone) {
+    throw new Error(
+      `Database session time zone is ${JSON.stringify(settings.session_time_zone)}; ` +
+        `expected ${JSON.stringify(expectedTimeZone)}. Set DATABASE_TIME_ZONE and verify the database connection settings.`,
+    );
+  }
+
+  const lowPrecisionColumns = settings.low_precision_columns ?? [];
+  if (lowPrecisionColumns.length > 0) {
+    throw new Error(
+      `Database timestamp precision must be at least ${REQUIRED_TIMESTAMP_PRECISION} digits ` +
+        `(milliseconds); update these columns: ${lowPrecisionColumns.join(', ')}.`,
     );
   }
 }
 
 @Injectable()
-class CriticalDatabaseConstraintsCheck implements OnApplicationBootstrap {
+class DatabaseTimestampSettingsCheck implements OnApplicationBootstrap {
   constructor(
+    private readonly configService: ConfigService,
     @InjectDataSource() private readonly primaryDataSource: DataSource,
     @InjectDataSource('replica') private readonly replicaDataSource: DataSource,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    await validateCriticalDatabaseConstraints((sql, parameters) =>
-      this.primaryDataSource.query(sql, parameters),
+    const timeZone =
+      this.configService.get<string>('DATABASE_TIME_ZONE') ?? 'UTC';
+
+    await validateDatabaseTimestampSettings(
+      (sql, parameters) => this.primaryDataSource.query(sql, parameters),
+      timeZone,
     );
-    await validateCriticalDatabaseConstraints((sql, parameters) =>
-      this.replicaDataSource.query(sql, parameters),
+    await validateDatabaseTimestampSettings(
+      (sql, parameters) => this.replicaDataSource.query(sql, parameters),
+      timeZone,
     );
   }
 }
@@ -436,6 +276,9 @@ class CriticalDatabaseConstraintsCheck implements OnApplicationBootstrap {
         ],
         ssl: configService.get<boolean>('database.ssl') ?? false,
         extra: {
+          options: getDatabaseSessionOptions(
+            configService.get<string>('DATABASE_TIME_ZONE') ?? 'UTC',
+          ),
           min: configService.get<number>('connectionPool.min') ?? 10,
           max: configService.get<number>('connectionPool.max') ?? 30,
           idleTimeoutMillis:
@@ -469,6 +312,9 @@ class CriticalDatabaseConstraintsCheck implements OnApplicationBootstrap {
         entities: ['dist/**/*.entity{.ts,.js}'],
         ssl: configService.get<boolean>('database.replica.ssl') ?? false,
         extra: {
+          options: getDatabaseSessionOptions(
+            configService.get<string>('DATABASE_TIME_ZONE') ?? 'UTC',
+          ),
           min: configService.get<number>('connectionPoolReplica.min') ?? 5,
           max: configService.get<number>('connectionPoolReplica.max') ?? 20,
           statement_timeout:
@@ -585,7 +431,7 @@ class CriticalDatabaseConstraintsCheck implements OnApplicationBootstrap {
   ],
   controllers: [],
   providers: [
-    CriticalDatabaseConstraintsCheck,
+    DatabaseTimestampSettingsCheck,
     {
       provide: APP_INTERCEPTOR,
       useClass: RequestIdInterceptor,

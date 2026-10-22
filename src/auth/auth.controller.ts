@@ -1,5 +1,5 @@
 
-import { Controller, Post, Body, HttpCode, HttpStatus, Req, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Param, Body, HttpCode, HttpStatus, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { SessionManagerService } from './session/session-manager.service';
@@ -118,5 +118,62 @@ export class AuthController {
         const userId: string | undefined = (req as any).user?.id;
         if (userId) await this.sessionManager.deleteAllUserSessions(userId);
         return { message: 'All sessions revoked' };
+    }
+
+    @Get('sessions')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @ApiOperation({ summary: 'List the authenticated user\'s active sessions' })
+    @ApiResponse({ status: 200, description: 'Active sessions for the current user' })
+    @ApiResponse({ status: 401, description: 'Authentication required' })
+    async listSessions(@Req() req: Request) {
+        const userId: string | undefined = (req as any).user?.id;
+        const currentSessionId: string | undefined = (req as any).user?.sessionId;
+        const sessions = await this.sessionManager.getUserSessions(userId);
+        return sessions.map((session: any) => ({
+            ...session,
+            current: session.id === currentSessionId,
+        }));
+    }
+
+    @Delete('sessions/:id')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Revoke one of the authenticated user\'s sessions' })
+    @ApiResponse({ status: 200, description: 'Session revoked' })
+    @ApiResponse({ status: 401, description: 'Authentication required' })
+    @ApiResponse({ status: 404, description: 'Session not found for the current user' })
+    async revokeSession(@Param('id') id: string, @Req() req: Request) {
+        const userId: string | undefined = (req as any).user?.id;
+        return this.sessionManager.revokeUserSession(userId, id);
+    }
+
+    @Delete('sessions')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Revoke all of the authenticated user\'s sessions except the current one' })
+    @ApiResponse({ status: 200, description: 'Other sessions revoked' })
+    @ApiResponse({ status: 401, description: 'Authentication required' })
+    async revokeOtherSessions(@Req() req: Request) {
+        const userId: string | undefined = (req as any).user?.id;
+        const currentSessionId: string | undefined = (req as any).user?.sessionId;
+        return this.sessionManager.revokeOtherUserSessions(userId, currentSessionId);
+    }
+
+    @Post('mfa/recovery-codes/regenerate')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @Audit({ action: AuditAction.MFA_RECOVERY_CODES_REGENERATED, resource: 'auth' })
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Regenerate MFA recovery codes, invalidating the previous set' })
+    @ApiResponse({ status: 200, description: 'New recovery codes issued; previous codes are no longer valid. Codes are shown only once.' })
+    @ApiResponse({ status: 401, description: 'Authentication required' })
+    @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60 })
+    async regenerateRecoveryCodes(@Req() req: Request) {
+        const userId: string | undefined = (req as any).user?.id;
+        return this.authService.regenerateRecoveryCodes(userId);
     }
 }

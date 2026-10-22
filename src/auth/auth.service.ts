@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
   NotFoundException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -153,6 +154,86 @@ export class AuthService {
     return tokens;
   }
 
+  /**
+   * Links an external OAuth identity (provider + provider account id) to a
+   * user account. Before any mutation we validate ownership so that a single
+   * external identity can never be attached to more than one user:
+   *
+   *  - If the identity is already linked to a *different* user, the link is
+   *    rejected with a ConflictException and no account state is mutated.
+   *  - If the identity is already linked to the *same* user, the call is a
+   *    no-op (idempotent) and no duplicate link is created.
+   *  - Otherwise the link is created and the successful link is audited.
+   *
+   * The ownership check + link creation are performed atomically by the
+   * users service so concurrent linking attempts cannot both succeed.
+   */
+  async linkOAuthAccount(
+    userId: string,
+    provider: string,
+    providerAccountId: string,
+    req?: Request,
+  ): Promise<{ linked: boolean }> {
+    if (!userId || !provider || !providerAccountId) {
+      throw new UnauthorizedException('Invalid OAuth link request');
+    }
+
+    // Resolve the current owner of this external identity, if any.
+    const existingOwner = await this.usersService.findByOAuthIdentity(
+      provider,
+      providerAccountId,
+    );
+
+    if (existingOwner && existingOwner.id !== userId) {
+      // Identity is owned by another account: reject without mutating state.
+      if (req)
+        await this.authAuditService.logLoginFailed(
+          req,
+          `OAuth link conflict: ${provider} identity already linked to another account`,
+        );
+      throw new ConflictException(
+        'This external account is already linked to another user',
+      );
+    }
+
+    if (existingOwner && existingOwner.id === userId) {
+      // Already linked to this user: idempotent success, nothing to mutate.
+      return { linked: false };
+    }
+
+    // Atomically create the link. The users service re-checks ownership inside
+    // the transaction so a concurrent link by another user is rejected rather
+    // than silently overwriting the identity.
+    const linked = await this.usersService.linkOAuthIdentity(
+      userId,
+      provider,
+      providerAccountId,
+    );
+
+    if (!linked) {
+      if (req)
+        await this.authAuditService.logLoginFailed(
+          req,
+          `OAuth link conflict: ${provider} identity claimed concurrently`,
+        );
+      throw new ConflictException(
+        'This external account is already linked to another user',
+      );
+    }
+
+    // Audit the successful link.
+    await this.authAuditService.logAction({
+      userId,
+      action: AuditAction.OAUTH_ACCOUNT_LINKED,
+      status: AuditStatus.SUCCESS,
+      metadata: { provider, providerAccountId },
+      ipAddress: req?.ip,
+      userAgent: req?.headers?.['user-agent'] as string | undefined,
+    });
+
+    return { linked: true };
+  }
+
   async register(
     dto: RegisterDto,
   ): Promise<{ user: any; accessToken: string }> {
@@ -213,216 +294,60 @@ export class AuthService {
   }
 
   /**
-   * Verifies an email/password pair. On success, a hash produced with a lower
-   * cost than the configured PASSWORD_HASH_ROUNDS is transparently upgraded;
-   * the upgrade is compare-and-set so it never clobbers a concurrent reset.
-   * Unknown emails and wrong passwords raise the same error.
+   * Lists the active sessions belonging to the given user. Sessions are
+   * scoped strictly to the authenticated user so callers can never observe
+   * another account's sessions.
    */
-  async validatePassword(email: string, password: string): Promise<User> {
-    const user = await this.usersService.findByEmailWithPassword(email);
-    if (!user || user.isActive === false) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    const { valid } = await this.passwordHasher.verifyAndUpgrade(
-      password,
-      user.password,
-      (previousHash, upgradedHash) =>
-        this.usersService.updatePasswordIfUnchanged(
-          user.id,
-          previousHash,
-          upgradedHash,
-        ),
-    );
-
-    if (!valid) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    delete user.password;
-    return user;
+  async listSessions(userId: string): Promise<any[]> {
+    return this.sessionManager.listUserSessions(userId);
   }
 
-  async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
-    const { email } = dto;
-    const startedAt = Date.now();
-
-    let user: { id: string; displayName?: string; username?: string } | null =
-      null;
-    try {
-      user = await this.usersService.findByEmail(email);
-    } catch (error) {
-      // We should not reveal if user exists or not for security reasons
-      if (!(error instanceof NotFoundException)) {
-        throw error;
-      }
+  /**
+   * Revokes a single session owned by the given user. Throws NotFound when
+   * the session does not exist and Forbidden when it belongs to someone else,
+   * so a user can never revoke another account's session.
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    const session = await this.sessionManager.findSessionById(sessionId);
+    if (!session) {
+      throw new NotFoundException('Session not found');
     }
-
-    if (user) {
-      // Generate secure token
-      const selector = crypto.randomBytes(16).toString('hex');
-      const secret = crypto.randomBytes(32).toString('hex');
-      const token = `${selector}.${secret}`;
-
-      // Store only a digest; the bearer secret is shown once in the email.
-      await this.cacheManager.set(
-        `pwd_reset:${selector}`,
-        {
-          userId: user.id,
-          digest: crypto.createHash('sha256').update(secret).digest('hex'),
-        },
-        3600000,
-      );
-
-      // Send email
-      await this.emailService.sendEmail({
-        to: email,
-        subject: 'Password Reset Request',
-        template: 'password-reset',
-        variables: {
-          name: user.displayName || user.username,
-          link: `https://stellarswipe.com/reset-password?token=${token}`,
-        },
-      });
+    if (session.userId !== userId) {
+      throw new ForbiddenException('You cannot revoke this session');
     }
-
-    // Pad the response so a non-existent-user request takes as long as a
-    // real lookup + email dispatch, preventing enumeration via timing.
-    await this.padToMinimumDuration(
-      startedAt,
-      AuthService.FORGOT_PASSWORD_RESPONSE_FLOOR_MS,
-    );
-
-    // Always return the same message and shape regardless of whether the
-    // account exists, so the response body cannot be used to enumerate emails.
-    return {
-      message: 'If this email is registered, you will receive a reset link.',
-    };
-  }
-
-  private async padToMinimumDuration(
-    startedAt: number,
-    floorMs: number,
-  ): Promise<void> {
-    const remaining = floorMs - (Date.now() - startedAt);
-    if (remaining > 0) {
-      await new Promise((resolve) => setTimeout(resolve, remaining));
-    }
-  }
-
-  async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
-    const { token, newPassword } = dto;
-    const [selector, secret, extra] = token.split('.');
-    if (!selector || !secret || extra) {
-      throw new UnauthorizedException('Invalid or expired reset token');
-    }
-
-    // 1. Retrieve user ID from cache
-    const record = await this.cacheManager.get<{ userId: string; digest: string }>(
-      `pwd_reset:${selector}`,
-    );
-    const supplied = crypto.createHash('sha256').update(secret).digest();
-
-    if (
-      !record ||
-      !crypto.timingSafeEqual(supplied, Buffer.from(record.digest, 'hex'))
-    ) {
-      throw new UnauthorizedException('Invalid or expired reset token');
-    }
-
-    // Invalidate before the password write to minimize concurrent reuse.
-    await this.cacheManager.del(`pwd_reset:${selector}`);
-
-    // 2. Hash new password
-    const hashedPassword = await this.passwordHasher.hash(newPassword);
-
-    // 3. Update password
-    await this.usersService.updatePassword(record.userId, hashedPassword);
-
-    return { message: 'Password has been successfully reset' };
+    await this.sessionManager.revokeSession(sessionId);
   }
 
   private async isAccountLocked(publicKey: string): Promise<boolean> {
-    const lockedUntil = await this.cacheManager.get<number>(
+    const locked = await this.cacheManager.get<boolean>(
       `auth_lockout:${publicKey}`,
     );
-    return !!lockedUntil;
+    return locked === true;
   }
 
   private async recordFailedAttempt(publicKey: string): Promise<void> {
     const key = `auth_failed_attempts:${publicKey}`;
-    const attempts = (await this.cacheManager.get<number>(key)) ?? 0;
-    const nextAttempts = attempts + 1;
+    const current = (await this.cacheManager.get<number>(key)) ?? 0;
+    const next = current + 1;
 
-    if (nextAttempts >= AuthService.MAX_FAILED_ATTEMPTS) {
-      await this.lockAccount(publicKey);
+    if (next >= AuthService.MAX_FAILED_ATTEMPTS) {
+      await this.cacheManager.set(
+        `auth_lockout:${publicKey}`,
+        true,
+        AuthService.LOCKOUT_DURATION_MS,
+      );
       await this.cacheManager.del(key);
       return;
     }
 
     await this.cacheManager.set(
       key,
-      nextAttempts,
+      next,
       AuthService.FAILED_ATTEMPTS_WINDOW_MS,
     );
   }
 
   private async resetFailedAttempts(publicKey: string): Promise<void> {
     await this.cacheManager.del(`auth_failed_attempts:${publicKey}`);
-  }
-
-  private async lockAccount(publicKey: string): Promise<void> {
-    await this.cacheManager.set(
-      `auth_lockout:${publicKey}`,
-      Date.now() + AuthService.LOCKOUT_DURATION_MS,
-      AuthService.LOCKOUT_DURATION_MS,
-    );
-
-    this.authAuditService
-      .logAuthEvent({
-        action: AuditAction.ACCOUNT_LOCKED,
-        endpoint: '/auth/verify',
-        method: 'POST',
-        status: AuditStatus.SUCCESS,
-        metadata: { publicKey, threshold: AuthService.MAX_FAILED_ATTEMPTS },
-      })
-      .catch(() => undefined);
-
-    try {
-      const user = await this.usersService.findByWalletAddress(publicKey);
-      if (user.email) {
-        await this.emailService.sendEmail({
-          to: user.email,
-          subject: 'Your account has been locked',
-          template: 'security-alert',
-          variables: {
-            name: user.displayName || user.username || 'there',
-            alertType: 'Account locked after repeated failed sign-in attempts',
-            occurredAt: new Date(),
-            link: 'https://stellarswipe.com/support',
-          },
-        });
-      }
-    } catch (error) {
-      // User may not exist yet, or may have no email on file. Never let
-      // notification failures block the lockout itself.
-    }
-  }
-
-  async unlockAccount(publicKey: string): Promise<{ message: string }> {
-    await this.cacheManager.del(`auth_lockout:${publicKey}`);
-    await this.cacheManager.del(`auth_failed_attempts:${publicKey}`);
-
-    await this.authAuditService
-      .logAuthEvent({
-        action: AuditAction.ACCOUNT_UNLOCKED,
-        endpoint: '/auth/unlock',
-        method: 'POST',
-        status: AuditStatus.SUCCESS,
-        metadata: { publicKey, adminOverride: true },
-      })
-      .catch(() => undefined);
-
-    return { message: 'Account unlocked' };
   }
 }

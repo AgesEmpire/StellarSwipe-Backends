@@ -3,7 +3,10 @@ jest.mock('uuid', () => ({ v4: () => 'mock-uuid' }));
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bull';
 import { PermanentError } from '../common/retry';
-import { PriorityQueueWorker } from './priority-queue.worker';
+import {
+  PriorityJobExecutionContext,
+  PriorityQueueWorker,
+} from './priority-queue.worker';
 import {
   CRITICAL_QUEUE,
   LOW_PRIORITY_QUEUE,
@@ -34,8 +37,18 @@ function fakeQueue(name: string) {
   return queue;
 }
 
-function job(type: string): Job<PriorityJobData> {
-  return { id: type, data: { type } } as unknown as Job<PriorityJobData>;
+function job(
+  type: string,
+  id = type,
+  queueName: string = CRITICAL_QUEUE,
+): Job<PriorityJobData> {
+  return {
+    id,
+    data: { type },
+    queue: { name: queueName },
+    attemptsMade: 0,
+    opts: { attempts: 1 },
+  } as unknown as Job<PriorityJobData>;
 }
 
 function deferred() {
@@ -45,12 +58,50 @@ function deferred() {
 }
 
 function buildWorker(limits: Partial<Record<QueueCategory, number>> = {}) {
+  const lifecycle = new Map<string, string>();
+  const key = (queue: string, id: string) => `${queue}:${id}`;
+  const priorityQueueServiceMock = {
+    beginProcessing: jest.fn(async (queue: string, id: string) => {
+      const status = lifecycle.get(key(queue, id)) ?? 'waiting';
+      if (status === 'waiting') {
+        lifecycle.set(key(queue, id), 'running');
+        return 'running';
+      }
+      return status;
+    }),
+    getJobLifecycle: jest.fn(
+      async (queue: string, id: string) =>
+        lifecycle.get(key(queue, id)) ?? 'running',
+    ),
+    completeProcessing: jest.fn(async (queue: string, id: string) => {
+      const status = lifecycle.get(key(queue, id));
+      lifecycle.set(
+        key(queue, id),
+        status === 'cancellation_requested' ? 'cancelled' : 'completed',
+      );
+      return lifecycle.get(key(queue, id));
+    }),
+    cancelRequestedProcessing: jest.fn(async (queue: string, id: string) => {
+      lifecycle.set(key(queue, id), 'cancelled');
+      return 'cancelled';
+    }),
+    prepareRetry: jest.fn(async (queue: string, id: string) => {
+      const status = lifecycle.get(key(queue, id));
+      if (status === 'cancellation_requested') return status;
+      lifecycle.set(key(queue, id), 'waiting');
+      return 'waiting';
+    }),
+    failProcessing: jest.fn(async (queue: string, id: string) => {
+      lifecycle.set(key(queue, id), 'failed');
+    }),
+  };
   const queues = {
     [CRITICAL_QUEUE]: fakeQueue(CRITICAL_QUEUE),
     [PRIORITY_QUEUE]: fakeQueue(PRIORITY_QUEUE),
     [LOW_PRIORITY_QUEUE]: fakeQueue(LOW_PRIORITY_QUEUE),
   };
   const priorityQueueService = {
+    ...priorityQueueServiceMock,
     getCriticalQueue: () => queues[CRITICAL_QUEUE],
     getQueue: () => queues[PRIORITY_QUEUE],
     getLowPriorityQueue: () => queues[LOW_PRIORITY_QUEUE],
@@ -62,7 +113,25 @@ function buildWorker(limits: Partial<Record<QueueCategory, number>> = {}) {
 
   const worker = new PriorityQueueWorker(priorityQueueService, config);
   jest.spyOn((worker as any).logger, 'log').mockImplementation(() => {});
-  return { worker, queues };
+  return {
+    worker,
+    queues,
+    lifecycle,
+    setLifecycle: (queue: string, id: string, status: string) =>
+      lifecycle.set(key(queue, id), status),
+    requestCancellation: (queue: string, id: string) => {
+      const current = lifecycle.get(key(queue, id));
+      if (
+        current === 'completed' ||
+        current === 'failed' ||
+        current === 'cancelled'
+      ) {
+        return current;
+      }
+      lifecycle.set(key(queue, id), 'cancellation_requested');
+      return 'cancellation_requested';
+    },
+  };
 }
 
 describe('queueConcurrencyConfig', () => {
@@ -142,7 +211,10 @@ describe('PriorityQueueWorker', () => {
     await expect(queues[CRITICAL_QUEUE].processor!(input)).resolves.toBe(
       'done',
     );
-    expect(handler).toHaveBeenCalledWith(input);
+    expect(handler).toHaveBeenCalledWith(
+      input,
+      expect.objectContaining({ checkpoint: expect.any(Function) }),
+    );
   });
 
   it('fails a job with no registered handler permanently', async () => {
@@ -211,5 +283,69 @@ describe('PriorityQueueWorker', () => {
 
     gate.resolve();
     await background;
+  });
+
+  it('stops at a safe checkpoint and records cancellation without doing later writes', async () => {
+    const { worker, queues, lifecycle, setLifecycle } = buildWorker();
+    const gate = deferred();
+    const writes: string[] = [];
+    const handler = jest.fn(
+      async (_job: Job<PriorityJobData>, context: PriorityJobExecutionContext) => {
+        writes.push('committed-unit');
+        await gate.promise;
+        await context.checkpoint();
+        writes.push('next-unit');
+      },
+    );
+    worker.registerHandler('cancellable', handler);
+    worker.onModuleInit();
+    const input = job('cancellable');
+
+    const processing = queues[CRITICAL_QUEUE].processor!(input);
+    await Promise.resolve();
+    await Promise.resolve();
+    setLifecycle(CRITICAL_QUEUE, String(input.id), 'cancellation_requested');
+    gate.resolve();
+
+    await expect(processing).resolves.toEqual({ status: 'cancelled' });
+    expect(writes).toEqual(['committed-unit']);
+    expect(
+      lifecycle.get(`${CRITICAL_QUEUE}:${String(input.id)}`),
+    ).toBe('cancelled');
+  });
+
+  it('does not change a completed job when cancellation arrives afterward', async () => {
+    const { worker, queues, lifecycle, requestCancellation } = buildWorker();
+    worker.registerHandler('fast', jest.fn().mockResolvedValue('done'));
+    worker.onModuleInit();
+    const input = job('fast');
+
+    await expect(queues[CRITICAL_QUEUE].processor!(input)).resolves.toBe(
+      'done',
+    );
+    expect(
+      requestCancellation(CRITICAL_QUEUE, String(input.id)),
+    ).toBe('completed');
+    expect(
+      lifecycle.get(`${CRITICAL_QUEUE}:${String(input.id)}`),
+    ).toBe('completed');
+  });
+
+  it('treats a cancellation requested before dispatch as cancelled', async () => {
+    const { worker, queues, setLifecycle } = buildWorker();
+    const handler = jest.fn();
+    worker.registerHandler('not-started', handler);
+    worker.onModuleInit();
+    const input = job('not-started');
+    setLifecycle(
+      CRITICAL_QUEUE,
+      String(input.id),
+      'cancellation_requested',
+    );
+
+    await expect(queues[CRITICAL_QUEUE].processor!(input)).resolves.toEqual({
+      status: 'cancelled',
+    });
+    expect(handler).not.toHaveBeenCalled();
   });
 });

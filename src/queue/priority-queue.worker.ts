@@ -18,7 +18,26 @@ import {
 
 export type PriorityJobHandler = (
   job: Job<PriorityJobData>,
+  context: PriorityJobExecutionContext,
 ) => Promise<unknown>;
+
+/**
+ * Cooperative worker cancellation. Handlers should checkpoint before starting
+ * a new unit of work and after each committed transaction or other safe
+ * boundary; never checkpoint between writes in a partially committed unit.
+ */
+export interface PriorityJobExecutionContext {
+  checkpoint(): Promise<void>;
+}
+
+const CANCELLED_JOB_RESULT = { status: 'cancelled' } as const;
+
+export class JobCancellationRequestedError extends Error {
+  constructor(jobId: string | number) {
+    super(`Cancellation requested for job "${jobId}".`);
+    this.name = 'JobCancellationRequestedError';
+  }
+}
 
 /**
  * #1228 — Consumes the priority queues with a separate concurrency ceiling
@@ -95,13 +114,79 @@ export class PriorityQueueWorker implements OnModuleInit {
     return Array.from(this.pools.values()).map((pool) => pool.getMetrics());
   }
 
-  private dispatch(job: Job<PriorityJobData>): Promise<unknown> {
-    const handler = this.handlers.get(job.data?.type);
-    if (!handler) {
+  private async dispatch(job: Job<PriorityJobData>): Promise<unknown> {
+    const queueName = job.queue.name;
+    const jobId = String(job.id);
+    const state = await this.priorityQueueService.beginProcessing(
+      queueName,
+      jobId,
+    );
+    if (state === 'cancelled' || state === 'cancellation_requested') {
+      await this.priorityQueueService.cancelRequestedProcessing(
+        queueName,
+        jobId,
+      );
+      return CANCELLED_JOB_RESULT;
+    }
+    if (state === 'completed' || state === 'failed') {
       throw new PermanentError(
-        `No handler registered for priority job type "${job.data?.type}"`,
+        `Job "${jobId}" cannot run from terminal state "${state}".`,
       );
     }
-    return handler(job);
+
+    const context: PriorityJobExecutionContext = {
+      checkpoint: async () => {
+        const current = await this.priorityQueueService.getJobLifecycle(
+          queueName,
+          jobId,
+        );
+        if (current === 'cancellation_requested') {
+          await this.priorityQueueService.cancelRequestedProcessing(
+            queueName,
+            jobId,
+          );
+          throw new JobCancellationRequestedError(jobId);
+        }
+      },
+    };
+
+    try {
+      await context.checkpoint();
+      const handler = this.handlers.get(job.data?.type);
+      if (!handler) {
+        throw new PermanentError(
+          `No handler registered for priority job type "${job.data?.type}"`,
+        );
+      }
+      const result = await handler(job, context);
+      const finalState = await this.priorityQueueService.completeProcessing(
+        queueName,
+        jobId,
+      );
+      return finalState === 'cancelled' ? CANCELLED_JOB_RESULT : result;
+    } catch (error) {
+      if (error instanceof JobCancellationRequestedError) {
+        await this.priorityQueueService.cancelRequestedProcessing(
+          queueName,
+          jobId,
+        );
+        return CANCELLED_JOB_RESULT;
+      }
+
+      const nextAttempt = job.attemptsMade + 1;
+      const maxAttempts = job.opts?.attempts ?? 1;
+      if (nextAttempt < maxAttempts) {
+        const retryState = await this.priorityQueueService.prepareRetry(
+          queueName,
+          jobId,
+        );
+        if (retryState === 'cancelled') {
+          return CANCELLED_JOB_RESULT;
+        }
+      } else {
+        await this.priorityQueueService.failProcessing(queueName, jobId);
+      }
+      throw error;
+    }
   }
 }

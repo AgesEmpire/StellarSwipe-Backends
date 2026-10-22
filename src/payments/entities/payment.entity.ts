@@ -8,6 +8,7 @@ import {
   JoinColumn,
   OneToMany,
   Index,
+  VersionColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Transaction } from './transaction.entity';
@@ -78,6 +79,29 @@ export class Payment {
 
   @Column({ name: 'receipt_url', nullable: true })
   receiptUrl?: string;
+
+  /**
+   * Timestamp of the most recently applied provider webhook event.
+   * Used to reject out-of-order (stale) events that would otherwise
+   * regress payment state.
+   */
+  @Column({ name: 'last_event_at', type: 'timestamp', nullable: true })
+  lastEventAt?: Date;
+
+  /**
+   * Identifier of the most recently applied provider webhook event.
+   * Provides idempotency for duplicate deliveries.
+   */
+  @Column({ name: 'last_event_id', length: 255, nullable: true })
+  lastEventId?: string;
+
+  /**
+   * Optimistic-lock version incremented on every persisted update.
+   * Combined with lastEventAt, prevents older events from overwriting
+   * newer state under concurrent webhook processing.
+   */
+  @VersionColumn()
+  version!: number;
 
   @CreateDateColumn()
   createdAt!: Date;
