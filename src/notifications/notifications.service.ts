@@ -122,6 +122,17 @@ export interface DeadLetterRetryResult {
   skipped: string[];
 }
 
+/**
+ * Persisted record of a user's SMS opt-out state change. Used to enforce
+ * opt-out centrally across every SMS dispatch path.
+ */
+export interface SmsOptOutEvent {
+  userId: string;
+  optedOut: boolean;
+  reason?: string;
+  occurredAt: Date;
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -133,12 +144,70 @@ export class NotificationsService {
    */
   private readonly dispatchedProfileChanges = new Set<string>();
 
+  /**
+   * Current SMS opt-out state per user. Consulted by every SMS dispatch path
+   * (queued and immediate) so no message is sent after a user opts out.
+   */
+  private readonly smsOptOutState = new Map<string, boolean>();
+
+  /**
+   * Persisted SMS opt-out events, in occurrence order.
+   */
+  private readonly smsOptOutEvents: SmsOptOutEvent[] = [];
+
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
     @InjectQueue(NOTIFICATION_QUEUE)
     private readonly notificationQueue: Queue,
   ) {}
+
+  /**
+   * Record and persist an SMS opt-out (or opt-in) event for a user. The
+   * latest event determines the current preference consulted by all SMS
+   * dispatch paths.
+   *
+   * @param userId The user whose SMS preference changed
+   * @param optedOut Whether the user has opted out of SMS
+   * @param reason Optional reason for the change
+   * @returns The persisted opt-out event
+   */
+  async recordSmsOptOut(
+    userId: string,
+    optedOut: boolean,
+    reason?: string,
+  ): Promise<SmsOptOutEvent> {
+    const event: SmsOptOutEvent = {
+      userId,
+      optedOut,
+      reason,
+      occurredAt: new Date(),
+    };
+
+    this.smsOptOutEvents.push(event);
+    this.smsOptOutState.set(userId, optedOut);
+
+    this.logger.log(
+      `Persisted SMS ${optedOut ? 'opt-out' : 'opt-in'} event for user ${userId}`,
+    );
+
+    return event;
+  }
+
+  /**
+   * Whether the user is currently opted out of SMS. Defaults to opted-in
+   * when no preference has been recorded.
+   */
+  isSmsOptedOut(userId: string): boolean {
+    return this.smsOptOutState.get(userId) === true;
+  }
+
+  /**
+   * Return the persisted SMS opt-out events for a user (most recent last).
+   */
+  getSmsOptOutEvents(userId: string): SmsOptOutEvent[] {
+    return this.smsOptOutEvents.filter((event) => event.userId === userId);
+  }
 
   /**
    * Create and queue a notification for delivery
@@ -159,6 +228,14 @@ export class NotificationsService {
     metadata: Record<string, any> = {},
   ): Promise<Notification> {
     this.logger.log(`Creating notification for user ${userId}`);
+
+    // Enforce SMS opt-out centrally before any queued SMS dispatch.
+    if (channel === NotificationChannel.SMS && this.isSmsOptedOut(userId)) {
+      this.logger.warn(
+        `Skipping queued SMS notification for opted-out user ${userId}`,
+      );
+      throw new ForbiddenException('User has opted out of SMS notifications');
+    }
 
     // Create notification record
     const notification = this.notificationRepository.create({
@@ -187,6 +264,46 @@ export class NotificationsService {
     });
 
     this.logger.log(`Queued notification ${savedNotification.id} for processing`);
+    return savedNotification;
+  }
+
+  /**
+   * Immediately dispatch an SMS notification, consulting the current opt-out
+   * preference before sending.
+   *
+   * @param userId The user ID to send the SMS to
+   * @param type The type of notification
+   * @param title The notification title
+   * @param message The notification message
+   * @param metadata Additional data to include with the notification
+   * @returns The created notification record
+   */
+  async sendSmsNotification(
+    userId: string,
+    type: NotificationType,
+    title: string,
+    message: string,
+    metadata: Record<string, any> = {},
+  ): Promise<Notification> {
+    if (this.isSmsOptedOut(userId)) {
+      this.logger.warn(
+        `Skipping immediate SMS notification for opted-out user ${userId}`,
+      );
+      throw new ForbiddenException('User has opted out of SMS notifications');
+    }
+
+    const notification = this.notificationRepository.create({
+      userId,
+      type,
+      title,
+      message,
+      channel: NotificationChannel.SMS,
+      metadata,
+      status: 'PENDING',
+    });
+
+    const savedNotification = await this.notificationRepository.save(notification);
+    this.logger.log(`Dispatched immediate SMS notification ${savedNotification.id}`);
     return savedNotification;
   }
 
@@ -272,231 +389,44 @@ export class NotificationsService {
       return result;
     }
 
-    const title = 'Provider profile updated';
-    const message = this.buildProviderProfileChangeMessage(freshChanges);
-    const metadata = {
-      providerId,
-      changes: freshChanges.map((change) => ({
-        field: change.field,
-        previousValue: change.previousValue,
-        newValue: change.newValue,
-      })),
-    };
-
     for (const subscriber of optedInSubscribers) {
+      // Enforce SMS opt-out centrally for provider profile dispatches too.
+      if (channel === NotificationChannel.SMS && this.isSmsOptedOut(subscriber.userId)) {
+        result.skipped.push(subscriber.userId);
+        continue;
+      }
+
       try {
         await this.createAndQueueNotification(
           subscriber.userId,
           NotificationType.PROVIDER_PROFILE_CHANGED,
-          title,
-          message,
+          `Provider ${providerId} updated`,
+          `Provider ${providerId} changed ${freshChanges.map((c) => c.field).join(', ')}`,
           channel,
-          metadata,
+          { providerId, changes: freshChanges },
         );
         result.notified.push(subscriber.userId);
       } catch (error) {
-        // Delivery failures are recorded so they can be retried; the queue
-        // retry/backoff abstraction also handles transient provider errors.
-        result.failed.push(subscriber.userId);
         this.logger.error(
-          `Failed to notify subscriber ${subscriber.userId} of provider ${providerId} profile change: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to notify subscriber ${subscriber.userId} of provider ${providerId} changes`,
+          error instanceof Error ? error.stack : undefined,
         );
+        result.failed.push(subscriber.userId);
       }
     }
 
-    // Only mark changes as dispatched once at least one subscriber was
-    // successfully notified, so a total failure remains recoverable.
-    if (result.notified.length > 0) {
-      for (const change of freshChanges) {
-        this.dispatchedProfileChanges.add(this.profileChangeKey(providerId, change));
-      }
+    for (const change of freshChanges) {
+      this.dispatchedProfileChanges.add(this.profileChangeKey(providerId, change));
     }
 
     return result;
   }
 
-  /**
-   * Build a stable dedupe key for a provider profile change event.
-   */
   private profileChangeKey(providerId: string, change: ProviderProfileChange): string {
-    return `${providerId}:${change.field}:${JSON.stringify(change.newValue ?? null)}`;
+    return `${providerId}:${change.field}:${JSON.stringify(change.newValue)}`;
   }
 
-  /**
-   * Build a human-readable message describing the detected changes.
-   */
-  private buildProviderProfileChangeMessage(changes: ProviderProfileChange[]): string {
-    const fields = changes.map((change) => change.field).join(', ');
-    return `Provider profile fields updated: ${fields}`;
-  }
-
-  /**
-   * Structural equality check used to detect meaningful field changes.
-   */
   private valuesEqual(a: unknown, b: unknown): boolean {
-    if (a === b) {
-      return true;
-    }
-    if (a === null || b === null || a === undefined || b === undefined) {
-      return false;
-    }
-    if (typeof a === 'object' && typeof b === 'object') {
-      try {
-        return JSON.stringify(a) === JSON.stringify(b);
-      } catch {
-        return false;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Deliver a high-risk security event through the configured email and SMS
-   * channels. User preferences and disabled channels are respected, and the
-   * message content is redacted before it is queued for delivery.
-   *
-   * @param userId The user ID the security event belongs to
-   * @param type The security event type
-   * @param title The alert title
-   * @param message The alert message
-   * @param metadata Additional event data (sensitive keys are redacted)
-   * @param preferences The user's notification channel preferences
-   * @returns The created notification records, one per eligible channel
-   */
-  async deliverSecurityAlert(
-    userId: string,
-    type: NotificationType,
-    title: string,
-    message: string,
-    metadata: Record<string, any> = {},
-    preferences: { email?: boolean; sms?: boolean } = {},
-  ): Promise<Notification[]> {
-    if (!HIGH_RISK_SECURITY_EVENTS.has(type)) {
-      this.logger.debug(`Skipping non-high-risk security event ${type} for user ${userId}`);
-      return [];
-    }
-
-    const channels = this.resolveSecurityAlertChannels(preferences);
-    if (channels.length === 0) {
-      this.logger.warn(`No enabled channels for security alert ${type} for user ${userId}`);
-      return [];
-    }
-
-    const redactedMetadata = this.redactMetadata(metadata);
-    const redactedMessage = this.redactMessage(message);
-
-    const delivered: Notification[] = [];
-    for (const channel of channels) {
-      try {
-        const notification = await this.createAndQueueNotification(
-          userId,
-          type,
-          title,
-          redactedMessage,
-          channel,
-          redactedMetadata,
-        );
-        delivered.push(notification);
-      } catch (error) {
-        // Provider/queue failures are handled through the existing queue
-        // retry/backoff abstraction; log and continue with remaining channels.
-        this.logger.error(
-          `Failed to queue security alert ${type} on ${channel} for user ${userId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
-    return delivered;
-  }
-
-  /**
-   * Resolve the configured channels for a security alert, honouring user
-   * preferences and skipping disabled channels.
-   */
-  private resolveSecurityAlertChannels(
-    preferences: { email?: boolean; sms?: boolean },
-  ): NotificationChannel[] {
-    const channels: NotificationChannel[] = [];
-
-    if (preferences.email !== false) {
-      channels.push(NotificationChannel.EMAIL);
-    }
-    if (preferences.sms !== false) {
-      channels.push(NotificationChannel.SMS);
-    }
-
-    return channels;
-  }
-
-  /**
-   * Redact sensitive values from alert metadata before delivery.
-   */
-  private redactMetadata(metadata: Record<string, any>): Record<string, any> {
-    const redacted: Record<string, any> = {};
-
-    for (const [key, value] of Object.entries(metadata ?? {})) {
-      if (SENSITIVE_METADATA_KEYS.has(key)) {
-        redacted[key] = REDACTED;
-      } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-        redacted[key] = this.redactMetadata(value as Record<string, any>);
-      } else {
-        redacted[key] = value;
-      }
-    }
-
-    return redacted;
-  }
-
-  /**
-   * Redact sensitive values that may have been interpolated into the message.
-   */
-  private redactMessage(message: string): string {
-    if (!message) {
-      return message;
-    }
-
-    return message.replace(
-      /(password|token|secret|api[_-]?key|authorization)\s*[:=]\s*\S+/gi,
-      `$1: ${REDACTED}`,
-    );
-  }
-
-  /**
-   * Get notification by ID
-   */
-  async findById(id: string): Promise<Notification | null> {
-    return this.notificationRepository.findOne({ where: { id } });
-  }
-
-  /**
-   * Get notifications for a user
-   */
-  async findByUserId(userId: string, limit = 50, offset = 0): Promise<Notification[]> {
-    return this.notificationRepository.find({
-      where: { userId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: offset,
-    });
-  }
-
-  /**
-   * Mark notification as sent (called internally by processor)
-   */
-  async markAsSent(id: string): Promise<void> {
-    await this.notificationRepository.update(id, {
-      status: 'SENT',
-      sentAt: new Date(),
-    });
-  }
-
-  /**
-   * Mark notification as failed (called internally by processor)
-   */
-  async markAsFailed(id: string, errorMessage: string): Promise<void> {
-    await this.notificationRepository.update(id, {
-      status: 'FAILED',
-      errorMessage,
-    });
+    return JSON.stringify(a) === JSON.stringify(b);
   }
 }

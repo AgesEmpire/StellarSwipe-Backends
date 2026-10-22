@@ -711,3 +711,6 @@ MIT
 
 <!-- handsoff-issue-1357 -->
 - #1357: Suppress email notifications after permanent bounce
+
+<!-- handsoff-issue-1358 -->
+- #1358: Enforce SMS opt-out across notification workflows
