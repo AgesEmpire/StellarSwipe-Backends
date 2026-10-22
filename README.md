@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1343 -->
 - #1343: Prevent trustline removal while dependent balances exist
+
+<!-- handsoff-issue-1344 -->
+- #1344: Enforce sponsored transaction budget limits
