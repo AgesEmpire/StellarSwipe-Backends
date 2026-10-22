@@ -769,6 +769,18 @@ MIT
 <!-- handsoff-issue-1344 -->
 - #1344: Enforce sponsored transaction budget limits
 
+<!-- handsoff-issue-1349 -->
+- #1349: Reconcile provider follower counts with relationship records
+
+<!-- handsoff-issue-1350 -->
+- #1350: Enforce per-user copy trading exposure limits
+
+<!-- handsoff-issue-1351 -->
+- #1351: Handle partial fills in copy trading allocations
+
+<!-- handsoff-issue-1352 -->
+- #1352: Add pause and resume controls for copy trading relationships
+
 <!-- handsoff-issue-1353 -->
 - #1353: Add portfolio rebalance preview endpoint
 
