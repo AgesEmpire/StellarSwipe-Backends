@@ -12,6 +12,8 @@ import { PositionArchiveService } from './services/position-archive.service';
 import { PositionArchiveJob } from './jobs/position-archive.job';
 import { PortfolioSnapshotService } from './services/portfolio-snapshot.service';
 import { PortfolioSnapshotJob } from './jobs/portfolio-snapshot.job';
+import { PortfolioSnapshotGapService } from './services/portfolio-snapshot-gap.service';
+import { PortfolioSnapshotGapJob } from './jobs/portfolio-snapshot-gap.job';
 import { PnlSnapshotJob } from './jobs/pnl-snapshot.job';
 import { PnlSnapshotService } from './services/pnl-snapshot.service';
 import { PnlSnapshotAdminController } from './pnl-snapshot-admin.controller';
@@ -59,11 +61,13 @@ import { RateLimitService } from '../common/services/rate-limit.service';
     PositionArchiveJob,
     PortfolioSnapshotService,
     PortfolioSnapshotJob,
+    PortfolioSnapshotGapService,
+    PortfolioSnapshotGapJob,
     PnlSnapshotService,
     PnlSnapshotJob,
     PortfolioLifecycleService,
     PortfolioLifecycleListener,
   ],
-  exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService, PositionBalanceUpdaterService, PositionArchiveService, PortfolioSnapshotService, PortfolioLifecycleService],
+  exports: [PortfolioService, PnlCalculatorService, PerformanceTrackerService, ExportService, PositionBalanceUpdaterService, PositionArchiveService, PortfolioSnapshotService, PortfolioSnapshotGapService, PortfolioLifecycleService],
 })
 export class PortfolioModule {}

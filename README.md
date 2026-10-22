@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1355 -->
 - #1355: Separate realized and unrealized portfolio profit calculations
+
+<!-- handsoff-issue-1356 -->
+- #1356: Detect missing portfolio valuation snapshots
