@@ -119,4 +119,19 @@ export class AuthController {
         if (userId) await this.sessionManager.deleteAllUserSessions(userId);
         return { message: 'All sessions revoked' };
     }
+
+    @Post('mfa/recovery-codes/regenerate')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @Audit({ action: AuditAction.MFA_RECOVERY_CODES_REGENERATED, resource: 'auth' })
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Regenerate MFA recovery codes, invalidating the previous set' })
+    @ApiResponse({ status: 200, description: 'New recovery codes issued; previous codes are no longer valid. Codes are shown only once.' })
+    @ApiResponse({ status: 401, description: 'Authentication required' })
+    @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
+    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60 })
+    async regenerateRecoveryCodes(@Req() req: Request) {
+        const userId: string | undefined = (req as any).user?.id;
+        return this.authService.regenerateRecoveryCodes(userId);
+    }
 }

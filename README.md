@@ -708,3 +708,6 @@ MIT
 
 <!-- handsoff-issue-1292 -->
 - #1292: Add signal expiration policy validation
+
+<!-- handsoff-issue-1329 -->
+- #1329: Implement MFA recovery code rotation
