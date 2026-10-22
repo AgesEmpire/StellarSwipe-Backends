@@ -717,3 +717,6 @@ MIT
 
 <!-- handsoff-issue-1331 -->
 - #1331: Add endpoint to list and revoke active sessions
+
+<!-- handsoff-issue-1332 -->
+- #1332: Prevent unsafe OAuth account linking conflicts
