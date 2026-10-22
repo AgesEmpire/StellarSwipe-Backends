@@ -714,3 +714,6 @@ MIT
 
 <!-- handsoff-issue-1338 -->
 - #1338: Implement user data retention policy evaluation service
+
+<!-- handsoff-issue-1339 -->
+- #1339: Handle out-of-order payment webhook events
