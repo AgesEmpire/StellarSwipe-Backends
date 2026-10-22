@@ -804,3 +804,12 @@ MIT
 
 <!-- handsoff-issue-1360 -->
 - #1360: Add notification inbox unread count endpoint
+
+<!-- handsoff-issue-1419 -->
+- #1419: Isolate temporary upload paths by tenant and upload operation
+
+<!-- handsoff-issue-1420 -->
+- #1420: Verify uploaded content hashes before making files durable
+
+<!-- handsoff-issue-1421 -->
+- #1421: Neutralize spreadsheet formulas in generated CSV exports
