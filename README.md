@@ -822,3 +822,6 @@ MIT
 
 <!-- handsoff-issue-1492 -->
 - #1492: Add an SLA policy simulation endpoint
+
+<!-- handsoff-issue-1495 -->
+- #1495: Reconcile SEP-24 transaction status with the anchor
