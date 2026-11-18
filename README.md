@@ -816,3 +816,6 @@ MIT
 
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
+
+<!-- handsoff-issue-1410 -->
+- #1410: Support versioned envelope encryption for stored provider credentials
