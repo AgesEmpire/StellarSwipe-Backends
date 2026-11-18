@@ -822,3 +822,6 @@ MIT
 
 <!-- handsoff-issue-1498 -->
 - #1498: Expose SEP-24 quote and fee components
+
+<!-- handsoff-issue-1499 -->
+- #1499: Negotiate anchor capabilities for SEP-24 flows
