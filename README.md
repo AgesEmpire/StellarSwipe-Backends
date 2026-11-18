@@ -819,3 +819,6 @@ MIT
 
 <!-- handsoff-issue-1497 -->
 - #1497: Normalize anchor error codes in SEP-24 API responses
+
+<!-- handsoff-issue-1498 -->
+- #1498: Expose SEP-24 quote and fee components
