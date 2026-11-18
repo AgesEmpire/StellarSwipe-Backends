@@ -819,3 +819,6 @@ MIT
 
 <!-- handsoff-issue-1491 -->
 - #1491: Track SLA pause reasons and elapsed-time segments
+
+<!-- handsoff-issue-1492 -->
+- #1492: Add an SLA policy simulation endpoint
