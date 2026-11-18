@@ -825,3 +825,6 @@ MIT
 
 <!-- handsoff-issue-1495 -->
 - #1495: Reconcile SEP-24 transaction status with the anchor
+
+<!-- handsoff-issue-1496 -->
+- #1496: Enforce expiry and resume rules for SEP-24 interactive flows
