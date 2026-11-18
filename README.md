@@ -822,3 +822,6 @@ MIT
 
 <!-- handsoff-issue-1486 -->
 - #1486: Add bulk archive for activity-feed entries
+
+<!-- handsoff-issue-1493 -->
+- #1493: Expose SLA compliance aggregates by service and period
