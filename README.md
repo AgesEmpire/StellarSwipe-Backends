@@ -825,3 +825,6 @@ MIT
 
 <!-- handsoff-issue-1499 -->
 - #1499: Negotiate anchor capabilities for SEP-24 flows
+
+<!-- handsoff-issue-1500 -->
+- #1500: Validate SEP-24 requests against anchor-required fields
