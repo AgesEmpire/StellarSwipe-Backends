@@ -816,3 +816,6 @@ MIT
 
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
+
+<!-- handsoff-issue-1491 -->
+- #1491: Track SLA pause reasons and elapsed-time segments
