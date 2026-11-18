@@ -816,3 +816,6 @@ MIT
 
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
+
+<!-- handsoff-issue-1497 -->
+- #1497: Normalize anchor error codes in SEP-24 API responses
