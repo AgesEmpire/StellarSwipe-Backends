@@ -819,3 +819,6 @@ MIT
 
 <!-- handsoff-issue-1410 -->
 - #1410: Support versioned envelope encryption for stored provider credentials
+
+<!-- handsoff-issue-1456 -->
+- #1456: Persist AI assistant conversation threads with ownership checks
