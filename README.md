@@ -825,3 +825,6 @@ MIT
 
 <!-- handsoff-issue-1468 -->
 - #1468: Add support ticket resolution codes and reopen rules
+
+<!-- handsoff-issue-1490 -->
+- #1490: Add business calendars to SLA deadline calculation
