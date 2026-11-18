@@ -819,3 +819,6 @@ MIT
 
 <!-- handsoff-issue-1478 -->
 - #1478: Rebuild achievement progress from an event checkpoint
+
+<!-- handsoff-issue-1486 -->
+- #1486: Add bulk archive for activity-feed entries
