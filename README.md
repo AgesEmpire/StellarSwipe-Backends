@@ -816,3 +816,6 @@ MIT
 
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
+
+<!-- handsoff-issue-1478 -->
+- #1478: Rebuild achievement progress from an event checkpoint
