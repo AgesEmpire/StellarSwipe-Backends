@@ -822,3 +822,6 @@ MIT
 
 <!-- handsoff-issue-1456 -->
 - #1456: Persist AI assistant conversation threads with ownership checks
+
+<!-- handsoff-issue-1468 -->
+- #1468: Add support ticket resolution codes and reopen rules
