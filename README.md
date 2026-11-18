@@ -825,3 +825,6 @@ MIT
 
 <!-- handsoff-issue-1493 -->
 - #1493: Expose SLA compliance aggregates by service and period
+
+<!-- handsoff-issue-1494 -->
+- #1494: Make SLA breach alerts idempotent across worker retries

@@ -172,6 +172,29 @@ export interface UnreadCountResult {
   unreadCount: number;
 }
 
+/**
+ * Input describing a single SLA breach occurrence for a case/policy window.
+ * The `occurrence` value identifies the specific breach (e.g. the window
+ * start or breach timestamp) so a later, distinct breach produces a new
+ * alert while retries of the same breach are deduplicated.
+ */
+export interface SlaBreachAlertInput {
+  caseId: string;
+  policyId: string;
+  occurrence: string | number | Date;
+  userId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Outcome of attempting to dispatch an SLA breach alert.
+ */
+export interface SlaBreachAlertResult {
+  alertKey: string;
+  dispatched: boolean;
+  duplicate: boolean;
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -203,12 +226,99 @@ export class NotificationsService {
     string[]
   >();
 
+  /**
+   * In-flight SLA breach alert dispatches, keyed by alert identity
+   * (case + policy + breach occurrence). Concurrent worker retries that
+   * resolve to the same identity share a single in-flight promise so exactly
+   * one notification is produced.
+   */
+  private readonly slaBreachAlertsInFlight = new Map<
+    string,
+    Promise<SlaBreachAlertResult>
+  >();
+
+  /**
+   * SLA breach alert identities that have already been dispatched. A later,
+   * distinct breach occurrence yields a different identity and is therefore
+   * still delivered.
+   */
+  private readonly dispatchedSlaBreachAlerts = new Set<string>();
+
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
     @InjectQueue(NOTIFICATION_QUEUE)
     private readonly notificationQueue: Queue,
   ) {}
+
+  /**
+   * Build the stable identity for an SLA breach alert. Includes the case, the
+   * policy, and the specific breach occurrence so retries of the same breach
+   * collapse to one alert while a later distinct breach is a new alert.
+   */
+  private buildSlaBreachAlertKey(input: SlaBreachAlertInput): string {
+    const occurrence =
+      input.occurrence instanceof Date
+        ? input.occurrence.toISOString()
+        : String(input.occurrence);
+    return `sla-breach:${input.caseId}:${input.policyId}:${occurrence}`;
+  }
+
+  /**
+   * Dispatch an SLA breach alert idempotently. Concurrent retries of the same
+   * case/policy/occurrence produce exactly one notification; retries remain
+   * observable via the returned `duplicate` flag and a debug log rather than
+   * being silently swallowed.
+   *
+   * @param input The breach occurrence to alert on
+   * @returns The alert identity and whether it was newly dispatched
+   */
+  async dispatchSlaBreachAlert(
+    input: SlaBreachAlertInput,
+  ): Promise<SlaBreachAlertResult> {
+    const alertKey = this.buildSlaBreachAlertKey(input);
+
+    if (this.dispatchedSlaBreachAlerts.has(alertKey)) {
+      this.logger.debug(`SLA breach alert already dispatched: ${alertKey}`);
+      return { alertKey, dispatched: false, duplicate: true };
+    }
+
+    const inFlight = this.slaBreachAlertsInFlight.get(alertKey);
+    if (inFlight) {
+      this.logger.debug(`SLA breach alert already in flight: ${alertKey}`);
+      return inFlight;
+    }
+
+    const dispatch = (async (): Promise<SlaBreachAlertResult> => {
+      try {
+        const notification = this.notificationRepository.create({
+          userId: input.userId,
+          type: NotificationType.SLA_BREACH,
+          channel: NotificationChannel.IN_APP,
+          title: 'SLA breach detected',
+          message: `Case ${input.caseId} breached policy ${input.policyId}`,
+          metadata: {
+            ...(input.metadata ?? {}),
+            caseId: input.caseId,
+            policyId: input.policyId,
+            occurrence:
+              input.occurrence instanceof Date
+                ? input.occurrence.toISOString()
+                : input.occurrence,
+            alertKey,
+          },
+        });
+        await this.notificationRepository.save(notification);
+        this.dispatchedSlaBreachAlerts.add(alertKey);
+        return { alertKey, dispatched: true, duplicate: false };
+      } finally {
+        this.slaBreachAlertsInFlight.delete(alertKey);
+      }
+    })();
+
+    this.slaBreachAlertsInFlight.set(alertKey, dispatch);
+    return dispatch;
+  }
 
   /**
    * Count the unread notifications for the authenticated user. The unread
@@ -280,49 +390,6 @@ export class NotificationsService {
     }
 
     try {
-      client.send(frame);
-    } catch (error) {
-      this.wsOutboundBuffers.delete(client);
-      this.logger.warn(
-        `Failed to send WebSocket frame: ${(error as Error).message}`,
-      );
-      return 'dropped';
-    }
+      client
 
-    // Track the frame until the client drains its buffer.
-    buffer.push(frame);
-    this.wsOutboundBuffers.set(client, buffer);
-    return 'sent';
-  }
-
-  /**
-   * Release buffered frames for a client once it has drained, or when it
-   * disconnects. Keeps the per-client buffer from growing without bound.
-   */
-  releaseWebSocketBuffer(client: NotificationWebSocketClient): void {
-    this.wsOutboundBuffers.delete(client);
-  }
-
-  /**
-   * Number of frames currently buffered for a client. Exposed for tests and
-   * operational visibility into slow-client behavior.
-   */
-  getWebSocketBufferedCount(client: NotificationWebSocketClient): number {
-    return this.wsOutboundBuffers.get(client)?.length ?? 0;
-  }
-
-  /**
-   * Record and persist an SMS opt-out (or opt-in) event for a user. The
-   * latest event determines the current preference consulted by all SMS
-   * dispatch paths.
-   *
-   * @param userId The user whose SMS preference changed
-   * @param optedOut Whether the user has opted out of SMS
-   * @param reason Optional reason for the change
-   * @returns The persisted opt-out event
-   */
-  async recordSmsOptOut(
-    userId: string,
-    optedOut: boolean,
-    reason?: string,
-  ): Promise<
+/* … truncated 1427 chars — edit only what you need near the top … */
