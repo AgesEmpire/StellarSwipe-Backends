@@ -826,6 +826,12 @@ MIT
 <!-- handsoff-issue-1468 -->
 - #1468: Add support ticket resolution codes and reopen rules
 
+<!-- handsoff-issue-1478 -->
+- #1478: Rebuild achievement progress from an event checkpoint
+
+<!-- handsoff-issue-1486 -->
+- #1486: Add bulk archive for activity-feed entries
+
 <!-- handsoff-issue-1490 -->
 - #1490: Add business calendars to SLA deadline calculation
 
@@ -834,6 +840,12 @@ MIT
 
 <!-- handsoff-issue-1492 -->
 - #1492: Add an SLA policy simulation endpoint
+
+<!-- handsoff-issue-1493 -->
+- #1493: Expose SLA compliance aggregates by service and period
+
+<!-- handsoff-issue-1494 -->
+- #1494: Make SLA breach alerts idempotent across worker retries
 
 <!-- handsoff-issue-1495 -->
 - #1495: Reconcile SEP-24 transaction status with the anchor
