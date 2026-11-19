@@ -817,6 +817,18 @@ MIT
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
 
+<!-- handsoff-issue-1410 -->
+- #1410: Support versioned envelope encryption for stored provider credentials
+
+<!-- handsoff-issue-1456 -->
+- #1456: Persist AI assistant conversation threads with ownership checks
+
+<!-- handsoff-issue-1468 -->
+- #1468: Add support ticket resolution codes and reopen rules
+
+<!-- handsoff-issue-1490 -->
+- #1490: Add business calendars to SLA deadline calculation
+
 <!-- handsoff-issue-1491 -->
 - #1491: Track SLA pause reasons and elapsed-time segments
 
