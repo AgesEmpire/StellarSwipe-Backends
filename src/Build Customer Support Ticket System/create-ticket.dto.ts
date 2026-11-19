@@ -4,10 +4,20 @@ import {
   IsEnum,
   IsOptional,
   IsArray,
+  IsDateString,
+  IsInt,
+  IsNotEmpty,
   MinLength,
   MaxLength,
+  Max,
+  Min,
 } from 'class-validator';
-import { TicketPriority, TicketCategory } from '../entities/support-ticket.entity';
+import { Type } from 'class-transformer';
+import {
+  TicketPriority,
+  TicketCategory,
+  TicketStatus,
+} from './support-ticket.entity';
 
 export class CreateTicketDto {
   @IsString()
@@ -104,6 +114,31 @@ export class FilterTicketsDto {
   @IsOptional()
   page?: number;
 
+  @IsOptional()
+  limit?: number;
+}
+
+export class SearchTicketsDto {
+  @IsString()
+  @IsNotEmpty()
+  requesterId: string;
+
+  @IsEnum(TicketStatus)
+  @IsOptional()
+  status?: TicketStatus;
+
+  @IsDateString()
+  @IsOptional()
+  createdAfter?: string;
+
+  @IsDateString()
+  @IsOptional()
+  createdBefore?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
   @IsOptional()
   limit?: number;
 }

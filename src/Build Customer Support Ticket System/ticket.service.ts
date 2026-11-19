@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -12,23 +13,32 @@ import {
   TicketNote,
   SLA_HOURS,
   AUTO_RESPONSES,
-} from './entities/support-ticket.entity';
+} from './support-ticket.entity';
 import {
   CreateTicketDto,
   UpdateTicketDto,
   AddNoteDto,
   FilterTicketsDto,
-} from './dto/create-ticket.dto';
+  SearchTicketsDto,
+} from './create-ticket.dto';
 import {
   TicketResponseDto,
   AgentDashboardResponseDto,
   PaginatedTicketsResponseDto,
-} from './dto/ticket-response.dto';
+  TicketSearchSummaryDto,
+} from './ticket-response.dto';
+
+export interface TicketSearchAccess {
+  requesterId: string;
+  roles?: string[];
+  role?: string;
+}
 
 @Injectable()
 export class TicketService {
   // In-memory store — swap for a real DB repository as needed
   private tickets: Map<string, SupportTicket> = new Map();
+  private ticketsByRequester: Map<string, SupportTicket[]> = new Map();
   private ticketCounter = 1;
 
   // ─────────────────────────────────────────────
@@ -95,6 +105,9 @@ export class TicketService {
     };
 
     this.tickets.set(ticket.id, ticket);
+    const requesterTickets = this.ticketsByRequester.get(ticket.customerId) ?? [];
+    requesterTickets.push(ticket);
+    this.ticketsByRequester.set(ticket.customerId, requesterTickets);
     return this.toDto(ticket);
   }
 
@@ -121,6 +134,80 @@ export class TicketService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  search(
+    filter: SearchTicketsDto,
+    access: TicketSearchAccess,
+  ): TicketSearchSummaryDto[] {
+    if (!access?.requesterId) {
+      throw new UnauthorizedException('Authenticated requester is required');
+    }
+
+    const limit = filter.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException('Search limit must be between 1 and 100');
+    }
+
+    const createdAfter = filter.createdAfter
+      ? new Date(filter.createdAfter)
+      : undefined;
+    const createdBefore = filter.createdBefore
+      ? new Date(filter.createdBefore)
+      : undefined;
+    if (
+      (createdAfter && Number.isNaN(createdAfter.getTime())) ||
+      (createdBefore && Number.isNaN(createdBefore.getTime())) ||
+      (createdAfter &&
+        createdBefore &&
+        createdAfter.getTime() > createdBefore.getTime())
+    ) {
+      throw new BadRequestException('Invalid ticket search date range');
+    }
+
+    const roles = access.roles ?? (access.role ? [access.role] : []);
+    const canSearchAcrossRequesters = roles.some(role =>
+      ['admin', 'support_agent'].includes(role),
+    );
+    if (
+      !canSearchAcrossRequesters &&
+      filter.requesterId &&
+      filter.requesterId !== access.requesterId
+    ) {
+      return [];
+    }
+    if (canSearchAcrossRequesters && !filter.requesterId) {
+      throw new BadRequestException(
+        'Support staff must filter searches by requesterId',
+      );
+    }
+
+    const requesterId = canSearchAcrossRequesters
+      ? filter.requesterId
+      : access.requesterId;
+    const requesterTickets = this.ticketsByRequester.get(requesterId) ?? [];
+    const matches: SupportTicket[] = [];
+
+    for (let index = requesterTickets.length - 1; index >= 0; index -= 1) {
+      const ticket = requesterTickets[index];
+      if (filter.status && ticket.status !== filter.status) continue;
+      if (createdAfter && ticket.createdAt < createdAfter) continue;
+      if (createdBefore && ticket.createdAt > createdBefore) continue;
+
+      matches.push(ticket);
+      if (matches.length === limit) break;
+    }
+
+    return matches.map(ticket => ({
+      id: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      subject: ticket.subject,
+      status: ticket.status,
+      priority: ticket.priority,
+      category: ticket.category,
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+    }));
   }
 
   findOne(id: string): TicketResponseDto {
