@@ -840,3 +840,15 @@ MIT
 
 <!-- handsoff-issue-1496 -->
 - #1496: Enforce expiry and resume rules for SEP-24 interactive flows
+
+<!-- handsoff-issue-1497 -->
+- #1497: Normalize anchor error codes in SEP-24 API responses
+
+<!-- handsoff-issue-1498 -->
+- #1498: Expose SEP-24 quote and fee components
+
+<!-- handsoff-issue-1499 -->
+- #1499: Negotiate anchor capabilities for SEP-24 flows
+
+<!-- handsoff-issue-1500 -->
+- #1500: Validate SEP-24 requests against anchor-required fields
