@@ -817,14 +817,50 @@ MIT
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
 
+<!-- handsoff-issue-1410 -->
+- #1410: Support versioned envelope encryption for stored provider credentials
+
+<!-- handsoff-issue-1456 -->
+- #1456: Persist AI assistant conversation threads with ownership checks
+
+<!-- handsoff-issue-1468 -->
+- #1468: Add support ticket resolution codes and reopen rules
+
 <!-- handsoff-issue-1478 -->
 - #1478: Rebuild achievement progress from an event checkpoint
 
 <!-- handsoff-issue-1486 -->
 - #1486: Add bulk archive for activity-feed entries
 
+<!-- handsoff-issue-1490 -->
+- #1490: Add business calendars to SLA deadline calculation
+
+<!-- handsoff-issue-1491 -->
+- #1491: Track SLA pause reasons and elapsed-time segments
+
+<!-- handsoff-issue-1492 -->
+- #1492: Add an SLA policy simulation endpoint
+
 <!-- handsoff-issue-1493 -->
 - #1493: Expose SLA compliance aggregates by service and period
 
 <!-- handsoff-issue-1494 -->
 - #1494: Make SLA breach alerts idempotent across worker retries
+
+<!-- handsoff-issue-1495 -->
+- #1495: Reconcile SEP-24 transaction status with the anchor
+
+<!-- handsoff-issue-1496 -->
+- #1496: Enforce expiry and resume rules for SEP-24 interactive flows
+
+<!-- handsoff-issue-1497 -->
+- #1497: Normalize anchor error codes in SEP-24 API responses
+
+<!-- handsoff-issue-1498 -->
+- #1498: Expose SEP-24 quote and fee components
+
+<!-- handsoff-issue-1499 -->
+- #1499: Negotiate anchor capabilities for SEP-24 flows
+
+<!-- handsoff-issue-1500 -->
+- #1500: Validate SEP-24 requests against anchor-required fields

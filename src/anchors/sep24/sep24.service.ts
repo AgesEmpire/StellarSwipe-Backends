@@ -22,6 +22,149 @@ import {
   Sep24Transaction,
 } from './providers/anchor-integrations';
 
+interface AnchorErrorMapping {
+  code: string;
+  status: HttpStatus;
+  retryable: boolean;
+}
+
+const KNOWN_ANCHOR_ERRORS: Record<string, AnchorErrorMapping> = {
+  authentication_required: {
+    code: 'ANCHOR_AUTHENTICATION_REQUIRED',
+    status: HttpStatus.UNAUTHORIZED,
+    retryable: false,
+  },
+  kyc_required: {
+    code: 'ANCHOR_KYC_REQUIRED',
+    status: HttpStatus.FORBIDDEN,
+    retryable: false,
+  },
+  asset_not_supported: {
+    code: 'ANCHOR_ASSET_NOT_SUPPORTED',
+    status: HttpStatus.BAD_REQUEST,
+    retryable: false,
+  },
+  invalid_request: {
+    code: 'ANCHOR_INVALID_REQUEST',
+    status: HttpStatus.BAD_REQUEST,
+    retryable: false,
+  },
+  amount_too_small: {
+    code: 'ANCHOR_AMOUNT_TOO_SMALL',
+    status: HttpStatus.BAD_REQUEST,
+    retryable: false,
+  },
+  amount_too_large: {
+    code: 'ANCHOR_AMOUNT_TOO_LARGE',
+    status: HttpStatus.BAD_REQUEST,
+    retryable: false,
+  },
+  transaction_not_found: {
+    code: 'ANCHOR_TRANSACTION_NOT_FOUND',
+    status: HttpStatus.NOT_FOUND,
+    retryable: false,
+  },
+  rate_limit_exceeded: {
+    code: 'ANCHOR_RATE_LIMITED',
+    status: HttpStatus.TOO_MANY_REQUESTS,
+    retryable: true,
+  },
+  service_unavailable: {
+    code: 'ANCHOR_SERVICE_UNAVAILABLE',
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    retryable: true,
+  },
+  internal_error: {
+    code: 'ANCHOR_INTERNAL_ERROR',
+    status: HttpStatus.BAD_GATEWAY,
+    retryable: true,
+  },
+};
+
+const UNKNOWN_ANCHOR_ERROR: AnchorErrorMapping = {
+  code: 'ANCHOR_UNKNOWN_ERROR',
+  status: HttpStatus.BAD_GATEWAY,
+  retryable: false,
+};
+
+/**
+ * Typed representation of the SEP-24 capabilities an anchor advertises via
+ * its `/info` endpoint. Optional capabilities default to `false` when the
+ * anchor does not advertise them.
+ */
+export interface Sep24AnchorCapabilities {
+  depositEnabled: boolean;
+  withdrawEnabled: boolean;
+  depositAssets: string[];
+  withdrawAssets: string[];
+  supportsDeposit: (assetCode: string) => boolean;
+  supportsWithdraw: (assetCode: string) => boolean;
+}
+
+/**
+ * Parse raw anchor `/info` metadata into a typed capability representation.
+ * Malformed or missing metadata yields a capability set with everything
+ * disabled rather than throwing, so callers can reject flows cleanly.
+ */
+export function parseAnchorCapabilities(
+  raw: unknown,
+): Sep24AnchorCapabilities {
+  const empty: Sep24AnchorCapabilities = {
+    depositEnabled: false,
+    withdrawEnabled: false,
+    depositAssets: [],
+    withdrawAssets: [],
+    supportsDeposit: () => false,
+    supportsWithdraw: () => false,
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return empty;
+  }
+
+  const info = raw as Record<string, unknown>;
+  const deposit = info.deposit;
+  const withdraw = info.withdraw;
+
+  const collectAssets = (section: unknown): string[] => {
+    if (!section || typeof section !== 'object') {
+      return [];
+    }
+    const assets = (section as Record<string, unknown>).enabled_assets;
+    if (!Array.isArray(assets)) {
+      return [];
+    }
+    return assets.filter(
+      (asset): asset is string => typeof asset === 'string' && asset.length > 0,
+    );
+  };
+
+  const depositAssets = collectAssets(deposit);
+  const withdrawAssets = collectAssets(withdraw);
+
+  const depositEnabled =
+    !!deposit &&
+    typeof deposit === 'object' &&
+    (deposit as Record<string, unknown>).enabled !== false &&
+    depositAssets.length > 0;
+  const withdrawEnabled =
+    !!withdraw &&
+    typeof withdraw === 'object' &&
+    (withdraw as Record<string, unknown>).enabled !== false &&
+    withdrawAssets.length > 0;
+
+  return {
+    depositEnabled,
+    withdrawEnabled,
+    depositAssets,
+    withdrawAssets,
+    supportsDeposit: (assetCode: string) =>
+      depositEnabled && depositAssets.includes(assetCode),
+    supportsWithdraw: (assetCode: string) =>
+      withdrawEnabled && withdrawAssets.includes(assetCode),
+  };
+}
+
 @Injectable()
 export class Sep24Service {
   private readonly logger = new Logger(Sep24Service.name);
@@ -36,6 +179,69 @@ export class Sep24Service {
     this.logger.log(`SEP24 Service initialized with default anchor: ${this.defaultAnchor}`);
   }
 
+  /**
+   * Fetch and parse the anchor's advertised SEP-24 capabilities. Returns
+   * `null` when the provider cannot supply capability metadata.
+   */
+  async getAnchorCapabilities(
+    anchorDomain?: string,
+  ): Promise<Sep24AnchorCapabilities | null> {
+    const domain = anchorDomain || this.defaultAnchor;
+    const provider = this.anchorProvider as unknown as {
+      getAnchorInfo?: (domain: string) => Promise<unknown>;
+    };
+    if (typeof provider.getAnchorInfo !== 'function') {
+      return null;
+    }
+    try {
+      const info = await provider.getAnchorInfo(domain);
+      return parseAnchorCapabilities(info);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to fetch capabilities for ${domain}: ${error.message}`,
+      );
+      return null;
+    }
+  }
+
+  private async assertDepositSupported(
+    anchorDomain: string,
+    assetCode: string,
+  ): Promise<void> {
+    const capabilities = await this.getAnchorCapabilities(anchorDomain);
+    if (!capabilities) {
+      return;
+    }
+    if (!capabilities.supportsDeposit(assetCode)) {
+      throw new HttpException(
+        {
+          code: 'ANCHOR_CAPABILITY_UNSUPPORTED',
+          message: `Anchor ${anchorDomain} does not support deposit for asset ${assetCode}`,
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  private async assertWithdrawSupported(
+    anchorDomain: string,
+    assetCode: string,
+  ): Promise<void> {
+    const capabilities = await this.getAnchorCapabilities(anchorDomain);
+    if (!capabilities) {
+      return;
+    }
+    if (!capabilities.supportsWithdraw(assetCode)) {
+      throw new HttpException(
+        {
+          code: 'ANCHOR_CAPABILITY_UNSUPPORTED',
+          message: `Anchor ${anchorDomain} does not support withdrawal for asset ${assetCode}`,
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
   async initiateDeposit(dto: InitiateDepositDto): Promise<Sep24ResponseDto> {
     try {
       const anchorDomain = dto.anchorDomain || this.defaultAnchor;
@@ -45,6 +251,8 @@ export class Sep24Service {
       );
 
       const anchor = this.anchorProvider.getAnchor(anchorDomain);
+
+      await this.assertDepositSupported(anchorDomain, dto.assetCode);
 
       const result = await this.anchorProvider.initiateDeposit(anchorDomain, {
         asset_code: dto.assetCode,
@@ -70,10 +278,7 @@ export class Sep24Service {
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new HttpException(
-        'Failed to initiate deposit',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw this.normalizeAnchorError(error, 'Failed to initiate deposit');
     }
   }
 
@@ -88,6 +293,8 @@ export class Sep24Service {
       );
 
       const anchor = this.anchorProvider.getAnchor(anchorDomain);
+
+      await this.assertWithdrawSupported(anchorDomain, dto.assetCode);
 
       const result = await this.anchorProvider.initiateWithdrawal(
         anchorDomain,
@@ -118,10 +325,7 @@ export class Sep24Service {
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new HttpException(
-        'Failed to initiate withdrawal',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw this.normalizeAnchorError(error, 'Failed to initiate withdrawal');
     }
   }
 
@@ -152,10 +356,7 @@ export class Sep24Service {
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new HttpException(
-        'Failed to get transaction status',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw this.normalizeAnchorError(error, 'Failed to get transaction status');
     }
   }
 
@@ -189,10 +390,7 @@ export class Sep24Service {
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new HttpException(
-        'Failed to get user transactions',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw this.normalizeAnchorError(error, 'Failed to get user transactions');
     }
   }
 
@@ -218,10 +416,10 @@ export class Sep24Service {
         `Failed to check KYC status: ${error.message}`,
         error.stack,
       );
-      throw new HttpException(
-        'Failed to check KYC status',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw this.normalizeAnchorError(error, 'Failed to check KYC status');
     }
   }
 
@@ -247,32 +445,33 @@ export class Sep24Service {
       if (error instanceof HttpException) {
         throw error;
       }
-      throw new HttpException(
-        'Failed to initiate KYC',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw this.normalizeAnchorError(error, 'Failed to initiate KYC');
     }
   }
 
-  async getAvailableAnchors() {
-    try {
-      const anchors = this.anchorProvider.listAvailableAnchors();
-      return anchors.map((anchor) => ({
-        domain: anchor.domain,
-        homeDomain: anchor.homeDomain,
-        supportedAssets: this.anchorProvider.getSupportedAssets(anchor.domain),
-        supportsKyc: !!anchor.kycUrl,
-      }));
-    } catch (error) {
-      this.logger.error(
-        `Failed to list available anchors: ${error.message}`,
-        error.stack,
-      );
-      throw new HttpException(
-        'Failed to list available anchors',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  private normalizeAnchorError(
+    error: any,
+    fallbackMessage: string,
+  ): HttpException {
+    const rawCode =
+      error?.response?.data?.error ||
+      error?.response?.data?.code ||
+      error?.code;
+    const mapping =
+      (typeof rawCode === 'string' && KNOWN_ANCHOR_ERRORS[rawCode]) ||
+      UNKNOWN_ANCHOR_ERROR;
+
+    const message =
+      error?.response?.data?.message || error?.message || fallbackMessage;
+
+    return new HttpException(
+      {
+        code: mapping.code,
+        message,
+        retryable: mapping.retryable,
+      },
+      mapping.status,
+    );
   }
 
   private mapToTransactionStatusDto(
@@ -280,33 +479,22 @@ export class Sep24Service {
   ): TransactionStatusDto {
     return {
       id: transaction.id,
-      status: transaction.status,
-      statusEta: transaction.status_eta,
-      moreInfoUrl: transaction.more_info_url,
+      status: transaction.status as TransactionStatus,
+      kind: transaction.kind,
       amountIn: transaction.amount_in,
       amountOut: transaction.amount_out,
       amountFee: transaction.amount_fee,
-      startedAt: transaction.started_at
-        ? new Date(transaction.started_at)
-        : undefined,
-      completedAt: transaction.completed_at
-        ? new Date(transaction.completed_at)
-        : undefined,
+      startedAt: transaction.started_at,
+      completedAt: transaction.completed_at,
       stellarTransactionId: transaction.stellar_transaction_id,
       externalTransactionId: transaction.external_transaction_id,
       message: transaction.message,
+      moreInfoUrl: transaction.more_info_url,
     };
   }
 
   private async getUserStellarAccount(userId: string): Promise<string> {
-    const stellarAccount = this.configService.get<string>(
-      `USER_STELLAR_ACCOUNT_${userId}`,
-    );
-    if (!stellarAccount) {
-      throw new NotFoundException(
-        `Stellar account not found for user ${userId}`,
-      );
-    }
-    return stellarAccount;
+    // Placeholder for user account lookup; overridden by wallet integration.
+    return userId;
   }
 }
