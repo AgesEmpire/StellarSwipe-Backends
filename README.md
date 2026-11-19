@@ -816,3 +816,15 @@ MIT
 
 <!-- handsoff-issue-1421 -->
 - #1421: Neutralize spreadsheet formulas in generated CSV exports
+
+<!-- handsoff-issue-1491 -->
+- #1491: Track SLA pause reasons and elapsed-time segments
+
+<!-- handsoff-issue-1492 -->
+- #1492: Add an SLA policy simulation endpoint
+
+<!-- handsoff-issue-1495 -->
+- #1495: Reconcile SEP-24 transaction status with the anchor
+
+<!-- handsoff-issue-1496 -->
+- #1496: Enforce expiry and resume rules for SEP-24 interactive flows
