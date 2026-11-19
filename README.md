@@ -828,3 +828,15 @@ MIT
 
 <!-- handsoff-issue-1490 -->
 - #1490: Add business calendars to SLA deadline calculation
+
+<!-- handsoff-issue-1491 -->
+- #1491: Track SLA pause reasons and elapsed-time segments
+
+<!-- handsoff-issue-1492 -->
+- #1492: Add an SLA policy simulation endpoint
+
+<!-- handsoff-issue-1495 -->
+- #1495: Reconcile SEP-24 transaction status with the anchor
+
+<!-- handsoff-issue-1496 -->
+- #1496: Enforce expiry and resume rules for SEP-24 interactive flows
