@@ -1,4 +1,5 @@
 import { IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
+import { TaxJurisdiction } from '../tax-report.types';
 
 export class TaxReportQueryDto {
   @IsInt()
@@ -11,7 +12,6 @@ export class TaxReportQueryDto {
   @IsOptional()
   format?: 'CSV' | 'PDF';
 
-  @IsString()
-  @IsOptional()
-  jurisdiction?: 'US' | 'EU' | 'NG';
+  @IsEnum(['US', 'EU', 'NG'])
+  jurisdiction: TaxJurisdiction;
 }

@@ -8,15 +8,28 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Req,
+  UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { Roles } from '../authorization/decorators/roles.decorator';
+import { RolesGuard } from '../authorization/guards/roles.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TicketService } from './ticket.service';
 import {
   CreateTicketDto,
   UpdateTicketDto,
   AddNoteDto,
   FilterTicketsDto,
-} from './dto/create-ticket.dto';
-import { TicketStatus } from './entities/support-ticket.entity';
+  SearchTicketsDto,
+} from './create-ticket.dto';
+import { TicketStatus } from './support-ticket.entity';
+
+interface AuthenticatedTicketRequest {
+  user?: {
+    id: string;
+  };
+}
 
 @Controller('support/tickets')
 export class TicketController {
@@ -35,6 +48,24 @@ export class TicketController {
   @Get()
   findAll(@Query() filter: FilterTicketsDto) {
     return this.ticketService.findAll(filter);
+  }
+
+  /** GET /support/tickets/search — Search visible ticket summaries */
+  @Get('search')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('support_agent', 'admin')
+  search(
+    @Query() filter: SearchTicketsDto,
+    @Req() request: AuthenticatedTicketRequest,
+  ) {
+    const requesterId = request.user?.id;
+    if (!requesterId) {
+      throw new UnauthorizedException('Authenticated requester is required');
+    }
+    return this.ticketService.search(filter, {
+      requesterId,
+      roles: ['support_agent'],
+    });
   }
 
   /** GET /support/tickets/:id — Get single ticket */

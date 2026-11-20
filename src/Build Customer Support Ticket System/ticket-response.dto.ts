@@ -5,7 +5,7 @@ import {
   TicketCategory,
   TicketNote,
   SupportTicket,
-} from '../entities/support-ticket.entity';
+} from './support-ticket.entity';
 
 @Exclude()
 export class TicketNoteResponseDto {
@@ -79,4 +79,15 @@ export class PaginatedTicketsResponseDto {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export class TicketSearchSummaryDto {
+  id: string;
+  ticketNumber: string;
+  subject: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  category: TicketCategory;
+  createdAt: Date;
+  updatedAt: Date;
 }

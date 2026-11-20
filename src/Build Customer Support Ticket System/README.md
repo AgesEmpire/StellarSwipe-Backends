@@ -35,12 +35,29 @@ src/
 |---|---|---|
 | POST | `/support/tickets` | Create ticket |
 | GET | `/support/tickets` | List/filter tickets |
+| GET | `/support/tickets/search` | Search requester-visible summaries |
 | GET | `/support/tickets/:id` | Get single ticket |
 | GET | `/support/tickets/dashboard/overview` | Agent dashboard |
 | PATCH | `/support/tickets/:id` | Update metadata |
 | PATCH | `/support/tickets/:id/status` | Change status |
 | PATCH | `/support/tickets/:id/assign` | Assign to agent |
 | POST | `/support/tickets/:id/notes` | Add note/reply |
+
+### Ticket search
+
+`GET /support/tickets/search` requires a JWT and the `support_agent` or `admin`
+role. It requires `requesterId` and accepts optional `status`, `createdAfter`,
+`createdBefore`, and `limit` query parameters.
+Dates are ISO-8601 timestamps and the boundaries are inclusive. `limit`
+defaults to 20 and is capped at 100. Requesters are always restricted to their
+own tickets, even when they supply another `requesterId`; `support_agent` and
+`admin` roles may search across requesters but must provide `requesterId` so
+the lookup stays scoped. Results are newest-first summaries and omit ticket
+descriptions, email addresses, and notes.
+
+The host application must register the existing JWT strategy and a TypeORM
+connection for the authorization role entities (the search route uses a
+database-backed role guard).
 
 ## Quick Start
 
