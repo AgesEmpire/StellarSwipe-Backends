@@ -12,7 +12,11 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { ApiKeysService } from './api-keys.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
-import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
+import {
+  ApiKeyMetadataDto,
+  ApiKeyResponseDto,
+  ApiKeyUsageDto,
+} from './dto/api-key-usage.dto';
 import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
 import { AuditAction } from '../audit-log/entities/audit-log.entity';
 import { ExternalIntegrationThrottlerGuard } from '../common/guards/external-integration-throttler.guard';
@@ -38,7 +42,7 @@ export class ApiKeysController {
   }
 
   @Get()
-  async list(@Request() req: any) {
+  async list(@Request() req: any): Promise<ApiKeyMetadataDto[]> {
     return this.apiKeysService.list(req.userId);
   }
 

@@ -8,7 +8,12 @@ import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
-import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
+import {
+  ApiKeyMetadataDto,
+  ApiKeyResponseDto,
+  ApiKeyUsageDto,
+  toApiKeyMetadata,
+} from './dto/api-key-usage.dto';
 
 const MAX_OVERLAP_MS = 3_600_000;
 const LAST_USED_THROTTLE_MS = 60_000;
@@ -305,7 +310,8 @@ export class ApiKeysService {
       .map((record) => ({ ...record }));
   }
 
-  async list(userId: string): Promise<ApiKey[]> {
-    return this.apiKeyRepo.find({ where: { userId } });
+  async list(userId: string): Promise<ApiKeyMetadataDto[]> {
+    const keys = await this.apiKeyRepo.find({ where: { userId } });
+    return keys.map(toApiKeyMetadata);
   }
 }
