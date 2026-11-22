@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 
 export interface SignedUrlPayload {
+  keyId: string;
   exportId: string;
   exportType: string;
   userId: string;
@@ -13,22 +14,39 @@ export interface SignedUrlPayload {
   signature: string;
 }
 
+type SignedFields = Omit<SignedUrlPayload, 'signature'>;
+
 /**
  * Generates and validates signed, time-limited URLs for export file downloads.
  * Each signed URL is single-purpose, tied to a specific export, and cannot be reused.
  *
  * The service uses HMAC-SHA256 with a server secret to ensure URLs cannot be forged
- * or tampered with without detection.
+ * or tampered with without detection. Every field that decides what gets served
+ * (file path and format included) is covered by the signature, and the payload
+ * names the key that signed it. SIGNED_URL_KEY_ID selects the active key; keys
+ * rotated out are listed in SIGNED_URL_ROTATED_KEYS (JSON map of keyId -> secret)
+ * so tokens issued before a rotation still verify until they expire.
  */
 @Injectable()
 export class SignedUrlGeneratorService {
   private readonly logger = new Logger(SignedUrlGeneratorService.name);
+  private readonly activeKeyId: string;
   private readonly signingSecret: string;
+  private readonly verificationKeys: Map<string, string>;
   private readonly defaultExpiryMinutes: number;
 
   constructor(private readonly configService: ConfigService) {
+    this.activeKeyId = this.configService.get('SIGNED_URL_KEY_ID', 'default');
     this.signingSecret = this.configService.get('SIGNED_URL_SECRET', 'default-signing-secret');
     this.defaultExpiryMinutes = this.configService.get('SIGNED_URL_EXPIRY_MINUTES', 60);
+
+    this.verificationKeys = new Map([[this.activeKeyId, this.signingSecret]]);
+    const rotatedKeys = this.configService.get<string>('SIGNED_URL_ROTATED_KEYS');
+    if (rotatedKeys) {
+      for (const [keyId, secret] of Object.entries(JSON.parse(rotatedKeys) as Record<string, string>)) {
+        this.verificationKeys.set(keyId, secret);
+      }
+    }
 
     if (this.signingSecret === 'default-signing-secret') {
       this.logger.warn(
@@ -59,9 +77,8 @@ export class SignedUrlGeneratorService {
     const issuedAt = Math.floor(Date.now() / 1000);
     const expiresAt = issuedAt + (expiryMinutes ?? this.defaultExpiryMinutes) * 60;
 
-    const signature = this.computeSignature(exportId, exportType, userId, issuedAt, expiresAt);
-
-    const payload: SignedUrlPayload = {
+    const fields: SignedFields = {
+      keyId: this.activeKeyId,
       exportId,
       exportType,
       userId,
@@ -69,7 +86,11 @@ export class SignedUrlGeneratorService {
       format,
       issuedAt,
       expiresAt,
-      signature,
+    };
+
+    const payload: SignedUrlPayload = {
+      ...fields,
+      signature: this.computeSignature(fields, this.signingSecret),
     };
 
     return Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64');
@@ -101,6 +122,7 @@ export class SignedUrlGeneratorService {
 
     // Validate structure
     if (
+      !payload.keyId ||
       !payload.exportId ||
       !payload.exportType ||
       !payload.userId ||
@@ -119,14 +141,13 @@ export class SignedUrlGeneratorService {
       throw new Error(`Signed URL has expired (expired at ${new Date(payload.expiresAt * 1000).toISOString()})`);
     }
 
-    // Verify signature
-    const expectedSignature = this.computeSignature(
-      payload.exportId,
-      payload.exportType,
-      payload.userId,
-      payload.issuedAt,
-      payload.expiresAt,
-    );
+    // Verify signature with the key the token names (active or rotated-out)
+    const secret = this.verificationKeys.get(payload.keyId);
+    if (!secret) {
+      throw new Error(`Signed URL signature verification failed — unknown key id "${payload.keyId}"`);
+    }
+
+    const expectedSignature = this.computeSignature(payload, secret);
 
     if (!this.constantTimeEquals(payload.signature, expectedSignature)) {
       throw new Error('Signed URL signature verification failed — URL may have been tampered with');
@@ -136,19 +157,23 @@ export class SignedUrlGeneratorService {
   }
 
   /**
-   * Computes the HMAC-SHA256 signature for a set of parameters.
+   * Computes the HMAC-SHA256 signature over every signed field.
+   * Fields are picked explicitly so extra properties in a token are never signed or trusted.
    *
    * @returns The hex-encoded signature
    */
-  private computeSignature(
-    exportId: string,
-    exportType: string,
-    userId: string,
-    issuedAt: number,
-    expiresAt: number,
-  ): string {
-    const data = `${exportId}:${exportType}:${userId}:${issuedAt}:${expiresAt}`;
-    return crypto.createHmac('sha256', this.signingSecret).update(data).digest('hex');
+  private computeSignature(fields: SignedFields, secret: string): string {
+    const data = JSON.stringify([
+      fields.keyId,
+      fields.exportId,
+      fields.exportType,
+      fields.userId,
+      fields.filePath,
+      fields.format,
+      fields.issuedAt,
+      fields.expiresAt,
+    ]);
+    return crypto.createHmac('sha256', secret).update(data).digest('hex');
   }
 
   /**
