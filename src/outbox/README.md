@@ -6,5 +6,5 @@
 4. Delivery is at-least-once: consumers must dedupe on the event `id`.
 
 ## Monitoring & recovery
-- `GET /admin/outbox/stats` – counts per status and oldest pending age (alert when it grows).
+- `GET /admin/outbox/stats` – counts per status, oldest pending age (alert when it grows), and `backlogByEventType`: per registered event type (`OUTBOX_EVENT_TYPE_REGISTRY`, unknown types roll up to `other`) the `pending`, `retrying` (attempted, still scheduled) and `exhausted` (DEAD) count and oldest age.
 - `POST /admin/outbox/replay` `{ "ids": [...] }` – requeue specific events, or all `DEAD` events when `ids` is omitted.
