@@ -7,6 +7,7 @@ import { Webhook } from './entities/webhook.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { WebhookDeadLetter } from './entities/webhook-dead-letter.entity';
 import { WebhookReplayAudit } from './entities/webhook-replay-audit.entity';
+import { WebhookStateAudit } from './entities/webhook-state-audit.entity';
 import { WebhooksService } from './webhooks.service';
 import { WebhooksController } from './webhooks.controller';
 import { SignatureGeneratorService } from './services/signature-generator.service';
@@ -32,6 +33,7 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
       WebhookDelivery,
       WebhookDeadLetter,
       WebhookReplayAudit,
+      WebhookStateAudit,
     ]),
     ScheduleModule.forRoot(),
     BullModule.registerQueue(

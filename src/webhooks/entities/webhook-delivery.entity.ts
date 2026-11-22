@@ -14,7 +14,9 @@ export type DeliveryStatus =
   | 'pending'
   | 'success'
   | 'failed'
-  | 'permanently_failed';
+  | 'permanently_failed'
+  | 'paused'
+  | 'expired';
 
 @Entity('webhook_deliveries')
 export class WebhookDelivery {

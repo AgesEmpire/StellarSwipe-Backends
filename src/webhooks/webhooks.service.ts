@@ -23,6 +23,7 @@ import {
   WebhookReplayAudit,
   WebhookReplayOutcome,
 } from './entities/webhook-replay-audit.entity';
+import { WebhookStateAudit } from './entities/webhook-state-audit.entity';
 import {
   RegisterWebhookDto,
   UpdateWebhookDto,
@@ -154,6 +155,50 @@ export class WebhooksService {
     return urlChanged
       ? this.issueEndpointVerification(saved, dto.url as string)
       : saved;
+  }
+
+  /**
+   * Holds delivery to an endpoint. Events raised while paused are recorded as
+   * `paused` deliveries and released on resume (see releasePausedDeliveries).
+   */
+  async pause(userId: string, id: string): Promise<Webhook> {
+    return this.transitionPauseState(userId, id, true);
+  }
+
+  async resume(userId: string, id: string): Promise<Webhook> {
+    const webhook = await this.transitionPauseState(userId, id, false);
+    await this.webhookSender.releasePausedDeliveries(webhook.id);
+    return this.findOne(userId, id);
+  }
+
+  /** Pause/resume state change and its audit row commit together. */
+  private async transitionPauseState(
+    userId: string,
+    id: string,
+    paused: boolean,
+  ): Promise<Webhook> {
+    const webhook = await this.findOne(userId, id);
+    if (webhook.paused === paused) return webhook;
+
+    await this.webhookRepo.manager.transaction(async (manager) => {
+      await manager.update(
+        Webhook,
+        { id },
+        { paused, pausedAt: paused ? new Date() : null },
+      );
+      await manager.save(
+        manager.create(WebhookStateAudit, {
+          requestedBy: userId,
+          webhookId: id,
+          action: paused ? 'paused' : 'resumed',
+        }),
+      );
+    });
+
+    this.logger.log(
+      `Webhook ${paused ? 'paused' : 'resumed'}: webhook=${id} requestedBy=${userId}`,
+    );
+    return this.findOne(userId, id);
   }
 
   async resendEndpointVerification(
