@@ -35,6 +35,13 @@ export class NotificationDeliveryAuditLog {
   @Column({ name: 'skipped_reason', type: 'text', nullable: true })
   skippedReason!: string | null;
 
+  @Column({ name: 'error_message', type: 'text', nullable: true })
+  errorMessage!: string | null;
+
+  /** Set on failed attempts only: whether the failure was transient and may be retried. */
+  @Column({ type: 'boolean', default: false })
+  retryable!: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 }

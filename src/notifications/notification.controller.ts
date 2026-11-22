@@ -15,6 +15,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { NotificationService } from './notification.service';
+import { NotificationRetryService, RetryNotificationResult } from './notification-retry.service';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { Notification } from './entities/notification.entity';
 
@@ -23,7 +24,10 @@ import { Notification } from './entities/notification.entity';
 @UseGuards(JwtAuthGuard)
 @Controller('notifications')
 export class NotificationController {
-  constructor(private readonly notificationService: NotificationService) {}
+  constructor(
+    private readonly notificationService: NotificationService,
+    private readonly notificationRetryService: NotificationRetryService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get in-app notifications for the current user' })
@@ -55,5 +59,14 @@ export class NotificationController {
   @ApiOperation({ summary: 'Mark all notifications as read' })
   async markAllAsRead(@Request() req: any): Promise<{ updated: number }> {
     return this.notificationService.markAllAsRead(req.user.id);
+  }
+
+  @Post(':id/retry')
+  @ApiOperation({ summary: 'Retry a failed, transiently-failed notification owned by the current user' })
+  async retry(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: any,
+  ): Promise<RetryNotificationResult> {
+    return this.notificationRetryService.retry(id, req.user.id);
   }
 }

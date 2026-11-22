@@ -26,6 +26,31 @@ const WEBSOCKET_CHANNELS = new Set<NotificationChannel>([
 
 export const RECIPIENT_OFFLINE_REASON = 'Recipient offline; persisted for later retrieval';
 
+const TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+]);
+
+/**
+ * Transient failures (network blips, rate limiting, upstream 5xx) may succeed
+ * on a later attempt. Anything else is treated as permanent and is not
+ * eligible for a manual retry.
+ */
+export function isTransientDeliveryError(error: unknown): boolean {
+  const { status, statusCode, code } = (error ?? {}) as {
+    status?: number;
+    statusCode?: number;
+    code?: string;
+  };
+  const httpStatus = status ?? statusCode;
+  if (httpStatus === 429 || (httpStatus !== undefined && httpStatus >= 500)) {
+    return true;
+  }
+  return code !== undefined && TRANSIENT_ERROR_CODES.has(code);
+}
+
 @Processor(NOTIFICATION_QUEUE)
 export class NotificationProcessor {
   private readonly logger = new Logger(NotificationProcessor.name);
@@ -130,6 +155,18 @@ export class NotificationProcessor {
       );
       notification.status = NotificationStatus.FAILED;
       await this.notificationRepository.save(notification);
+      await this.auditRepository.save(
+        this.auditRepository.create({
+          userId: notification.userId,
+          notificationId: notification.id,
+          notificationType: notification.type,
+          channel: notification.channel,
+          deliveredAt: null,
+          skippedReason: null,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          retryable: isTransientDeliveryError(error),
+        }),
+      );
       throw error; // triggers Bull retry
     }
   }
