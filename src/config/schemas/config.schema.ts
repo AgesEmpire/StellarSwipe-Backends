@@ -73,6 +73,7 @@ export interface ValidatedEnvironment {
   WEBHOOK_SIGNING_KEY?: string;
   MPESA_WEBHOOK_SECRET?: string;
   PAYSTACK_WEBHOOK_SECRET?: string;
+  NOTIFICATION_RECEIPT_WEBHOOK_SECRET?: string;
 }
 
 export const configSchema = Joi.object<ValidatedEnvironment>({
@@ -243,6 +244,7 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
   WEBHOOK_SIGNING_KEY: Joi.string().min(32).optional().allow(''),
   MPESA_WEBHOOK_SECRET: Joi.string().min(16).optional().allow(''),
   PAYSTACK_WEBHOOK_SECRET: Joi.string().min(16).optional().allow(''),
+  NOTIFICATION_RECEIPT_WEBHOOK_SECRET: Joi.string().min(32).optional().allow(''),
 })
   // Per-provider outbound concurrency limits, including the OUTBOUND_DEFAULT_*
   // fallbacks (see src/http/provider-concurrency.config.ts).

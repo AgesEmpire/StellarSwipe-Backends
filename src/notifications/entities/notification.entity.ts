@@ -22,6 +22,18 @@ export enum NotificationStatus {
 }
 
 /**
+ * Provider-reported delivery state, tracked separately from the internal
+ * `NotificationStatus`. Failure states are terminal; see
+ * `notifications/receipts/provider-receipts.ts` for the transition rules.
+ */
+export enum NotificationDeliveryState {
+  ACCEPTED = 'accepted',
+  DELIVERED = 'delivered',
+  BOUNCED = 'bounced',
+  INVALID = 'invalid',
+}
+
+/**
  * Delivery urgency. LOW-priority in-app notifications are batched into a
  * scheduled digest instead of being delivered immediately; URGENT
  * notifications always go out right away.
@@ -83,6 +95,7 @@ export function resolveNotificationPriority(type: string): NotificationPriority 
 @Index('idx_notifications_user_read', ['userId', 'status'])
 @Index('idx_notifications_event_id', ['eventId'], { unique: true, where: '"event_id" IS NOT NULL' })
 @Index('idx_notifications_digest_lookup', ['userId', 'priority', 'digestedAt'])
+@Index('idx_notifications_external_message_id', ['externalMessageId'])
 @Entity('notifications')
 export class Notification {
   @PrimaryGeneratedColumn('uuid')
@@ -151,6 +164,14 @@ export class Notification {
    */
   @Column({ name: 'digested_at', type: 'timestamp', nullable: true })
   digestedAt?: Date | null;
+
+  /** Message id the external provider assigned on send; provider receipts are matched to this notification by it. */
+  @Column({ name: 'external_message_id', type: 'varchar', length: 255, nullable: true })
+  externalMessageId?: string | null;
+
+  /** Latest provider-reported delivery state. Null until a receipt has been applied. */
+  @Column({ name: 'delivery_state', type: 'varchar', length: 20, nullable: true })
+  deliveryState?: NotificationDeliveryState | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
