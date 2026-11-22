@@ -7,6 +7,9 @@ import { Signal, SignalStatus } from '../signals/entities/signal.entity';
 import { AuditLog, AuditAction, AuditStatus } from '../audit-log/audit-log.entity';
 import { UserManagementQueryDto, SuspendUserDto } from './dto/user-management.dto';
 import { SignalModerationQueryDto, RemoveSignalDto } from './dto/signal-moderation.dto';
+import { AdjustBalanceDto } from './balance/adjust-balance.dto';
+import { AccountBalance } from './balance/account-balance.entity';
+import { BalanceAdjustment } from './balance/balance-adjustment.entity';
 
 @Injectable()
 export class AdminManagementService {
@@ -154,6 +157,66 @@ export class AdminManagementService {
         });
 
         return signal;
+    }
+
+    // MANUAL BALANCE ADJUSTMENT
+    /** Mutates the balance, adjustment record and audit log in one transaction; any failure rolls all three back. */
+    async adjustBalance(adminId: string, dto: AdjustBalanceDto) {
+        const reason = dto.reason?.trim();
+        if (!reason || reason.length < 10) {
+            throw new BadRequestException('A reason of at least 10 characters is required');
+        }
+
+        return this.auditLogRepository.manager.transaction(async (manager) => {
+            const balance = await manager.findOne(AccountBalance, {
+                where: { userId: dto.userId, currency: dto.currency },
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!balance) {
+                throw new NotFoundException(`No ${dto.currency} balance for user ${dto.userId}`);
+            }
+
+            const before = balance.amount;
+            // Decimal math in the database avoids float rounding on money.
+            const [{ after }] = await manager.query('SELECT ($1::numeric + $2::numeric)::text AS after', [before, dto.amount]);
+            if (after.startsWith('-')) {
+                throw new BadRequestException('Adjustment would make the balance negative');
+            }
+
+            balance.amount = after;
+            await manager.save(balance);
+
+            const adjustment = await manager.save(
+                manager.create(BalanceAdjustment, {
+                    userId: dto.userId,
+                    actorId: adminId,
+                    currency: dto.currency,
+                    amountBefore: before,
+                    amountAfter: after,
+                    reason,
+                }),
+            );
+
+            await manager.save(
+                manager.create(AuditLog, {
+                    userId: adminId,
+                    action: AuditAction.ADMIN_OVERRIDE,
+                    status: AuditStatus.SUCCESS,
+                    resource: 'AccountBalance',
+                    resourceId: balance.id,
+                    metadata: {
+                        targetUserId: dto.userId,
+                        currency: dto.currency,
+                        before,
+                        after,
+                        reason,
+                        timestamp: adjustment.createdAt.toISOString(),
+                    },
+                }),
+            );
+
+            return adjustment;
+        });
     }
 
     // AUDIT LOGGING HELPER

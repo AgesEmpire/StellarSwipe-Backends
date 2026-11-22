@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger'
 import { AdminManagementService } from './admin.service';
 import { UserManagementQueryDto, SuspendUserDto } from './dto/user-management.dto';
 import { SignalModerationQueryDto, RemoveSignalDto } from './dto/signal-moderation.dto';
+import { AdjustBalanceDto } from './balance/adjust-balance.dto';
 import { AdminAnalyticsService } from './analytics/admin-analytics.service';
 import { AnalyticsQueryDto } from './analytics/dto/analytics-query.dto';
 import { Audit } from '../audit-log/interceptors/audit-logging.interceptor';
@@ -70,6 +71,13 @@ export class AdminController {
     ) {
         const adminId = req.user?.id || 'system-admin-id';
         return this.adminService.unsuspendUser(adminId, id);
+    }
+
+    @Post('balances/adjust')
+    @ApiOperation({ summary: 'Manually adjust an account balance (reason required, fully audited)' })
+    async adjustBalance(@Request() req: any, @Body() dto: AdjustBalanceDto) {
+        const adminId = req.user?.id || 'system-admin-id';
+        return this.adminService.adjustBalance(adminId, dto);
     }
 
     // --- SIGNAL MODERATION ---
