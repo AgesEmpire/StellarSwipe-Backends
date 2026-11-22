@@ -31,3 +31,11 @@ export class CreateApiKeyDto {
   @IsOptional()
   expiresAt?: Date;
 }
+
+export class PreviewApiKeyScopesDto {
+  /** Scopes that would be requested at key creation. Read-only: nothing is persisted. */
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsEnum(ApiKeyScope, { each: true })
+  scopes!: ApiKeyScope[];
+}
