@@ -21,6 +21,22 @@ export const OUTBOX_BROKER = Symbol('OUTBOX_BROKER');
 const BATCH_SIZE = 100;
 const MAX_ATTEMPTS = Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 10);
 
+/** Controlled event-type registry: any other type is reported as `other` so metric cardinality stays bounded. */
+export const OUTBOX_EVENT_TYPE_REGISTRY = [
+  'trade.order.created',
+  'trade.execution.failed',
+  'trade.completed',
+  'trade.position.closed',
+  'conditional_order.cancelled',
+  'conditional_order.filled',
+  'conditional_order.triggered',
+  'stellar.transaction.confirmed',
+] as const;
+const OTHER_EVENT_TYPE = 'other';
+
+type BacklogState = 'pending' | 'retrying' | 'exhausted';
+type BacklogBucket = { count: number; oldestAgeMs: number };
+
 @Injectable()
 export class OutboxService {
   private readonly logger = new Logger(OutboxService.name);
@@ -85,22 +101,68 @@ export class OutboxService {
     }
   }
 
-  /** Observability: counts per status plus age of the oldest pending event. */
+  /**
+   * Observability: counts per status, age of the oldest pending event, and per-event-type
+   * backlog split into pending / retrying / exhausted (DEAD) with count and oldest age.
+   * Only event type and state are exposed; no aggregate, tenant or user identifiers.
+   */
   async stats() {
-    const rows: { status: OutboxStatus; count: string }[] = await this.dataSource
-      .getRepository(OutboxEvent)
+    const repository = this.dataSource.getRepository(OutboxEvent);
+    const rows: { status: OutboxStatus; count: string }[] = await repository
       .createQueryBuilder('e')
       .select('e.status', 'status')
       .addSelect('COUNT(*)', 'count')
       .groupBy('e.status')
       .getRawMany();
-    const oldest = await this.dataSource.getRepository(OutboxEvent).findOne({
+    const oldest = await repository.findOne({
       where: { status: OutboxStatus.PENDING },
       order: { createdAt: 'ASC' },
     });
+    const backlogRows: {
+      eventType: string;
+      status: OutboxStatus;
+      attempts: number;
+      count: string;
+      oldest: Date;
+    }[] = await repository
+      .createQueryBuilder('e')
+      .select('e.eventType', 'eventType')
+      .addSelect('e.status', 'status')
+      .addSelect('e.attempts', 'attempts')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect('MIN(e.createdAt)', 'oldest')
+      .where('e.status IN (:...statuses)', { statuses: [OutboxStatus.PENDING, OutboxStatus.DEAD] })
+      .groupBy('e.eventType')
+      .addGroupBy('e.status')
+      .addGroupBy('e.attempts')
+      .getRawMany();
+
+    const now = Date.now();
+    const backlogByEventType: Record<string, Record<BacklogState, BacklogBucket>> = Object.fromEntries(
+      [...OUTBOX_EVENT_TYPE_REGISTRY, OTHER_EVENT_TYPE].map((type) => [
+        type,
+        {
+          pending: { count: 0, oldestAgeMs: 0 },
+          retrying: { count: 0, oldestAgeMs: 0 },
+          exhausted: { count: 0, oldestAgeMs: 0 },
+        },
+      ]),
+    );
+    for (const row of backlogRows) {
+      const type = (OUTBOX_EVENT_TYPE_REGISTRY as readonly string[]).includes(row.eventType)
+        ? row.eventType
+        : OTHER_EVENT_TYPE;
+      const state: BacklogState =
+        row.status === OutboxStatus.DEAD ? 'exhausted' : Number(row.attempts) > 0 ? 'retrying' : 'pending';
+      const bucket = backlogByEventType[type][state];
+      bucket.count += Number(row.count);
+      bucket.oldestAgeMs = Math.max(bucket.oldestAgeMs, now - new Date(row.oldest).getTime());
+    }
+
     return {
       counts: Object.fromEntries(rows.map((r) => [r.status, Number(r.count)])),
-      oldestPendingAgeMs: oldest ? Date.now() - oldest.createdAt.getTime() : 0,
+      oldestPendingAgeMs: oldest ? now - oldest.createdAt.getTime() : 0,
+      backlogByEventType,
     };
   }
 
