@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan } from 'typeorm';
+import { Repository, LessThan, In } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { InviteCode, InviteCodeStatus } from './entities/invite-code.entity';
 import { BetaUser, BetaUserStatus } from './entities/beta-user.entity';
@@ -395,17 +395,41 @@ export class BetaAccessService {
     return { waitlist, inviteCode };
   }
 
-  async bulkInviteFromWaitlist(count: number): Promise<
+  // Read-only: reports what bulkInviteFromWaitlist would select, changes nothing
+  async previewBulkInviteFromWaitlist(count: number): Promise<{
+    eligible: Array<{ id: string; position: number }>;
+    skippedCount: number;
+  }> {
+    const [entries, totalPending] = await Promise.all([
+      this.selectPendingWaitlist(count),
+      this.waitlistRepository.count({
+        where: { status: WaitlistStatus.PENDING },
+      }),
+    ]);
+
+    return {
+      eligible: entries.map((e) => ({ id: e.id, position: e.position })),
+      skippedCount: totalPending - entries.length,
+    };
+  }
+
+  // previewIds (from a dry run) replaces the live selection; entries that
+  // changed or vanished since the preview are skipped, not invited.
+  async bulkInviteFromWaitlist(
+    count: number,
+    previewIds?: string[],
+  ): Promise<
     Array<{
       waitlist: Waitlist;
       inviteCode: InviteCode;
     }>
   > {
-    const entries = await this.waitlistRepository.find({
-      where: { status: WaitlistStatus.PENDING },
-      order: { position: 'ASC' },
-      take: count,
-    });
+    const entries = previewIds
+      ? await this.waitlistRepository.find({
+          where: { id: In(previewIds), status: WaitlistStatus.PENDING },
+          order: { position: 'ASC' },
+        })
+      : await this.selectPendingWaitlist(count);
 
     const results: Array<{ waitlist: Waitlist; inviteCode: InviteCode }> = [];
 
@@ -415,6 +439,14 @@ export class BetaAccessService {
     }
 
     return results;
+  }
+
+  private selectPendingWaitlist(count: number): Promise<Waitlist[]> {
+    return this.waitlistRepository.find({
+      where: { status: WaitlistStatus.PENDING },
+      order: { position: 'ASC' },
+      take: count,
+    });
   }
 
   async getWaitlistStats(): Promise<WaitlistStatsDto> {

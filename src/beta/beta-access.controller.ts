@@ -141,7 +141,10 @@ export class BetaAccessController {
   @Post('waitlist/bulk-invite')
   @HttpCode(HttpStatus.OK)
   async bulkInviteFromWaitlist(@Body() dto: BulkInviteFromWaitlistDto) {
-    return this.betaAccessService.bulkInviteFromWaitlist(dto.count);
+    if (dto.dryRun) {
+      return this.betaAccessService.previewBulkInviteFromWaitlist(dto.count);
+    }
+    return this.betaAccessService.bulkInviteFromWaitlist(dto.count, dto.previewIds);
   }
 
   @Delete('waitlist/:id')
