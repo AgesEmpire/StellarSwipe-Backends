@@ -13,4 +13,6 @@ export interface ContractResult {
   events?: ContractEvent[];
   feeCharged?: string;
   error?: string;
+  /** Last ledger (inclusive) in which the submitted envelope could be included. */
+  lastValidLedger?: number;
 }

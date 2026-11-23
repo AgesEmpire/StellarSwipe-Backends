@@ -18,6 +18,17 @@ export enum SignalType {
   SELL = 'SELL',
 }
 
+/** Strategy/market category a signal belongs to; users may mute these (#1516). */
+export enum SignalCategory {
+  SCALP = 'SCALP',
+  DAY_TRADE = 'DAY_TRADE',
+  SWING = 'SWING',
+  POSITION = 'POSITION',
+  ARBITRAGE = 'ARBITRAGE',
+  DEFI = 'DEFI',
+  STABLECOIN = 'STABLECOIN',
+}
+
 export enum SignalStatus {
   ACTIVE = 'ACTIVE',
   CLOSED = 'CLOSED',
@@ -64,6 +75,9 @@ export class Signal {
     default: SignalStatus.ACTIVE,
   })
   status!: SignalStatus;
+
+  @Column({ name: 'category', type: 'varchar', length: 32, nullable: true })
+  category!: SignalCategory | null;
 
   @Column({
     type: 'enum',

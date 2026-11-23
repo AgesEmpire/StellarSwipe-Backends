@@ -33,10 +33,16 @@ export class SignalsService {
     private readonly metadataService: AssetPairMetadataService,
   ) {}
 
-  async getFeed(query: SignalFeedQueryDto, mutedProviderIds: string[] = []): Promise<SignalFeedResponseDto> {
+  async getFeed(
+    query: SignalFeedQueryDto,
+    mutedProviderIds: string[] = [],
+    mutedCategories: string[] = [],
+  ): Promise<SignalFeedResponseDto> {
     const { cursor, page, limit = 20, asset, provider, sortBy = SortBy.RANKED } = query;
 
-    const cacheKey = `feed:${sortBy}:${cursor ?? page ?? 1}:${limit}:${asset ?? '*'}:${provider ?? '*'}`;
+    // Muted categories change the result set, so they must be part of the cache key.
+    const categoryKey = mutedCategories.length ? [...mutedCategories].sort().join(',') : '*';
+    const cacheKey = `feed:${sortBy}:${cursor ?? page ?? 1}:${limit}:${asset ?? '*'}:${provider ?? '*'}:mc=${categoryKey}`;
     const cached = await this.cache.get<SignalFeedResponseDto>(cacheKey);
     if (cached) return cached;
 
@@ -57,6 +63,13 @@ export class SignalsService {
 
     if (mutedProviderIds.length > 0) {
       qb.andWhere('s.provider_id NOT IN (:...mutedProviderIds)', { mutedProviderIds });
+    }
+
+    // Category mutes (#1516): read-time filter only; uncategorised signals stay visible.
+    if (mutedCategories.length > 0) {
+      qb.andWhere('(s.category IS NULL OR s.category NOT IN (:...mutedCategories))', {
+        mutedCategories,
+      });
     }
 
     // For RANKED we fetch a larger window, rank in-memory, then paginate

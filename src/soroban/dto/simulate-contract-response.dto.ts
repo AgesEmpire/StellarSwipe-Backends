@@ -44,4 +44,17 @@ export class SimulateContractResponseDto {
   /** Present only when the RPC itself could not be reached / returned an unexpected response */
   @ApiPropertyOptional({ description: 'RPC connectivity or protocol error (distinct from contract revert)' })
   rpcError?: string;
+
+  @ApiPropertyOptional({ description: 'Latest closed ledger the simulation ran against' })
+  latestLedger?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Last ledger (inclusive) in which an envelope assembled from this preview can be included. ' +
+      'Set LedgerBounds.maxLedger to lastValidLedger + 1. Do not submit or retry once the network passes it.',
+  })
+  lastValidLedger?: number;
+
+  @ApiPropertyOptional({ description: 'Ledgers remaining before the envelope expires' })
+  ledgersRemaining?: number;
 }
