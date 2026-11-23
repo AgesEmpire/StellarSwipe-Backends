@@ -24,3 +24,12 @@ export class ApiKeyResponseDto {
   rateLimit!: number;
   createdAt!: Date;
 }
+
+export type ApiKeyScopeDenialReason = 'email_not_verified' | 'tenant_policy_denied';
+
+export class ApiKeyScopeDecisionDto {
+  scope!: ApiKeyScope;
+  allowed!: boolean;
+  /** Set only when allowed is false */
+  reason?: ApiKeyScopeDenialReason;
+}
