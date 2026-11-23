@@ -3,12 +3,14 @@ import {
   Get,
   Post,
   Delete,
+  Body,
   Param,
+  Request,
   UseGuards,
-  NotFoundException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { DeadLetterService, DeadLetterEntry } from './dead-letter.service';
+import { ReplayDeadLetterDto } from './dto/replay-dead-letter.dto';
 import { AdminRoleGuard } from '../admin/guards/admin-role.guard';
 
 @ApiTags('Dead Letter Queue')
@@ -35,21 +37,25 @@ export class DeadLetterController {
   }
 
   @Post(':id/retry')
-  @ApiOperation({ summary: 'Retry a specific dead-lettered job by re-enqueuing it' })
-  @ApiParam({ name: 'id', description: 'DLQ job ID to retry' })
+  @ApiOperation({ summary: 'Replay one dead-lettered job as a new attempt on its original queue' })
+  @ApiParam({ name: 'id', description: 'DLQ job ID to replay' })
+  @ApiBody({ type: ReplayDeadLetterDto })
   @ApiResponse({ status: 200, description: 'Job re-enqueued successfully' })
+  @ApiResponse({ status: 400, description: 'Original queue is not registered for replay' })
   @ApiResponse({ status: 404, description: 'DLQ entry not found' })
-  async retry(@Param('id') id: string) {
-    const jobs = await this.deadLetterService.list();
-    const job = jobs.find((j) => String(j.id) === id);
-    if (!job) {
-      throw new NotFoundException(`Dead-letter entry ${id} not found`);
-    }
+  @ApiResponse({ status: 409, description: 'DLQ entry has already been replayed' })
+  async retry(
+    @Param('id') id: string,
+    @Body() dto: ReplayDeadLetterDto,
+    @Request() req: any,
+  ) {
+    const replayJob = await this.deadLetterService.replay(id, req.user?.id, dto.reason);
     return {
       retried: true,
       jobId: id,
-      originalQueue: job.data.queue,
-      message: `Job ${id} has been re-enqueued for retry`,
+      replayJobId: replayJob.id,
+      originalQueue: replayJob.queue.name,
+      message: `Job ${id} has been re-enqueued for replay`,
     };
   }
 

@@ -1,5 +1,13 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import { InjectQueue, getQueueToken } from '@nestjs/bull';
 import Queue, { Job, JobCounts } from 'bull';
 
 export const DEAD_LETTER_QUEUE = 'dead-letter';
@@ -36,6 +44,7 @@ export class DeadLetterService implements OnModuleInit {
   constructor(
     @InjectQueue(DEAD_LETTER_QUEUE)
     private readonly dlq: Queue.Queue<DeadLetterEntry>,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   onModuleInit(): void {
@@ -86,22 +95,42 @@ export class DeadLetterService implements OnModuleInit {
   }
 
   /**
-   * Re-queue a DLQ entry onto its original queue for another attempt.
-   * The DLQ entry is removed after successful re-queue.
+   * Re-enqueue one dead-lettered execution onto its original queue as a new
+   * attempt. The DLQ entry is left untouched. The replay job id is derived from
+   * the DLQ entry id, so a second replay of the same entry is rejected (409).
    */
-  async replay(
-    jobId: string,
-    targetQueue: Queue.Queue,
-  ): Promise<Job | null> {
-    const job = await this.dlq.getJob(jobId);
-    if (!job) return null;
+  async replay(jobId: string, actorId: string, reason: string): Promise<Job> {
+    const entry = await this.dlq.getJob(jobId);
+    if (!entry) {
+      throw new NotFoundException(`Dead-letter entry ${jobId} not found`);
+    }
 
-    const replayed = await targetQueue.add(job.data.data, { priority: 100, attempts: 3 }); // NORMAL
-    await job.remove();
+    const targetQueue = this.resolveQueue(entry.data.queue);
+    const replayJobId = `dlq-replay:${jobId}`;
+    if (await targetQueue.getJob(replayJobId)) {
+      throw new ConflictException(`Dead-letter entry ${jobId} has already been replayed`);
+    }
+
+    // Keep the replay job so the duplicate check above survives completion.
+    const replayed = await targetQueue.add(entry.data.data, {
+      jobId: replayJobId,
+      priority: 100,
+      attempts: 3,
+      removeOnComplete: false,
+      removeOnFail: false,
+    });
 
     this.logger.log(
-      `DLQ job ${jobId} replayed as job ${replayed.id} on queue "${targetQueue.name}"`,
+      `DLQ entry ${jobId} replayed as job ${replayed.id} on "${targetQueue.name}" by actor=${actorId} reason="${reason}"`,
     );
     return replayed;
+  }
+
+  private resolveQueue(name: string): Queue.Queue {
+    try {
+      return this.moduleRef.get<Queue.Queue>(getQueueToken(name), { strict: false });
+    } catch {
+      throw new BadRequestException(`Queue "${name}" is not registered for replay`);
+    }
   }
 }
