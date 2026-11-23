@@ -10,6 +10,7 @@ describe('RetentionService', () => {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       execute: jest.fn().mockResolvedValue({ affected }),
+      getCount: jest.fn().mockResolvedValue(0),
     };
     return qb;
   };
@@ -43,7 +44,7 @@ describe('RetentionService', () => {
     const result = await service.runPolicy(policy);
 
     expect(qb.where).toHaveBeenCalledWith('record.createdAt < :cutoff', { cutoff: expect.any(Date) });
-    expect(result).toEqual({ policy: 'test-policy', deleted: 7 });
+    expect(result).toEqual({ policy: 'test-policy', deleted: 7, excluded: 0 });
   });
 
   it('applies an extra predicate when the policy defines one', async () => {
