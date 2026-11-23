@@ -4,6 +4,18 @@ import { Repository } from 'typeorm';
 import { RiskSettings } from './entities/risk-settings.entity';
 import { UpdateRiskSettingsDto } from './dto/risk-settings.dto';
 import { VelocityCheckerService, TradeRequest } from './velocity/velocity-checker.service';
+import { AuditAction, AuditLog } from '../audit-log/entities/audit-log.entity';
+
+/** Effective policy values only; whitelisted so no secrets can leak into audit metadata. */
+export type RiskPolicySnapshot = Pick<
+  RiskSettings,
+  | 'version'
+  | 'maxOpenPositions'
+  | 'maxExposurePercentage'
+  | 'requireStopLoss'
+  | 'minStopLossPercentage'
+  | 'maxStopLossPercentage'
+>;
 
 export interface TradeDetails {
   userId: string;
@@ -40,10 +52,52 @@ export class RiskManagerService {
     return settings;
   }
 
-  async updateSettings(userId: string, updateDto: UpdateRiskSettingsDto): Promise<RiskSettings> {
-    let settings = await this.getSettings(userId);
+  /**
+   * Updates a user's risk policy and writes a before/after audit entry in the same
+   * transaction, so a failed audit insert rolls back the policy change too.
+   * `actorId` is who made the change; it defaults to the owner for self-service updates.
+   */
+  async updateSettings(
+    userId: string,
+    updateDto: UpdateRiskSettingsDto,
+    actorId: string = userId,
+  ): Promise<RiskSettings> {
+    const settings = await this.getSettings(userId);
+    const before = this.toPolicySnapshot(settings);
     Object.assign(settings, updateDto);
-    return await this.riskSettingsRepository.save(settings);
+
+    return this.riskSettingsRepository.manager.transaction(async (em) => {
+      const saved = await em.save(RiskSettings, settings);
+
+      await em.save(
+        AuditLog,
+        em.create(AuditLog, {
+          userId: actorId,
+          action: AuditAction.SETTINGS_UPDATED,
+          resource: 'risk_settings',
+          resourceId: saved.id,
+          metadata: {
+            subjectUserId: userId,
+            policyVersion: saved.version,
+            before,
+            after: this.toPolicySnapshot(saved),
+          },
+        }),
+      );
+
+      return saved;
+    });
+  }
+
+  private toPolicySnapshot(settings: RiskSettings): RiskPolicySnapshot {
+    return {
+      version: settings.version,
+      maxOpenPositions: settings.maxOpenPositions,
+      maxExposurePercentage: settings.maxExposurePercentage,
+      requireStopLoss: settings.requireStopLoss,
+      minStopLossPercentage: settings.minStopLossPercentage,
+      maxStopLossPercentage: settings.maxStopLossPercentage,
+    };
   }
 
   async validateTrade(trade: TradeDetails, currentOpenPositions: number, totalExposureAmount: number, userBalance: number): Promise<boolean> {
