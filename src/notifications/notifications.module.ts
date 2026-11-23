@@ -18,6 +18,7 @@ import { PreferenceController } from './preferences/preference.controller';
 import { NotificationService, NOTIFICATION_QUEUE } from './notification.service';
 import { NotificationsService } from './notifications.service';
 import { NotificationController } from './notification.controller';
+import { NotificationRetryService } from './notification-retry.service';
 import { NotificationProcessor } from './notification.processor';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { NotificationTemplateService } from './notification-template.service';
@@ -36,7 +37,7 @@ import { I18nModule } from '../i18n/i18n.module';
     I18nModule,
   ],
   controllers: [NotificationController, PreferencesController, PreferenceController, NotificationTcpController, ConsentController],
-  providers: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationProcessor, NotificationTemplateService, ConsentService, DigestService],
+  providers: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationProcessor, NotificationTemplateService, ConsentService, DigestService, NotificationRetryService],
   exports: [NotificationService, NotificationsService, PreferencesService, NotificationPreferencesService, NotificationTemplateService, ConsentService, DigestService],
 })
 export class NotificationsModule implements OnModuleInit {
