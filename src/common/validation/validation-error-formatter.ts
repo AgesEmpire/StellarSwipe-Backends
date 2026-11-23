@@ -14,3 +14,28 @@ export function formatValidationErrors(errors: ValidationError[]): Record<string
 
   return result;
 }
+
+/**
+ * One failed rule. `rule` is the stable machine-readable identifier (the
+ * class-validator constraint name, e.g. `isString`, `minLength`); `field` is the
+ * dot-separated path to the property (e.g. `items.0.name` for arrays/nested DTOs).
+ * Clients should branch on `rule`, never on `message`, which is human-readable
+ * and may be localized.
+ */
+export interface ValidationViolation {
+  field: string;
+  rule: string;
+  message: string;
+}
+
+/** Flattens `class-validator` errors into one `ValidationViolation` per failed rule, including nested DTOs and array items. */
+export function flattenValidationViolations(
+  errors: ValidationError[],
+  parentPath = '',
+): ValidationViolation[] {
+  return errors.flatMap((error) => {
+    const field = parentPath ? `${parentPath}.${error.property}` : error.property;
+    const own = Object.entries(error.constraints || {}).map(([rule, message]) => ({ field, rule, message }));
+    return [...own, ...flattenValidationViolations(error.children || [], field)];
+  });
+}
