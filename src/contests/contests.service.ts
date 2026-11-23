@@ -127,6 +127,7 @@ export class ContestsService {
 
     if (qualifiedEntries.length === 0) {
       contest.status = ContestStatus.FINALIZED;
+      contest.finalizedAt = now;
       contest.winners = [];
       await this.contestRepository.save(contest);
       return { winners: [], prizes: {} };
@@ -144,6 +145,7 @@ export class ContestsService {
 
     contest.winners = winners;
     contest.status = ContestStatus.FINALIZED;
+    contest.finalizedAt = now;
     await this.contestRepository.save(contest);
 
     return { winners, prizes };

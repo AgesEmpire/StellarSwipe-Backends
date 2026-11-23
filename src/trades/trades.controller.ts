@@ -18,6 +18,7 @@ import {
   Header,
 } from '@nestjs/common';
 import { ApiResponse } from '@nestjs/swagger';
+import { TradeFailureResponseDto } from './dto/trade-failure.dto';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { buildPaginationLinks } from '../common/pagination/pagination-links.util';
 import { CursorPaginationQueryDto } from '../common/pagination/cursor-pagination-query.dto';
@@ -96,13 +97,22 @@ export class TradesController {
   })
   @RequireScopes(ApiKeyScope.TRADES_WRITE)
   @ApiResponse({ status: 201, description: 'Trade execution started' })
-  @ApiResponse({ status: 400, description: 'Missing Idempotency-Key header' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Missing Idempotency-Key header, or trade execution failed with a stable reason `code` (see TradeFailureCode)',
+    type: TradeFailureResponseDto,
+  })
   @ApiResponse({
     status: 403,
     description: 'API key missing trades:write scope',
   })
   @ApiResponse({ status: 409, description: 'Concurrent duplicate request' })
-  @ApiResponse({ status: 422, description: 'Slippage tolerance exceeded' })
+  @ApiResponse({
+    status: 422,
+    description: 'Slippage tolerance exceeded (code TRADE_SLIPPAGE_EXCEEDED)',
+    type: TradeFailureResponseDto,
+  })
   async executeTrade(@Body() dto: ExecuteTradeDto): Promise<TradeResultDto> {
     return this.commandBus.execute(new ExecuteTradeCommand(dto));
   }
