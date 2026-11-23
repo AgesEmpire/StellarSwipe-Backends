@@ -65,6 +65,7 @@ import { SlaModule } from './enterprise/sla/sla.module';
 import { UsersModule } from './users/users.module';
 import { SignalsModule } from './signals/signals.module';
 import { TradesModule } from './trades/trades.module';
+import { CloseAllPositionsModule } from './trades/close-all/close-all.module';
 import { ProvidersModule } from './providers/providers.module';
 import { MlModule } from './ml/ml.module';
 import { ScalingModule } from './scaling/scaling.module';
@@ -361,6 +362,7 @@ class DatabaseTimestampSettingsCheck implements OnApplicationBootstrap {
     UsersModule,
     SignalsModule,
     TradesModule,
+    CloseAllPositionsModule,
     CacheModule,
     AuthModule,
     AnalyticsModule,

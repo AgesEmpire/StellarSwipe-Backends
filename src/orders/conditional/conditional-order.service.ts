@@ -4,8 +4,10 @@ import {
   BadRequestException,
   ConflictException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { OrderAmendmentService } from './revisions/order-amendment.service';
 import { Repository, In } from 'typeorm';
 import { ConditionalOrder } from './conditional-order.entity';
 import {
@@ -46,6 +48,8 @@ export class ConditionalOrderService {
     private readonly conditionalOrderRepo: Repository<ConditionalOrder>,
     private readonly atomicTransaction: AtomicTransactionHelper,
     private readonly outboxService: OutboxService,
+    @Optional()
+    private readonly amendments?: OrderAmendmentService,
   ) {}
 
   /**
@@ -129,6 +133,18 @@ export class ConditionalOrderService {
     dto: UpdateConditionalOrderDto,
     actor?: OwnershipActor,
   ): Promise<ConditionalOrder> {
+    // #1529 — every accepted change goes through the amendment path so it is
+    // recorded as an append-only revision (actor, timestamp, reason, fields)
+    // instead of silently overwriting prior values.
+    if (this.amendments) {
+      const { order } = await this.amendments.amend(
+        id,
+        dto,
+        actor ? { id: actor.id, roles: actor.roles } : { id: 'system', roles: ['system'], system: true },
+      );
+      return order;
+    }
+
     const order = await this.findById(id, actor);
 
     if (
