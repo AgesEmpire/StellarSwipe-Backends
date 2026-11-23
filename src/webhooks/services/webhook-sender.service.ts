@@ -24,6 +24,7 @@ import {
   WEBHOOK_FAILURE_DISABLE_THRESHOLD,
   WEBHOOK_MAX_ATTEMPTS,
   WEBHOOK_MAX_RESPONSE_BYTES,
+  WEBHOOK_PAYLOAD_SCHEMA_VERSION,
   WEBHOOK_PERMANENTLY_FAILED_EVENT,
   WEBHOOK_REQUEST_TIMEOUT_MS,
   WEBHOOK_RESPONSE_BODY_MAX_CHARS,
@@ -62,12 +63,14 @@ export class WebhookSenderService {
   async deliverWebhook(
     webhook: Webhook,
     payload: WebhookPayload,
+    schemaVersion = WEBHOOK_PAYLOAD_SCHEMA_VERSION,
   ): Promise<WebhookDelivery> {
     const delivery = this.deliveryRepo.create({
       webhookId: webhook.id,
       eventType: payload.event,
       eventId: payload.deliveryId,
       payload: payload as unknown as Record<string, unknown>,
+      schemaVersion,
       status: 'pending',
       attempts: 0,
     });
@@ -169,6 +172,7 @@ export class WebhookSenderService {
         payload,
         signature,
         attempt,
+        delivery.schemaVersion,
       );
 
       await this.recordDeliverySuccess(
@@ -218,6 +222,7 @@ export class WebhookSenderService {
         payload,
         signature,
         delivery.attempts,
+        delivery.schemaVersion,
       );
 
       await this.recordDeliverySuccess(
@@ -263,6 +268,7 @@ export class WebhookSenderService {
     payload: WebhookPayload,
     signature: string,
     attempt: number,
+    schemaVersion: number,
   ): Promise<AxiosResponse> {
     const startedAt = process.hrtime.bigint();
     const elapsedSeconds = () =>
@@ -276,7 +282,7 @@ export class WebhookSenderService {
         url: webhook.url,
         method: 'post',
         data: payload,
-        headers: this.buildHeaders(payload, signature),
+        headers: this.buildHeaders(payload, signature, schemaVersion),
         timeout: WEBHOOK_REQUEST_TIMEOUT_MS,
         transitional: { clarifyTimeoutError: true },
         maxContentLength: WEBHOOK_MAX_RESPONSE_BYTES,
@@ -486,6 +492,7 @@ export class WebhookSenderService {
   private buildHeaders(
     payload: WebhookPayload,
     signature: string,
+    schemaVersion: number,
   ): Record<string, string> {
     return {
       'Content-Type': 'application/json',
@@ -493,6 +500,7 @@ export class WebhookSenderService {
       'X-StellarSwipe-Signature-Version': CURRENT_SIGNATURE_VERSION,
       'X-StellarSwipe-Event': payload.event,
       'X-StellarSwipe-Delivery-Id': payload.deliveryId,
+      'X-StellarSwipe-Payload-Version': String(schemaVersion),
     };
   }
 
