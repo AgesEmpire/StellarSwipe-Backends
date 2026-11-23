@@ -64,6 +64,18 @@ export class Contest {
   @Column({ type: 'jsonb', nullable: true })
   winners!: string[] | null;
 
+  /** Instant results were finalized; ingestion cutoff for late events (#1524). */
+  @Column({ name: 'finalized_at', type: 'timestamp with time zone', nullable: true })
+  finalizedAt?: Date | null;
+
+  /** Published per-provider scores; changed only via the correction workflow. */
+  @Column({ name: 'published_scores', type: 'jsonb', nullable: true })
+  publishedScores?: Record<string, number> | null;
+
+  /** 0 = unpublished, 1 = initial publication, +1 per applied correction. */
+  @Column({ name: 'result_revision', type: 'int', default: 0 })
+  resultRevision?: number;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
 

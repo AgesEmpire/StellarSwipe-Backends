@@ -14,6 +14,8 @@ export class SlippageExceededException extends UnprocessableEntityException {
     super({
       statusCode: 422,
       error: 'Unprocessable Entity',
+      code: 'TRADE_SLIPPAGE_EXCEEDED',
+      retryable: true,
       message: `Slippage tolerance exceeded. Deviation: ${Math.round(
         deviationBps,
       )} bps (Limit: ${allowedBps} bps)`,

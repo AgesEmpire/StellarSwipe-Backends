@@ -1,4 +1,10 @@
 import {
+  TradeExecutionFailedException,
+  TradeFailureCode,
+  classifyTradeFailure,
+  getTradeFailure,
+} from './errors/trade-failure-codes';
+import {
   Injectable,
   Logger,
   NotFoundException,
@@ -96,8 +102,8 @@ export class TradesService {
             dto.signalId,
           );
           if (isDuplicate) {
-            throw new BadRequestException(
-              'A pending trade already exists for this signal',
+            throw new TradeExecutionFailedException(
+              TradeFailureCode.DUPLICATE_TRADE,
             );
           }
 
@@ -118,7 +124,11 @@ export class TradesService {
           );
           if (!validation.isValid) {
             throw new BadRequestException({
+              statusCode: 400,
+              error: 'Bad Request',
+              code: TradeFailureCode.VALIDATION_FAILED,
               message: 'Trade validation failed',
+              retryable: false,
               errors: validation.errors,
             });
           }
@@ -217,8 +227,12 @@ export class TradesService {
       );
 
       if (!executionResult.success) {
+        const failureCode = classifyTradeFailure(executionResult.error);
         trade.status = TradeStatus.FAILED;
+        // Raw provider error is kept for internal diagnostics only; it is
+        // never returned to clients (see mapToTradeDetails).
         trade.errorMessage = executionResult.error;
+        trade.failureCode = failureCode;
         await this.dataSource.transaction(async (manager) => {
           await manager.save(Trade, trade);
           await this.outboxService.record(
@@ -228,6 +242,7 @@ export class TradesService {
               tradeId: trade.id,
               userId: trade.userId,
               error: trade.errorMessage,
+              code: failureCode,
             },
             `trade.execution.failed:${trade.id}`,
           );
@@ -236,11 +251,7 @@ export class TradesService {
         this.tradeLatency.endFlow(trade.id, 'failure');
         this.logger.error(`Trade ${trade.id} failed: ${executionResult.error}`);
 
-        throw new BadRequestException({
-          message: 'Trade execution failed',
-          error: executionResult.error,
-          tradeId: trade.id,
-        });
+        throw new TradeExecutionFailedException(failureCode, trade.id);
       }
 
       // ── Stage: CONFIRMATION ──────────────────────────────────────────────
@@ -605,6 +616,18 @@ export class TradesService {
     return trades.map((trade) => this.mapToTradeDetails(trade));
   }
 
+  /**
+   * Returns only the stable code and safe message for failed trades so raw
+   * provider payloads stored in `errorMessage` never leak to clients (#1527).
+   */
+  private mapFailure(
+    trade: Trade,
+  ): Pick<TradeDetailsDto, 'errorMessage' | 'failureCode'> {
+    if (!trade.errorMessage && !trade.failureCode) return {};
+    const code = classifyTradeFailure(trade.failureCode ?? trade.errorMessage);
+    return { failureCode: code, errorMessage: getTradeFailure(code).message };
+  }
+
   private mapToTradeDetails(trade: Trade): TradeDetailsDto {
     return {
       id: trade.id,
@@ -625,7 +648,7 @@ export class TradesService {
       takeProfitPrice: trade.takeProfitPrice,
       transactionHash: trade.transactionHash,
       sorobanContractId: trade.sorobanContractId,
-      errorMessage: trade.errorMessage,
+      ...this.mapFailure(trade),
       executedAt: trade.executedAt,
       closedAt: trade.closedAt,
       createdAt: trade.createdAt,
