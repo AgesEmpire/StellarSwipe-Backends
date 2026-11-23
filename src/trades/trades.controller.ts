@@ -57,7 +57,7 @@ import {
   CloseTradeResultDto,
 } from './dto/trade-result.dto';
 import { PaginatedTradeHistoryDto } from './trade-history.service';
-import { Deprecated } from '../versioning/decorators/deprecated.decorator';
+import { ApiDeprecated } from '../versioning/decorators/api-deprecated.decorator';
 import { RejectDuplicateJsonKeys } from '../common/decorators/reject-duplicate-json-keys.decorator';
 
 @Controller('trades')
@@ -243,7 +243,7 @@ export class TradesController {
    */
   @Get('user/:userId')
   @RequireScopes(ApiKeyScope.TRADES_READ)
-  @Deprecated({
+  @ApiDeprecated({
     sunsetDate: '2025-12-31',
     successorVersion: '2',
     reason: 'Use GET /trades/user/:userId/history instead, which supports richer filtering and pagination.',
