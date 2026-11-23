@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
@@ -6,8 +6,12 @@ import { Trade } from '../../trades/entities/trade.entity';
 import { Signal } from '../../signals/entities/signal.entity';
 import { AuditLog } from '../../audit-log/audit-log.entity';
 
+const AUDIT_LOG_LIMIT = 1000;
+
 @Injectable()
 export class UserDataExporterService {
+  private readonly logger = new Logger(UserDataExporterService.name);
+
   constructor(
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Trade) private tradeRepo: Repository<Trade>,
@@ -20,8 +24,9 @@ export class UserDataExporterService {
     if (!user) throw new Error('User not found');
 
     const dateFilter = startDate && endDate ? Between(startDate, endDate) : undefined;
+    const exclusions: { category: string; reason: string }[] = [];
 
-    const [trades, signals, auditLogs] = await Promise.all([
+    const [tradesResult, signalsResult, auditResult] = await Promise.allSettled([
       this.tradeRepo.find({
         where: { userId, ...(dateFilter && { createdAt: dateFilter }) },
         order: { createdAt: 'DESC' },
@@ -33,9 +38,26 @@ export class UserDataExporterService {
       this.auditRepo.find({
         where: { userId, ...(dateFilter && { createdAt: dateFilter }) },
         order: { createdAt: 'DESC' },
-        take: 1000,
+        take: AUDIT_LOG_LIMIT,
       }),
     ]);
+
+    // A failed category is excluded on its own; the rest of the export still ships.
+    const settle = <T>(result: PromiseSettledResult<T[]>, category: string): T[] => {
+      if (result.status === 'fulfilled') return result.value;
+      this.logger.error(`Export category ${category} failed for user ${userId}`, result.reason?.stack);
+      exclusions.push({ category, reason: 'unavailable' });
+      return [];
+    };
+
+    const trades = settle(tradesResult, 'trades');
+    const signals = settle(signalsResult, 'signals');
+    const auditLogs = settle(auditResult, 'auditLog');
+    if (auditResult.status === 'fulfilled' && auditLogs.length >= AUDIT_LOG_LIMIT) {
+      exclusions.push({ category: 'auditLog', reason: 'row_limit_reached' });
+    }
+
+    const exportedAt = new Date().toISOString();
 
     return {
       user: {
@@ -70,7 +92,17 @@ export class UserDataExporterService {
         ipAddress: a.ipAddress,
         status: a.status,
       })),
-      exportedAt: new Date().toISOString(),
+      manifest: {
+        generatedAt: exportedAt,
+        categories: [
+          { name: 'profile', count: 1 },
+          { name: 'trades', count: trades.length },
+          { name: 'signals', count: signals.length },
+          { name: 'auditLog', count: auditLogs.length },
+        ],
+        exclusions,
+      },
+      exportedAt,
     };
   }
 }
