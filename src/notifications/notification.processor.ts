@@ -1,11 +1,12 @@
-import { Processor, Process, OnQueueFailed } from '@nestjs/bull';
-import { Job } from 'bull';
+import { Processor, Process, OnQueueFailed, InjectQueue } from '@nestjs/bull';
+import { Job, Queue } from 'bull';
 import { Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   Notification,
   NotificationChannel,
+  NotificationPriority,
   NotificationStatus,
   CONSENT_GATED_NOTIFICATION_TYPES,
 } from './entities/notification.entity';
@@ -16,6 +17,7 @@ import { ConsentCategory } from './entities/user-consent.entity';
 import { NOTIFICATION_QUEUE } from './notification.service';
 import { DeadLetterService } from '../jobs/dead-letter.service';
 import { ConsentService } from './consent.service';
+import { PreferencesService } from './preferences/preferences.service';
 import { SocketManagerService } from '../websocket/services/socket-manager.service';
 
 const WEBSOCKET_CHANNELS = new Set<NotificationChannel>([
@@ -63,6 +65,9 @@ export class NotificationProcessor {
     private readonly consentService: ConsentService,
     private readonly deadLetterService: DeadLetterService,
     private readonly socketManager: SocketManagerService,
+    private readonly preferencesService: PreferencesService,
+    @InjectQueue(NOTIFICATION_QUEUE)
+    private readonly notificationQueue: Queue,
   ) {}
 
   @Process('deliver')
@@ -95,6 +100,20 @@ export class NotificationProcessor {
           skippedReason,
         }),
       );
+      return;
+    }
+
+    // Only non-urgent notifications wait for quiet hours to end; the job keeps
+    // its original options (priority, attempts, backoff) on re-queue.
+    const quietDelayMs =
+      notification.priority === NotificationPriority.LOW
+        ? await this.preferencesService.quietHoursRemainingMs(notification.userId)
+        : 0;
+    if (quietDelayMs > 0) {
+      this.logger.log(
+        `Deferring notification ${notificationId} for user ${notification.userId} until quiet hours end`,
+      );
+      await this.notificationQueue.add('deliver', { notificationId }, { ...job.opts, delay: quietDelayMs });
       return;
     }
 
