@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApiKey } from './entities/api-key.entity';
 import { TenantContextProvider } from '../common/tenant-context';
+import { ApiKeyMetadataDto, toApiKeyMetadata } from './dto/api-key-usage.dto';
 
 /**
  * Tenant-aware API key operations
@@ -35,21 +36,26 @@ export class TenantAwareApiKeysService {
   /**
    * Get all API keys for a tenant
    */
-  async getByTenant(tenantId: string): Promise<ApiKey[]> {
-    return this.apiKeyRepo.find({
+  async getByTenant(tenantId: string): Promise<ApiKeyMetadataDto[]> {
+    const keys = await this.apiKeyRepo.find({
       where: { tenantId },
       order: { createdAt: 'DESC' },
     });
+    return keys.map(toApiKeyMetadata);
   }
 
   /**
    * Get all API keys for a user within their current tenant
    */
-  async getByUserInTenant(userId: string, tenantId: string): Promise<ApiKey[]> {
-    return this.apiKeyRepo.find({
+  async getByUserInTenant(
+    userId: string,
+    tenantId: string,
+  ): Promise<ApiKeyMetadataDto[]> {
+    const keys = await this.apiKeyRepo.find({
       where: { userId, tenantId },
       order: { createdAt: 'DESC' },
     });
+    return keys.map(toApiKeyMetadata);
   }
 
   /**

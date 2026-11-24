@@ -351,7 +351,8 @@ export class ApiKeysService {
       .map((record) => ({ ...record }));
   }
 
-  async list(userId: string): Promise<ApiKey[]> {
-    return this.apiKeyRepo.find({ where: { userId } });
+  async list(userId: string): Promise<ApiKeyMetadataDto[]> {
+    const keys = await this.apiKeyRepo.find({ where: { userId } });
+    return keys.map(toApiKeyMetadata);
   }
 }

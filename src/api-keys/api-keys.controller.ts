@@ -58,7 +58,7 @@ export class ApiKeysController {
   }
 
   @Get()
-  async list(@Request() req: any) {
+  async list(@Request() req: any): Promise<ApiKeyMetadataDto[]> {
     return this.apiKeysService.list(req.userId);
   }
 
