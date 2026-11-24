@@ -72,6 +72,24 @@ export class WebhooksController {
     );
   }
 
+  @Post(':id/pause')
+  @HttpCode(HttpStatus.OK)
+  async pause(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return toWebhookResponse(await this.webhooksService.pause(req.user.id, id));
+  }
+
+  @Post(':id/resume')
+  @HttpCode(HttpStatus.OK)
+  async resume(
+    @Request() req: { user: { id: string } },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return toWebhookResponse(await this.webhooksService.resume(req.user.id, id));
+  }
+
   @Post(':id/verify')
   @HttpCode(HttpStatus.OK)
   verifyEndpoint(

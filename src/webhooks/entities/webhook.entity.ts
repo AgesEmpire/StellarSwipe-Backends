@@ -76,6 +76,13 @@ export class Webhook {
   @Column({ default: true })
   active!: boolean;
 
+  /** Owner-initiated hold: events are recorded as `paused` deliveries, not sent. */
+  @Column({ default: false })
+  paused!: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  pausedAt?: Date | null;
+
   /** Destination awaiting ownership verification; not used for deliveries. */
   @Column({ type: 'varchar', length: 2048, nullable: true })
   pendingUrl?: string | null;

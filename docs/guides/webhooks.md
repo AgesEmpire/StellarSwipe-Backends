@@ -196,6 +196,21 @@ Fired when a price alert is triggered.
 #### `alert.risk_threshold`
 Fired when risk thresholds are exceeded.
 
+## Pausing an Endpoint
+
+Pause an endpoint during maintenance without deleting its configuration:
+
+- `POST /webhooks/:id/pause` and `POST /webhooks/:id/resume` (owner only).
+- Each transition is recorded in an immutable audit log (`webhook_state_audits`).
+- While paused, events are still recorded but not sent. They are stored as
+  deliveries with status `paused` and make no HTTP attempts and no retries.
+  Pausing does not count toward the consecutive-failure disable threshold.
+- Held events are retained for 72 hours. On resume, held events younger than
+  that are queued for normal delivery; older ones are marked `expired` and are
+  not sent.
+- Manual retry of a delivery to a paused endpoint is rejected until it is resumed.
+- Mandatory security notifications (secret rotation) are also held while paused.
+
 ## Handling Webhooks
 
 ### Basic Event Handler

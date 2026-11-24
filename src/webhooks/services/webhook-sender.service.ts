@@ -65,6 +65,9 @@ export class WebhookSenderService {
     payload: WebhookPayload,
     schemaVersion = WEBHOOK_PAYLOAD_SCHEMA_VERSION,
   ): Promise<WebhookDelivery> {
+    // Paused endpoints keep the event on record but never enqueue it; resume
+    // releases it (see releasePausedDeliveries).
+    const paused = webhook.paused;
     const delivery = this.deliveryRepo.create({
       webhookId: webhook.id,
       eventType: payload.event,
@@ -76,8 +79,44 @@ export class WebhookSenderService {
     });
     const saved = await this.deliveryRepo.save(delivery);
 
-    await this.enqueueDelivery(saved.id, false);
+    if (!paused) await this.enqueueDelivery(saved.id, false);
     return saved;
+  }
+
+  /**
+   * Moves held deliveries for a resumed endpoint back into the queue. Events
+   * older than WEBHOOK_PAUSE_RETENTION_MS are expired rather than sent late.
+   */
+  async releasePausedDeliveries(
+    webhookId: string,
+    now = new Date(),
+  ): Promise<{ released: number; expired: number }> {
+    const held = await this.deliveryRepo.find({
+      where: { webhookId, status: 'paused' },
+      order: { createdAt: 'ASC' },
+    });
+    const cutoff = now.getTime() - WEBHOOK_PAUSE_RETENTION_MS;
+
+    let released = 0;
+    let expired = 0;
+    for (const delivery of held) {
+      if (delivery.createdAt.getTime() < cutoff) {
+        delivery.status = 'expired';
+        delivery.errorMessage = 'Expired while endpoint was paused';
+        await this.deliveryRepo.save(delivery);
+        expired++;
+        continue;
+      }
+      delivery.status = 'pending';
+      await this.deliveryRepo.save(delivery);
+      await this.enqueueDelivery(delivery.id, false);
+      released++;
+    }
+
+    this.logger.log(
+      `Released paused deliveries: webhook=${webhookId} released=${released} expired=${expired}`,
+    );
+    return { released, expired };
   }
 
   /**
@@ -137,6 +176,9 @@ export class WebhookSenderService {
     if (!delivery.webhook.active) {
       throw new Error('Cannot retry delivery for an inactive webhook');
     }
+    if (delivery.webhook.paused) {
+      throw new Error('Cannot retry delivery for a paused webhook');
+    }
 
     delivery.status = 'pending';
     delivery.nextRetryAt = undefined;
@@ -153,6 +195,15 @@ export class WebhookSenderService {
   ): Promise<void> {
     const delivery = await this.getDeliveryForAttempt(deliveryId);
     const webhook = delivery.webhook;
+
+    // Paused after this job was queued: hold it without an HTTP attempt so it
+    // is neither retried nor counted as a failure.
+    if (webhook.paused) {
+      delivery.status = 'paused';
+      await this.deliveryRepo.save(delivery);
+      return;
+    }
+
     const payload = delivery.payload as unknown as WebhookPayload;
 
     // Issue #1030: during a rotation window, sign with nextSecret so the
@@ -200,9 +251,9 @@ export class WebhookSenderService {
    */
   async retryInPlace(delivery: WebhookDelivery): Promise<boolean> {
     const webhook = delivery.webhook;
-    if (!webhook?.active) {
+    if (!webhook?.active || webhook.paused) {
       this.logger.warn(
-        `Skipping reconciliation retry: webhook inactive: delivery=${delivery.id} webhookId=${delivery.webhookId}`,
+        `Skipping reconciliation retry: webhook inactive or paused: delivery=${delivery.id} webhookId=${delivery.webhookId}`,
       );
       return false;
     }
