@@ -885,3 +885,6 @@ MIT
 
 <!-- handsoff-issue-1403 -->
 - #1403: Standardize omitted and null semantics for PATCH requests
+
+<!-- handsoff-issue-1404 -->
+- #1404: Bound query parameter counts and repeated-value lengths
