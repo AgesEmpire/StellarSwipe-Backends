@@ -879,3 +879,6 @@ MIT
 
 <!-- handsoff-issue-1405 -->
 - #1405: Require explicit offsets for API timestamp filters
+
+<!-- handsoff-issue-1406 -->
+- #1406: Restrict API documentation endpoints by deployment policy
