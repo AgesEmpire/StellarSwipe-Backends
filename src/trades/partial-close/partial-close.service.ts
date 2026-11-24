@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
+import { PositionLifecycleService } from '../position-lifecycle/position-lifecycle.service';
+import {
+    PositionLifecycleEventType,
+    PositionLifecycleSource,
+} from '../position-lifecycle/position-lifecycle-event.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Trade, TradeStatus, TradeSide } from '../entities/trade.entity';
@@ -15,6 +20,8 @@ export class PartialCloseService {
         private readonly tradeRepository: Repository<Trade>,
         private readonly riskManager: RiskManagerService,
         private readonly tradeExecutor: TradeExecutorService,
+        @Optional()
+        private readonly positionLifecycle?: PositionLifecycleService,
     ) { }
 
     async closePartial(dto: PartialCloseDto): Promise<any> {
@@ -90,6 +97,21 @@ export class PartialCloseService {
 
         await this.tradeRepository.save(partialCloseTrade);
         await this.tradeRepository.save(originalTrade);
+
+        // #1534 — partial-close timestamp; quantity semantics are unchanged
+        // (the before/after amounts are recorded only as a snapshot).
+        await this.positionLifecycle?.recordTransitionSafe({
+            positionId: originalTrade.id,
+            userId: originalTrade.userId,
+            type: PositionLifecycleEventType.PARTIALLY_CLOSED,
+            occurredAt: partialCloseTrade.closedAt,
+            quantityBefore: currentAmount.toFixed(8),
+            quantityAfter: originalTrade.amount,
+            source: PositionLifecycleSource.TRADE,
+            idempotencyKey: `trade:${originalTrade.id}:partial:${partialCloseTrade.id}`,
+            backfill: { openedAt: originalTrade.executedAt ?? originalTrade.createdAt },
+            metadata: { closeTradeId: partialCloseTrade.id },
+        });
 
         this.logger.log(`Partial close successful for trade ${originalTrade.id}. Closed ${amountToClose} ${originalTrade.baseAsset}. Remaining: ${remainingAmount}`);
 

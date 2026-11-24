@@ -9,8 +9,14 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { PositionLifecycleService } from './position-lifecycle/position-lifecycle.service';
+import {
+  PositionLifecycleEventType,
+  PositionLifecycleSource,
+} from './position-lifecycle/position-lifecycle-event.entity';
 import { DataSource, Repository } from 'typeorm';
 import { Trade, TradeStatus, TradeSide } from './entities/trade.entity';
 import { OutboxService } from '../events/outbox/outbox.service';
@@ -77,6 +83,8 @@ export class TradesService {
     private readonly atomicTx: AtomicTransactionHelper,
     private readonly rbacService: RbacService,
     private readonly tradeAuditService: TradeAuditService,
+    @Optional()
+    private readonly positionLifecycle?: PositionLifecycleService,
   ) {}
 
   /** Roles permitted to restore a soft-deleted trade. See issue #1367. */
@@ -290,6 +298,19 @@ export class TradesService {
           },
           `trade.completed:${trade.id}`,
         );
+        // #1534 — position creation timestamp (trade id is the position id).
+        await this.positionLifecycle?.recordTransitionSafe(
+          {
+            positionId: trade.id,
+            userId: trade.userId,
+            type: PositionLifecycleEventType.OPENED,
+            occurredAt: trade.executedAt,
+            quantityAfter: trade.amount,
+            source: PositionLifecycleSource.TRADE,
+            idempotencyKey: `trade:${trade.id}:opened`,
+          },
+          manager,
+        );
       });
 
       // Record trade execution for velocity tracking
@@ -401,6 +422,21 @@ export class TradesService {
         'trade.position.closed',
         { tradeId: trade.id, userId: trade.userId, profitLoss },
         `trade.position.closed:${trade.id}`,
+      );
+      // #1534 — full-close timestamp, committed with the close itself.
+      await this.positionLifecycle?.recordTransitionSafe(
+        {
+          positionId: trade.id,
+          userId: trade.userId,
+          type: PositionLifecycleEventType.CLOSED,
+          occurredAt: trade.closedAt,
+          quantityBefore: trade.amount,
+          quantityAfter: '0',
+          source: PositionLifecycleSource.TRADE,
+          idempotencyKey: `trade:${trade.id}:closed`,
+          backfill: { openedAt: trade.executedAt ?? trade.createdAt },
+        },
+        qr.manager,
       );
     });
 

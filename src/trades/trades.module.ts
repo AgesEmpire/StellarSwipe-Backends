@@ -5,6 +5,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 import { Trade } from './entities/trade.entity';
 import { CopyPolicyModule } from './copy-policy/copy-policy.module';
+import { PositionLifecycleModule } from './position-lifecycle/position-lifecycle.module';
 import { AdvancedOrder } from './entities/advanced-order.entity';
 import { TradesController } from './trades.controller';
 import { AdvancedOrdersController } from './advanced-orders.controller';
@@ -65,6 +66,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
 @Module({
   imports: [
     CopyPolicyModule,
+    PositionLifecycleModule,
     CqrsModule,
     TypeOrmModule.forFeature([Trade, AdvancedOrder, Signal, TradeSagaEntity]),
     RiskManagerModule,

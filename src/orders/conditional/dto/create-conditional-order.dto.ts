@@ -10,6 +10,8 @@ import {
   IsArray,
   Min,
   Max,
+  MinLength,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -96,6 +98,17 @@ export class CreateConditionalOrderDto {
 }
 
 export class UpdateConditionalOrderDto {
+  @ApiProperty({
+    description:
+      'Why the order is being amended. Stored on the append-only revision record (#1529).',
+    minLength: 3,
+    maxLength: 500,
+  })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
+
   @ApiPropertyOptional({
     description:
       'Version last read by the client. If supplied, the update is rejected with a 409 conflict when the order was modified since that read.',
