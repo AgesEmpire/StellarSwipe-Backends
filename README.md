@@ -882,3 +882,6 @@ MIT
 
 <!-- handsoff-issue-1415 -->
 - #1415: Prevent account enumeration in credential recovery responses
+
+<!-- handsoff-issue-1416 -->
+- #1416: Rate-limit credential recovery by account and network source

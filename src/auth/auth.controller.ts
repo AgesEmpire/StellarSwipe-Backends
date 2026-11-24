@@ -165,38 +165,6 @@ export class AuthController {
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
     @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Revoke one of the authenticated user\'s sessions' })
-    @ApiResponse({ status: 200, description: 'Session revoked' })
-    @ApiResponse({ status: 401, description: 'Authentication required' })
-    @ApiResponse({ status: 404, description: 'Session not found for the current user' })
-    async revokeSession(@Param('id') id: string, @Req() req: Request) {
-        const userId: string | undefined = (req as any).user?.id;
-        return this.sessionManager.revokeUserSession(userId, id);
-    }
+    @ApiOperation({ summary: 'Revoke one of the authenticated 
 
-    @Delete('sessions')
-    @UseGuards(JwtAuthGuard)
-    @ApiBearerAuth()
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Revoke all of the authenticated user\'s sessions except the current one' })
-    @ApiResponse({ status: 200, description: 'Other sessions revoked' })
-    @ApiResponse({ status: 401, description: 'Authentication required' })
-    async revokeOtherSessions(@Req() req: Request) {
-        const userId: string | undefined = (req as any).user?.id;
-        const currentSessionId: string | undefined = (req as any).user?.sessionId;
-        return this.sessionManager.revokeOtherUserSessions(userId, currentSessionId);
-    }
-
-    /**
-     * Holds the response until at least RECOVERY_MIN_RESPONSE_MS has elapsed
-     * since the request started, so existing and unknown accounts observe the
-     * same latency profile.
-     */
-    private async holdForUniformTiming(startedAt: number): Promise<void> {
-        const elapsed = Date.now() - startedAt;
-        const remaining = RECOVERY_MIN_RESPONSE_MS - elapsed;
-        if (remaining > 0) {
-            await new Promise((resolve) => setTimeout(resolve, remaining));
-        }
-    }
-}
+/* … truncated 1622 chars — edit only what you need near the top … */
