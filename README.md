@@ -882,3 +882,6 @@ MIT
 
 <!-- handsoff-issue-1402 -->
 - #1402: Normalize Unicode identifiers before uniqueness checks
+
+<!-- handsoff-issue-1403 -->
+- #1403: Standardize omitted and null semantics for PATCH requests
