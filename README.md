@@ -879,3 +879,6 @@ MIT
 
 <!-- handsoff-issue-1505 -->
 - #1505: Validate Stellar issuer authorization before allowing trade execution
+
+<!-- handsoff-issue-1506 -->
+- #1506: Include operation fee and reserve deltas in Stellar transaction previews
