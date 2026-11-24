@@ -873,3 +873,6 @@ MIT
 
 <!-- handsoff-issue-1412 -->
 - #1412: Refresh cached signing keys safely when a JWT key ID is unknown
+
+<!-- handsoff-issue-1413 -->
+- #1413: Revoke active refresh sessions after a successful password reset
