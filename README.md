@@ -876,3 +876,6 @@ MIT
 
 <!-- handsoff-issue-1413 -->
 - #1413: Revoke active refresh sessions after a successful password reset
+
+<!-- handsoff-issue-1401 -->
+- #1401: Disable implicit DTO coercion for security-sensitive numeric fields
