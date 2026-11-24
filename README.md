@@ -867,3 +867,6 @@ MIT
 
 <!-- handsoff-issue-1409 -->
 - #1409: Fail fast when production encryption secrets are weak or placeholders
+
+<!-- handsoff-issue-1411 -->
+- #1411: Validate JWT issuer and audience per authentication strategy
