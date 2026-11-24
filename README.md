@@ -882,3 +882,6 @@ MIT
 
 <!-- handsoff-issue-1406 -->
 - #1406: Restrict API documentation endpoints by deployment policy
+
+<!-- handsoff-issue-1407 -->
+- #1407: Apply no-store cache policy to personalized API responses
