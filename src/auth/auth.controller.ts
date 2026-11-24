@@ -17,6 +17,22 @@ import { Roles } from '../authorization/decorators/roles.decorator';
 import { Request } from 'express';
 import { RejectDuplicateJsonKeys } from '../common/decorators/reject-duplicate-json-keys.decorator';
 
+/**
+ * Minimum time (ms) a public password-recovery request is held before responding.
+ * This keeps observable latency roughly constant regardless of whether the
+ * supplied identifier maps to an existing account, preventing timing-based
+ * account enumeration.
+ */
+const RECOVERY_MIN_RESPONSE_MS = 500;
+
+/**
+ * Uniform public response for password-recovery requests. It never reveals
+ * whether the account exists or whether internal delivery succeeded.
+ */
+const RECOVERY_ACK = {
+    message: 'If an account with that identifier exists, a recovery message has been sent.',
+};
+
 @ApiTags('auth')
 @RejectDuplicateJsonKeys()
 @Controller('auth')
@@ -44,7 +60,16 @@ export class AuthController {
     @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
     @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60, keyBy: ['email'], accountLimit: 3, accountWindow: 3600 })
     async forgotPassword(@Body() dto: ForgotPasswordDto) {
-        return this.authService.forgotPassword(dto);
+        const startedAt = Date.now();
+        try {
+            // Internal delivery outcome is recorded by the service; the result
+            // is intentionally discarded so it cannot leak account existence.
+            await this.authService.forgotPassword(dto);
+        } catch {
+            // Swallow delivery/account errors: public response must be uniform.
+        }
+        await this.holdForUniformTiming(startedAt);
+        return RECOVERY_ACK;
     }
 
     @Post('reset-password')
@@ -162,18 +187,16 @@ export class AuthController {
         return this.sessionManager.revokeOtherUserSessions(userId, currentSessionId);
     }
 
-    @Post('mfa/recovery-codes/regenerate')
-    @UseGuards(JwtAuthGuard)
-    @ApiBearerAuth()
-    @Audit({ action: AuditAction.MFA_RECOVERY_CODES_REGENERATED, resource: 'auth' })
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Regenerate MFA recovery codes, invalidating the previous set' })
-    @ApiResponse({ status: 200, description: 'New recovery codes issued; previous codes are no longer valid. Codes are shown only once.' })
-    @ApiResponse({ status: 401, description: 'Authentication required' })
-    @ApiResponse({ status: 429, description: 'Too many requests — see Retry-After header' })
-    @RateLimit({ tier: RateLimitTier.AUTH, limit: 5, window: 60 })
-    async regenerateRecoveryCodes(@Req() req: Request) {
-        const userId: string | undefined = (req as any).user?.id;
-        return this.authService.regenerateRecoveryCodes(userId);
+    /**
+     * Holds the response until at least RECOVERY_MIN_RESPONSE_MS has elapsed
+     * since the request started, so existing and unknown accounts observe the
+     * same latency profile.
+     */
+    private async holdForUniformTiming(startedAt: number): Promise<void> {
+        const elapsed = Date.now() - startedAt;
+        const remaining = RECOVERY_MIN_RESPONSE_MS - elapsed;
+        if (remaining > 0) {
+            await new Promise((resolve) => setTimeout(resolve, remaining));
+        }
     }
 }

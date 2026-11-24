@@ -879,3 +879,6 @@ MIT
 
 <!-- handsoff-issue-1414 -->
 - #1414: Consume OAuth state values atomically and only once
+
+<!-- handsoff-issue-1415 -->
+- #1415: Prevent account enumeration in credential recovery responses
