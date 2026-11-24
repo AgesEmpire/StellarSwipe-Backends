@@ -882,3 +882,6 @@ MIT
 
 <!-- handsoff-issue-1425 -->
 - #1425: Define catch-up behavior for scheduled jobs missed during downtime
+
+<!-- handsoff-issue-1426 -->
+- #1426: Preserve configured time zones in recurring schedule evaluation
