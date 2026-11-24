@@ -885,3 +885,6 @@ MIT
 
 <!-- handsoff-issue-1399 -->
 - #1399: Validate CORS origin configuration and credential combinations
+
+<!-- handsoff-issue-1400 -->
+- #1400: Limit JSON nesting depth before DTO transformation
