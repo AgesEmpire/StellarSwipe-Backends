@@ -876,3 +876,6 @@ MIT
 
 <!-- handsoff-issue-1413 -->
 - #1413: Revoke active refresh sessions after a successful password reset
+
+<!-- handsoff-issue-1397 -->
+- #1397: Prevent Host header injection in generated absolute URLs

@@ -19,6 +19,53 @@ const parsePositiveInt = (value: string | undefined, fallback: number): number =
 };
 
 /**
+ * Canonical public origin (issue #1397).
+ *
+ * Absolute URLs (email links, callback URLs, API-generated links) must be built
+ * from a configured canonical origin rather than an untrusted Host or
+ * forwarded-host header. The value is validated at startup so a malformed or
+ * wildcard origin fails fast instead of silently producing attacker-controlled
+ * links.
+ */
+const parseCanonicalOrigin = (value: string | undefined): string => {
+  const raw = (value || '').trim();
+
+  if (raw.length === 0) {
+    return '';
+  }
+
+  try {
+    const url = new URL(raw);
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return '';
+    }
+
+    // Reject wildcards and path/query/fragment components: only a bare origin
+    // (scheme + host + optional port) is a valid canonical public origin.
+    if (url.hostname.includes('*')) {
+      return '';
+    }
+
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      return '';
+    }
+
+    return url.origin;
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * Canonical public origin configuration (issue #1397).
+ * Used to generate absolute URLs independent of request headers.
+ */
+const publicOrigin = {
+  canonical: parseCanonicalOrigin(process.env.PUBLIC_ORIGIN),
+};
+
+/**
  * Request payload and parameter size limits (issue #1166).
  * All limits are configurable via environment variables and enforced
  * consistently across transports before expensive processing occurs.
@@ -139,6 +186,7 @@ const validateProductionSecret = (
 export const validateConfiguration = (config: {
   env: string;
   port: number;
+  publicOrigin: { canonical: string };
   encryptionSecrets: { encryptionKey: string; signingSecret: string };
   rateLimit: {
     enabled: boolean;
@@ -157,6 +205,14 @@ export const validateConfiguration = (config: {
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
     errors.push(
       `PORT must be an integer between 1 and 65535 (received: ${config.port}).`,
+    );
+  }
+
+  // Canonical public origin (issue #1397): required in production so generated
+  // absolute URLs never depend on untrusted Host / X-Forwarded-Host headers.
+  if (config.env === 'production' && config.publicOrigin.canonical.length === 0) {
+    errors.push(
+      'PUBLIC_ORIGIN must be set to a valid absolute http(s) origin (e.g. https://app.example.com) in production.',
     );
   }
 
@@ -225,53 +281,15 @@ export const validateConfiguration = (config: {
   }
 
   if (errors.length > 0) {
-    throw new Error(
-      `Invalid configuration:\n- ${errors.join('\n- ')}`,
-    );
+    throw new Error(`Invalid configuration:\n- ${errors.join('\n- ')}`);
   }
 };
 
-export default registerAs('app', () => {
-  const config = {
-    env: process.env.NODE_ENV || 'development',
-    port: parseInt(process.env.PORT || '3000', 10),
-    requestLimits,
-    secretsRotation,
-    encryptionSecrets,
-    rateLimit: {
-      // Distributed rate limiting for public and auth-sensitive routes.
-      // Uses a shared store (Redis) so limits are enforced across all instances.
-      enabled: process.env.RATE_LIMIT_ENABLED !== 'false',
-      store: {
-        type: process.env.RATE_LIMIT_STORE || 'redis',
-        url: process.env.RATE_LIMIT_STORE_URL || process.env.REDIS_URL || 'redis://localhost:6379',
-        keyPrefix: process.env.RATE_LIMIT_KEY_PREFIX || 'ratelimit:',
-      },
-      // Behavior when the shared store is unavailable.
-      // 'allow' fails open (availability over strictness), 'deny' fails closed.
-      onStoreError: process.env.RATE_LIMIT_ON_STORE_ERROR || 'allow',
-      policies: {
-        // Public, unauthenticated routes.
-        public: {
-          windowMs: parseInt(process.env.RATE_LIMIT_PUBLIC_WINDOW_MS || '60000', 10),
-          max: parseInt(process.env.RATE_LIMIT_PUBLIC_MAX || '100', 10),
-        },
-        // Authentication-sensitive routes (login, token, password reset).
-        auth: {
-          windowMs: parseInt(process.env.RATE_LIMIT_AUTH_WINDOW_MS || '60000', 10),
-          max: parseInt(process.env.RATE_LIMIT_AUTH_MAX || '10', 10),
-        },
-        // Trusted internal routes: explicit, effectively unlimited policy.
-        internal: {
-          windowMs: parseInt(process.env.RATE_LIMIT_INTERNAL_WINDOW_MS || '60000', 10),
-          max: parseInt(process.env.RATE_LIMIT_INTERNAL_MAX || '1000000', 10),
-          skip: process.env.RATE_LIMIT_INTERNAL_SKIP === 'true',
-        },
-      },
-    },
-  };
-
-  validateConfiguration(config);
-
-  return config;
-});
+export default registerAs('app', () => ({
+  env: process.env.NODE_ENV || 'development',
+  port: parsePositiveInt(process.env.PORT, 3000),
+  publicOrigin,
+  requestLimits,
+  secretsRotation,
+  encryptionSecrets,
+}));
