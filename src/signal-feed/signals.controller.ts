@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Body, ValidationPipe, Req, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, ValidationPipe, Req, UseInterceptors, Optional } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { Request } from 'express';
 import { SignalsService } from './signals.service';
@@ -11,6 +11,7 @@ import { applySparseFieldset } from '../common/utils/field-selection.util';
 import { ETagInterceptor } from '../common/interceptors/etag.interceptor';
 import { buildPaginationLinks } from '../common/pagination/pagination-links.util';
 import { CursorValidationPipe } from '../common/pipes/cursor-validation.pipe';
+import { SignalCategoryMuteService } from './category-mutes/signal-category-mute.service';
 
 @ApiTags('signals')
 @Controller('signals')
@@ -19,6 +20,8 @@ export class SignalsController {
     private readonly signalsService: SignalsService,
     private readonly feedAnalytics: FeedAnalyticsService,
     private readonly providerMuteService: ProviderMuteService,
+    @Optional()
+    private readonly categoryMuteService?: SignalCategoryMuteService,
   ) {}
 
   @Get('feed')
@@ -36,7 +39,12 @@ export class SignalsController {
   ): Promise<SignalFeedResponseDto> {
     // The cursor in query.cursor is now validated and safe to use.
     // For production, use the CursorValidationPipe decorator above to validate individual cursor parameters.
-    const feed = await this.signalsService.getFeed(query);
+    const userId: string | undefined = (req as any).user?.id;
+    const mutedCategories =
+      userId && this.categoryMuteService
+        ? await this.categoryMuteService.getMutedCategories(userId)
+        : [];
+    const feed = await this.signalsService.getFeed(query, [], mutedCategories);
 
     if (feed.page !== undefined && feed.totalPages !== undefined) {
       feed.links = buildPaginationLinks(req.url, {

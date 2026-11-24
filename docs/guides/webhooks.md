@@ -73,6 +73,22 @@ console.log('Webhook ID:', webhook.id);
 console.log('Secret:', webhook.secret); // Save this securely
 ```
 
+## Delivery Headers
+
+Every delivery is a `POST` with these headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-StellarSwipe-Signature` | Versioned HMAC signature of the body (`v1=<hex>`) |
+| `X-StellarSwipe-Signature-Version` | Signing algorithm version |
+| `X-StellarSwipe-Event` | Event type, e.g. `trade.executed` |
+| `X-StellarSwipe-Delivery-Id` | Unique ID for this delivery |
+| `X-StellarSwipe-Payload-Version` | Payload schema version (currently `1`) |
+
+The payload schema version is fixed when the event is queued. Retries and
+reconciliation attempts send the same version, even if the serializer changes
+after a deployment. Replays keep the version of the original delivery.
+
 ## Event Types
 
 ### Signal Events
@@ -179,6 +195,21 @@ Fired when a price alert is triggered.
 
 #### `alert.risk_threshold`
 Fired when risk thresholds are exceeded.
+
+## Pausing an Endpoint
+
+Pause an endpoint during maintenance without deleting its configuration:
+
+- `POST /webhooks/:id/pause` and `POST /webhooks/:id/resume` (owner only).
+- Each transition is recorded in an immutable audit log (`webhook_state_audits`).
+- While paused, events are still recorded but not sent. They are stored as
+  deliveries with status `paused` and make no HTTP attempts and no retries.
+  Pausing does not count toward the consecutive-failure disable threshold.
+- Held events are retained for 72 hours. On resume, held events younger than
+  that are queued for normal delivery; older ones are marked `expired` and are
+  not sent.
+- Manual retry of a delivery to a paused endpoint is rejected until it is resumed.
+- Mandatory security notifications (secret rotation) are also held while paused.
 
 ## Handling Webhooks
 

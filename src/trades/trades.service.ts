@@ -1,10 +1,22 @@
 import {
+  TradeExecutionFailedException,
+  TradeFailureCode,
+  classifyTradeFailure,
+  getTradeFailure,
+} from './errors/trade-failure-codes';
+import {
   Injectable,
   Logger,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { PositionLifecycleService } from './position-lifecycle/position-lifecycle.service';
+import {
+  PositionLifecycleEventType,
+  PositionLifecycleSource,
+} from './position-lifecycle/position-lifecycle-event.entity';
 import { DataSource, Repository } from 'typeorm';
 import { Trade, TradeStatus, TradeSide } from './entities/trade.entity';
 import { OutboxService } from '../events/outbox/outbox.service';
@@ -71,6 +83,8 @@ export class TradesService {
     private readonly atomicTx: AtomicTransactionHelper,
     private readonly rbacService: RbacService,
     private readonly tradeAuditService: TradeAuditService,
+    @Optional()
+    private readonly positionLifecycle?: PositionLifecycleService,
   ) {}
 
   /** Roles permitted to restore a soft-deleted trade. See issue #1367. */
@@ -96,8 +110,8 @@ export class TradesService {
             dto.signalId,
           );
           if (isDuplicate) {
-            throw new BadRequestException(
-              'A pending trade already exists for this signal',
+            throw new TradeExecutionFailedException(
+              TradeFailureCode.DUPLICATE_TRADE,
             );
           }
 
@@ -118,7 +132,11 @@ export class TradesService {
           );
           if (!validation.isValid) {
             throw new BadRequestException({
+              statusCode: 400,
+              error: 'Bad Request',
+              code: TradeFailureCode.VALIDATION_FAILED,
               message: 'Trade validation failed',
+              retryable: false,
               errors: validation.errors,
             });
           }
@@ -217,8 +235,12 @@ export class TradesService {
       );
 
       if (!executionResult.success) {
+        const failureCode = classifyTradeFailure(executionResult.error);
         trade.status = TradeStatus.FAILED;
+        // Raw provider error is kept for internal diagnostics only; it is
+        // never returned to clients (see mapToTradeDetails).
         trade.errorMessage = executionResult.error;
+        trade.failureCode = failureCode;
         await this.dataSource.transaction(async (manager) => {
           await manager.save(Trade, trade);
           await this.outboxService.record(
@@ -228,6 +250,7 @@ export class TradesService {
               tradeId: trade.id,
               userId: trade.userId,
               error: trade.errorMessage,
+              code: failureCode,
             },
             `trade.execution.failed:${trade.id}`,
           );
@@ -236,11 +259,7 @@ export class TradesService {
         this.tradeLatency.endFlow(trade.id, 'failure');
         this.logger.error(`Trade ${trade.id} failed: ${executionResult.error}`);
 
-        throw new BadRequestException({
-          message: 'Trade execution failed',
-          error: executionResult.error,
-          tradeId: trade.id,
-        });
+        throw new TradeExecutionFailedException(failureCode, trade.id);
       }
 
       // ── Stage: CONFIRMATION ──────────────────────────────────────────────
@@ -278,6 +297,19 @@ export class TradesService {
             totalValue: trade.totalValue,
           },
           `trade.completed:${trade.id}`,
+        );
+        // #1534 — position creation timestamp (trade id is the position id).
+        await this.positionLifecycle?.recordTransitionSafe(
+          {
+            positionId: trade.id,
+            userId: trade.userId,
+            type: PositionLifecycleEventType.OPENED,
+            occurredAt: trade.executedAt,
+            quantityAfter: trade.amount,
+            source: PositionLifecycleSource.TRADE,
+            idempotencyKey: `trade:${trade.id}:opened`,
+          },
+          manager,
         );
       });
 
@@ -390,6 +422,21 @@ export class TradesService {
         'trade.position.closed',
         { tradeId: trade.id, userId: trade.userId, profitLoss },
         `trade.position.closed:${trade.id}`,
+      );
+      // #1534 — full-close timestamp, committed with the close itself.
+      await this.positionLifecycle?.recordTransitionSafe(
+        {
+          positionId: trade.id,
+          userId: trade.userId,
+          type: PositionLifecycleEventType.CLOSED,
+          occurredAt: trade.closedAt,
+          quantityBefore: trade.amount,
+          quantityAfter: '0',
+          source: PositionLifecycleSource.TRADE,
+          idempotencyKey: `trade:${trade.id}:closed`,
+          backfill: { openedAt: trade.executedAt ?? trade.createdAt },
+        },
+        qr.manager,
       );
     });
 
@@ -605,6 +652,18 @@ export class TradesService {
     return trades.map((trade) => this.mapToTradeDetails(trade));
   }
 
+  /**
+   * Returns only the stable code and safe message for failed trades so raw
+   * provider payloads stored in `errorMessage` never leak to clients (#1527).
+   */
+  private mapFailure(
+    trade: Trade,
+  ): Pick<TradeDetailsDto, 'errorMessage' | 'failureCode'> {
+    if (!trade.errorMessage && !trade.failureCode) return {};
+    const code = classifyTradeFailure(trade.failureCode ?? trade.errorMessage);
+    return { failureCode: code, errorMessage: getTradeFailure(code).message };
+  }
+
   private mapToTradeDetails(trade: Trade): TradeDetailsDto {
     return {
       id: trade.id,
@@ -625,7 +684,7 @@ export class TradesService {
       takeProfitPrice: trade.takeProfitPrice,
       transactionHash: trade.transactionHash,
       sorobanContractId: trade.sorobanContractId,
-      errorMessage: trade.errorMessage,
+      ...this.mapFailure(trade),
       executedAt: trade.executedAt,
       closedAt: trade.closedAt,
       createdAt: trade.createdAt,

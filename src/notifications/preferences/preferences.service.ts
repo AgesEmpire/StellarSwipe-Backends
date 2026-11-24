@@ -104,6 +104,9 @@ export class PreferencesService {
         preference.quietHoursEnd = dto.quietHours.end;
       }
       if (dto.quietHours.timezone !== undefined) {
+        if (!this.isValidTimeZone(dto.quietHours.timezone)) {
+          throw new BadRequestException('quietHours.timezone must be a valid IANA timezone');
+        }
         preference.timezone = dto.quietHours.timezone;
       }
       if (
@@ -228,6 +231,45 @@ export class PreferencesService {
     }
     // Wraps past midnight, e.g. 22:00 -> 07:00
     return minutesNow >= start || minutesNow < end;
+  }
+
+  /**
+   * Milliseconds until the user's quiet hours end, or 0 when `at` is outside
+   * quiet hours. Computed in the user's timezone so the result lands on the
+   * next allowed local time, including across DST transitions.
+   */
+  async quietHoursRemainingMs(userId: string, at: Date = new Date()): Promise<number> {
+    const preference = await this.findOrCreate(userId);
+    if (!this.isWithinQuietHours(preference, at)) {
+      return 0;
+    }
+
+    const end = this.toMinutes(preference.quietHoursEnd!);
+    const minutesNow = this.minutesInTimezone(at, preference.timezone);
+    const minutesUntilEnd = (end - minutesNow + 1440) % 1440 || 1440;
+    const minuteStart = at.getTime() - (at.getUTCSeconds() * 1000 + at.getUTCMilliseconds());
+    let target = minuteStart + minutesUntilEnd * 60000;
+
+    // Elapsed time and wall-clock minutes diverge when a DST change falls in
+    // between, so re-measure the target in the zone and correct the drift.
+    for (let i = 0; i < 2; i++) {
+      const local = this.minutesInTimezone(new Date(target), preference.timezone);
+      let drift = (end - local + 1440) % 1440;
+      if (drift > 720) drift -= 1440;
+      if (drift === 0) break;
+      target += drift * 60000;
+    }
+
+    return Math.max(target - at.getTime(), 0);
+  }
+
+  private isValidTimeZone(timezone: string): boolean {
+    try {
+      new Intl.DateTimeFormat('en-GB', { timeZone: timezone });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**

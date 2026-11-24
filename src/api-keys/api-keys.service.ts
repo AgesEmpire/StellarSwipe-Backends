@@ -8,7 +8,13 @@ import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { ApiKey } from './entities/api-key.entity';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
-import { ApiKeyResponseDto, ApiKeyUsageDto } from './dto/api-key-usage.dto';
+import {
+  ApiKeyResponseDto,
+  ApiKeyScopeDecisionDto,
+  ApiKeyScopeDenialReason,
+  ApiKeyUsageDto,
+} from './dto/api-key-usage.dto';
+import { ApiKeyScope } from './enums/api-key-scope.enum';
 
 const MAX_OVERLAP_MS = 3_600_000;
 const LAST_USED_THROTTLE_MS = 60_000;
@@ -103,6 +109,46 @@ export class ApiKeysService {
         'A verified email is required to create an API key',
       );
     }
+  }
+
+  /**
+   * Read-only: reports allow/deny per requested scope using the same gates as
+   * create(). Never persists or returns key material.
+   */
+  async previewScopes(
+    userId: string,
+    scopes: ApiKeyScope[],
+    tenantId: string | null,
+  ): Promise<ApiKeyScopeDecisionDto[]> {
+    const user = await this.apiKeyRepo.manager
+      .getRepository('User')
+      .findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const tenantAllowed = this.getTenantAllowedScopes(tenantId);
+
+    return scopes.map((scope) => {
+      let reason: ApiKeyScopeDenialReason | undefined;
+      if (!user.emailVerified) {
+        reason = 'email_not_verified';
+      } else if (tenantAllowed && !tenantAllowed.includes(scope)) {
+        reason = 'tenant_policy_denied';
+      }
+      return reason
+        ? { scope, allowed: false, reason }
+        : { scope, allowed: true };
+    });
+  }
+
+  /**
+   * Tenant-level scope allowlist. null means no tenant restriction (global default).
+   * shortcut: no tenant scope-policy store exists yet (TenantConfigService is unwired and has no scope field); always returns null, so create() enforces no tenant policy either. Upgrade when a policy store lands and create() reads the same source.
+   */
+  private getTenantAllowedScopes(_tenantId: string | null): ApiKeyScope[] | null {
+    return null;
   }
 
   async verify(rawKey: string): Promise<ApiKey> {
@@ -305,7 +351,8 @@ export class ApiKeysService {
       .map((record) => ({ ...record }));
   }
 
-  async list(userId: string): Promise<ApiKey[]> {
-    return this.apiKeyRepo.find({ where: { userId } });
+  async list(userId: string): Promise<ApiKeyMetadataDto[]> {
+    const keys = await this.apiKeyRepo.find({ where: { userId } });
+    return keys.map(toApiKeyMetadata);
   }
 }

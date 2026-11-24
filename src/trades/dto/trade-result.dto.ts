@@ -1,3 +1,4 @@
+import { TradeFailureCode } from '../errors/trade-failure-codes';
 import { TradeStatus, TradeSide } from '../entities/trade.entity';
 
 export class TradeResultDto {
@@ -36,7 +37,10 @@ export class TradeDetailsDto {
   takeProfitPrice?: string;
   transactionHash?: string;
   sorobanContractId?: string;
+  /** Safe, human-readable failure message. */
   errorMessage?: string;
+  /** Stable machine-readable failure code (#1527). */
+  failureCode?: TradeFailureCode;
   executedAt?: Date;
   closedAt?: Date;
   createdAt!: Date;

@@ -56,3 +56,60 @@ async handle(rawPayload: unknown) {
 decorators as the reference implementation, and gained validation on
 `createdAfter`/`expiresBeforeI` (previously unvalidated free-form strings)
 via `NullableIsoDate()`.
+
+## Machine-readable validation errors
+
+Validation failures from `CustomValidationPipe` and `ValidationStrategyService`
+include a `violations` array next to the existing `errors`/`details` fields.
+Each entry is one failed rule:
+
+```json
+{
+  "message": "Validation failed",
+  "error": "Validation",
+  "code": "V1001",
+  "details": { "items": { "0": { "name": ["name must be a string"] } } },
+  "violations": [
+    { "field": "items.0.name", "rule": "isString", "message": "name must be a string" }
+  ]
+}
+```
+
+- `field` is the dot-separated path to the property. Array items use their
+  index (`items.0.name`); nested DTOs use their property chain (`address.zip`).
+- `rule` is the stable identifier. It is the class-validator constraint name
+  (the key of `ValidationError.constraints`), so it does not change with the
+  message text or the request locale. Clients should branch on `rule`, not on
+  `message`.
+- `message` is human-readable only and may be localized or reworded.
+- `code` remains `V1001` (`INVALID_INPUT`) for every validation failure, and
+  the HTTP status is unchanged (400).
+
+### Rule identifiers from the shared constraint decorators
+
+| Decorator | Rule identifiers emitted |
+|---|---|
+| `NullableString(max, min?)` | `isString`, `minLength`, `maxLength` (`IsOptional` emits no rule) |
+| `BoundedString(min, max)` | `isString`, `minLength`, `maxLength` |
+| `NullableBoundedNumber(min, max)` | `isNumber`, `min`, `max` |
+| `BoundedNumber(min, max)` | `isNumber`, `min`, `max` |
+| `NullableEnum(enum)` / `RequiredEnum(enum)` | `isEnum` |
+| `NullableIsoDate()` | `isIso8601` |
+
+Rules added by the global pipe itself:
+
+| Source | Rule identifier |
+|---|---|
+| Property not declared on the DTO (`forbidNonWhitelisted`) | `whitelistValidation` |
+
+Other class-validator decorators use their constraint name, which is the
+decorator name in lowerCamelCase (for example `@IsNotEmpty()` emits
+`isNotEmpty`, `@ArrayMinSize()` emits `arrayMinSize`). Constraint names are
+defined by the pinned `class-validator` version (`^0.14.0`). Check the name
+against that version before relying on it in a client.
+
+### Compatibility
+
+Existing fields (`message`, `error`, `code`, `details`, and `errors` from
+`ValidationStrategyService`) are unchanged. `violations` is additive, so
+clients that ignore unknown fields need no change.

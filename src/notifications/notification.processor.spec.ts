@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { getQueueToken } from '@nestjs/bull';
 import { NotificationProcessor, RECIPIENT_OFFLINE_REASON } from './notification.processor';
+import { NOTIFICATION_QUEUE } from './notification.service';
+import { PreferencesService } from './preferences/preferences.service';
 import {
   Notification,
   NotificationChannel,
@@ -70,6 +73,8 @@ describe('NotificationProcessor', () => {
         { provide: ConsentService, useValue: consentService },
         { provide: DeadLetterService, useValue: deadLetterService },
         { provide: SocketManagerService, useValue: socketManager },
+        { provide: PreferencesService, useValue: { quietHoursRemainingMs: jest.fn().mockResolvedValue(0) } },
+        { provide: getQueueToken(NOTIFICATION_QUEUE), useValue: { add: jest.fn() } },
       ],
     }).compile();
 

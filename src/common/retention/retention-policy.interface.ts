@@ -23,10 +23,18 @@ export interface RetentionPolicy {
    */
   extraWhere?: string;
   extraParams?: Record<string, unknown>;
+  /**
+   * Entity property holding the owning tenant id. Legal holds are tenant-scoped,
+   * so a tenant's hold only protects that tenant's records when this is set.
+   * shortcut: without it, holds match records across all tenants (over-retains, never over-deletes), add it once the table has tenant_id.
+   */
+  tenantProperty?: string;
 }
 
 export interface RetentionRunResult {
   policy: string;
   deleted: number;
+  /** Eligible records skipped because an active legal hold covers them. */
+  excluded?: number;
   error?: string;
 }
