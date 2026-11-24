@@ -879,3 +879,6 @@ MIT
 
 <!-- handsoff-issue-1397 -->
 - #1397: Prevent Host header injection in generated absolute URLs
+
+<!-- handsoff-issue-1398 -->
+- #1398: Reject conflicting duplicate security-sensitive HTTP headers
