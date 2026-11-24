@@ -882,3 +882,6 @@ MIT
 
 <!-- handsoff-issue-1506 -->
 - #1506: Include operation fee and reserve deltas in Stellar transaction previews
+
+<!-- handsoff-issue-1512 -->
+- #1512: Include Stellar network degradation context in trade quotes
