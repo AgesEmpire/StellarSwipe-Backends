@@ -66,6 +66,64 @@ const publicOrigin = {
 };
 
 /**
+ * CORS origin normalization (issue #1399).
+ *
+ * Allowed origins are parsed from a comma-separated list and normalized to a
+ * bare origin (scheme + host + optional port) so matching is exact. Entries
+ * that are not valid absolute http(s) origins, or that contain wildcards, are
+ * preserved verbatim so startup validation can reject them with an actionable
+ * error instead of silently dropping them.
+ */
+const normalizeCorsOrigin = (value: string): string => {
+  const raw = value.trim();
+
+  if (raw.length === 0) {
+    return '';
+  }
+
+  if (raw === '*') {
+    return raw;
+  }
+
+  try {
+    const url = new URL(raw);
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return raw;
+    }
+
+    if (url.hostname.includes('*')) {
+      return raw;
+    }
+
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      return raw;
+    }
+
+    return url.origin;
+  } catch {
+    return raw;
+  }
+};
+
+/**
+ * CORS configuration (issue #1399).
+ *
+ * Credentialed CORS must never be combined with wildcard origins: browsers
+ * reject `Access-Control-Allow-Origin: *` when credentials are included, and
+ * reflecting arbitrary origins would defeat the same-origin policy. The
+ * combination is rejected at startup by validateConfiguration.
+ */
+const cors = {
+  enabled: process.env.CORS_ENABLED !== 'false',
+  credentials: process.env.CORS_CREDENTIALS === 'true',
+  origins: (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => normalizeCorsOrigin(origin))
+    .filter((origin) => origin.length > 0),
+};
+
+/**
  * Request payload and parameter size limits (issue #1166).
  * All limits are configurable via environment variables and enforced
  * consistently across transports before expensive processing occurs.
@@ -179,6 +237,37 @@ const validateProductionSecret = (
 };
 
 /**
+ * Validate a single CORS origin entry (issue #1399).
+ * Returns an error message when the entry is not a valid absolute http(s)
+ * origin, or when it contains a wildcard.
+ */
+const validateCorsOrigin = (origin: string): string | null => {
+  if (origin === '*') {
+    return 'CORS_ORIGINS must not contain the wildcard "*" origin.';
+  }
+
+  if (origin.includes('*')) {
+    return `CORS_ORIGINS entry "${origin}" must not contain wildcards; list explicit origins instead.`;
+  }
+
+  try {
+    const url = new URL(origin);
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return `CORS_ORIGINS entry "${origin}" must use the http or https scheme.`;
+    }
+
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      return `CORS_ORIGINS entry "${origin}" must be a bare origin (scheme + host + optional port).`;
+    }
+  } catch {
+    return `CORS_ORIGINS entry "${origin}" must be a valid absolute http(s) origin.`;
+  }
+
+  return null;
+};
+
+/**
  * Cross-field configuration relationships (issue #1232).
  * Validates dependencies between network endpoints, retry limits, and
  * timeout budgets so invalid combinations fail startup with actionable errors.
@@ -187,6 +276,7 @@ export const validateConfiguration = (config: {
   env: string;
   port: number;
   publicOrigin: { canonical: string };
+  cors: { enabled: boolean; credentials: boolean; origins: string[] };
   encryptionSecrets: { encryptionKey: string; signingSecret: string };
   rateLimit: {
     enabled: boolean;
@@ -216,6 +306,25 @@ export const validateConfiguration = (config: {
     );
   }
 
+  // CORS origins (issue #1399): every configured origin must be a valid bare
+  // http(s) origin, and credentialed CORS must never be combined with a
+  // wildcard origin.
+  if (config.cors.enabled) {
+    for (const origin of config.cors.origins) {
+      const error = validateCorsOrigin(origin);
+
+      if (error) {
+        errors.push(error);
+      }
+    }
+
+    if (config.cors.credentials && config.cors.origins.includes('*')) {
+      errors.push(
+        'CORS_CREDENTIALS cannot be enabled together with a wildcard CORS_ORIGINS entry; list explicit origins instead.',
+      );
+    }
+  }
+
   // Production secrets: reject empty, placeholder, and undersized key material.
   // Development and test environments are intentionally exempt so local setups
   // remain usable without weakening the production checks.
@@ -235,61 +344,6 @@ export const validateConfiguration = (config: {
       );
     }
 
-    if (!['redis', 'memory'].includes(config.rateLimit.store.type)) {
-      errors.push(
-        `RATE_LIMIT_STORE must be one of: redis, memory (received: ${config.rateLimit.store.type}).`,
-      );
-    }
+    if (!['redis', 'memo
 
-    if (!['allow', 'deny'].includes(config.rateLimit.onStoreError)) {
-      errors.push(
-        `RATE_LIMIT_ON_STORE_ERROR must be one of: allow, deny (received: ${config.rateLimit.onStoreError}).`,
-      );
-    }
-  }
-
-  // Retry limits: each policy must define a positive window and a non-negative max.
-  const policies = config.rateLimit.policies;
-  (Object.keys(policies) as Array<keyof typeof policies>).forEach((name) => {
-    const policy = policies[name];
-
-    if (!Number.isInteger(policy.windowMs) || policy.windowMs <= 0) {
-      errors.push(
-        `RATE_LIMIT_${name.toUpperCase()}_WINDOW_MS must be a positive integer (received: ${policy.windowMs}).`,
-      );
-    }
-
-    if (!Number.isInteger(policy.max) || policy.max < 0) {
-      errors.push(
-        `RATE_LIMIT_${name.toUpperCase()}_MAX must be a non-negative integer (received: ${policy.max}).`,
-      );
-    }
-  });
-
-  // Timeout budget: the auth window must not exceed the public window, and the
-  // auth retry limit must not exceed the public retry limit.
-  if (policies.auth.windowMs > policies.public.windowMs) {
-    errors.push(
-      `RATE_LIMIT_AUTH_WINDOW_MS (${policies.auth.windowMs}) must not exceed RATE_LIMIT_PUBLIC_WINDOW_MS (${policies.public.windowMs}).`,
-    );
-  }
-
-  if (policies.auth.max > policies.public.max) {
-    errors.push(
-      `RATE_LIMIT_AUTH_MAX (${policies.auth.max}) must not exceed RATE_LIMIT_PUBLIC_MAX (${policies.public.max}).`,
-    );
-  }
-
-  if (errors.length > 0) {
-    throw new Error(`Invalid configuration:\n- ${errors.join('\n- ')}`);
-  }
-};
-
-export default registerAs('app', () => ({
-  env: process.env.NODE_ENV || 'development',
-  port: parsePositiveInt(process.env.PORT, 3000),
-  publicOrigin,
-  requestLimits,
-  secretsRotation,
-  encryptionSecrets,
-}));
+/* … truncated 1958 chars — edit only what you need near the top … */

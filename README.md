@@ -882,3 +882,6 @@ MIT
 
 <!-- handsoff-issue-1398 -->
 - #1398: Reject conflicting duplicate security-sensitive HTTP headers
+
+<!-- handsoff-issue-1399 -->
+- #1399: Validate CORS origin configuration and credential combinations
