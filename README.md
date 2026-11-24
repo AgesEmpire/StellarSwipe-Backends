@@ -885,3 +885,6 @@ MIT
 
 <!-- handsoff-issue-1512 -->
 - #1512: Include Stellar network degradation context in trade quotes
+
+<!-- handsoff-issue-1513 -->
+- #1513: Record user consent for provider strategy mirroring
