@@ -876,3 +876,6 @@ MIT
 
 <!-- handsoff-issue-1413 -->
 - #1413: Revoke active refresh sessions after a successful password reset
+
+<!-- handsoff-issue-1414 -->
+- #1414: Consume OAuth state values atomically and only once
