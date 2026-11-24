@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { NotificationTemplate, NotificationChannel } from './entities/notification-template.entity';
@@ -9,6 +9,28 @@ export interface RenderedTemplate {
   body: string;
   title?: string; // For push/in-app
 }
+
+export interface TemplateVariableReport {
+  missing: string[]; // required but not used in any content
+  unknown: string[]; // used in content but not declared
+  unused: string[]; // declared but not used in any content
+  malformed: string[]; // content fields with braces that are not a valid {{name}} placeholder
+}
+
+const CONTENT_FIELDS = [
+  'emailSubject',
+  'emailBody',
+  'emailPlainText',
+  'smsBody',
+  'inAppTitle',
+  'inAppBody',
+  'pushTitle',
+  'pushBody',
+  'fallbackTitle',
+  'fallbackMessage',
+] as const;
+
+const PLACEHOLDER = /\{\{(\w+)\}\}/g;
 
 @Injectable()
 export class NotificationTemplateService {
@@ -164,12 +186,49 @@ export class NotificationTemplateService {
       where: { key: templateData.key },
     });
 
+    // Validate the merged result so partial updates are checked against the full template
+    const report = this.validateTemplateVariables({ ...existing, ...templateData });
+    if (report.missing.length || report.unknown.length || report.malformed.length) {
+      throw new BadRequestException(`Template ${templateData.key} failed variable validation: ${JSON.stringify(report)}`);
+    }
+    if (report.unused.length) {
+      this.logger.warn(`Template ${templateData.key} declares unused variables: ${report.unused.join(', ')}`);
+    }
+
     if (existing) {
       await this.templateRepository.update(existing.id, templateData);
       return this.templateRepository.findOne({ where: { id: existing.id } });
     }
 
     return this.templateRepository.save(templateData);
+  }
+
+  /**
+   * Compare the placeholders used in content against the declared variables.
+   * Templates that declare no variables are legacy: only malformed syntax is checked.
+   */
+  validateTemplateVariables(template: Partial<NotificationTemplate>): TemplateVariableReport {
+    const declared = new Set([...(template.variables ?? []), ...(template.requiredVariables ?? [])]);
+    const used = new Set<string>();
+    const malformed: string[] = [];
+
+    for (const field of CONTENT_FIELDS) {
+      const text = template[field];
+      if (typeof text !== 'string') continue;
+
+      for (const match of text.matchAll(PLACEHOLDER)) used.add(match[1]);
+      if (/\{\{|\}\}/.test(text.replace(PLACEHOLDER, ''))) malformed.push(field);
+    }
+
+    const legacy = declared.size === 0;
+    const required = template.requiredVariables ?? [];
+
+    return {
+      missing: legacy ? [] : required.filter((name) => !used.has(name)),
+      unknown: legacy ? [] : [...used].filter((name) => !declared.has(name)),
+      unused: legacy ? [] : [...declared].filter((name) => !used.has(name)),
+      malformed,
+    };
   }
 
   /**

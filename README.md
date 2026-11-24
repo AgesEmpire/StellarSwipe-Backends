@@ -864,3 +864,15 @@ MIT
 
 <!-- handsoff-issue-1500 -->
 - #1500: Validate SEP-24 requests against anchor-required fields
+
+<!-- handsoff-issue-1409 -->
+- #1409: Fail fast when production encryption secrets are weak or placeholders
+
+<!-- handsoff-issue-1411 -->
+- #1411: Validate JWT issuer and audience per authentication strategy
+
+<!-- handsoff-issue-1412 -->
+- #1412: Refresh cached signing keys safely when a JWT key ID is unknown
+
+<!-- handsoff-issue-1413 -->
+- #1413: Revoke active refresh sessions after a successful password reset

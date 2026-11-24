@@ -15,6 +15,8 @@ import { PermissionAuditService, PermissionAuditLog } from '../auth/permission-a
 import { TracingModule } from '../tracing/tracing.module';
 import { QueueModule } from '../queue/queue.module';
 import { UserRole } from '../authorization/entities/user-role.entity';
+import { AccountBalance } from './balance/account-balance.entity';
+import { BalanceAdjustment } from './balance/balance-adjustment.entity';
 import { AdminAccessGuard } from './access-control/admin-access.guard';
 import { AdminAccessPolicyService } from './access-control/admin-access-policy.service';
 
@@ -26,6 +28,8 @@ import { AdminAccessPolicyService } from './access-control/admin-access-policy.s
             AuditLog,
             PermissionAuditLog,
             UserRole,
+            AccountBalance,
+            BalanceAdjustment,
         ]),
         AdminAnalyticsModule,
         FeatureFlagsModule,

@@ -37,6 +37,7 @@ export class QuietHoursDto {
   end?: string;
 
   @IsOptional()
+  @IsString()
   timezone?: string;
 }
 

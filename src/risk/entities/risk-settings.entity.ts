@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, VersionColumn } from 'typeorm';
 
 @Entity('risk_settings')
 export class RiskSettings {
@@ -22,6 +22,10 @@ export class RiskSettings {
 
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 20.0 })
   maxStopLossPercentage: number = 20;
+
+  /** Policy version: incremented by TypeORM on every save. */
+  @VersionColumn()
+  version: number = 1;
 
   @CreateDateColumn()
   createdAt: Date = new Date();

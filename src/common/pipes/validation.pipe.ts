@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
-import { formatValidationErrors } from '../validation/validation-error-formatter';
+import { flattenValidationViolations, formatValidationErrors } from '../validation/validation-error-formatter';
 import { ErrorCode } from '../error-classification/error-codes.enum';
 
 @Injectable()
@@ -39,6 +39,7 @@ export class CustomValidationPipe implements PipeTransform<any> {
         error: 'Validation',
         code: ErrorCode.INVALID_INPUT,
         details: errorMessages,
+        violations: flattenValidationViolations(errors),
       });
     }
 

@@ -9,6 +9,9 @@ import {
   MaxLength,
   IsUUID,
   IsDate,
+  IsBoolean,
+  IsArray,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FeedbackType } from '../entities/feedback.entity';
@@ -106,6 +109,17 @@ export class BulkInviteFromWaitlistDto {
   @Min(1)
   @Max(100)
   count!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
+
+  // IDs returned by a dry run; execution only invites those still pending
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsUUID('4', { each: true })
+  previewIds?: string[];
 }
 
 // Feedback DTOs

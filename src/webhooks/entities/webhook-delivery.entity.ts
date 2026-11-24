@@ -14,7 +14,9 @@ export type DeliveryStatus =
   | 'pending'
   | 'success'
   | 'failed'
-  | 'permanently_failed';
+  | 'permanently_failed'
+  | 'paused'
+  | 'expired';
 
 @Entity('webhook_deliveries')
 export class WebhookDelivery {
@@ -40,6 +42,9 @@ export class WebhookDelivery {
 
   @Column({ type: 'jsonb' })
   payload!: Record<string, unknown>;
+
+  @Column({ type: 'int', default: 1 })
+  schemaVersion!: number;
 
   @Column({ type: 'varchar', length: 20, default: 'pending' })
   status!: DeliveryStatus;
