@@ -885,3 +885,6 @@ MIT
 
 <!-- handsoff-issue-1407 -->
 - #1407: Apply no-store cache policy to personalized API responses
+
+<!-- handsoff-issue-1408 -->
+- #1408: Add regression tests for secret and PII redaction in structured logs
