@@ -26,10 +26,13 @@ import { NotificationTcpController } from './notification-tcp.controller';
 import { JobsModule } from '../jobs/jobs.module';
 import { DigestService } from './digest/digest.service';
 import { I18nModule } from '../i18n/i18n.module';
+import { NotificationProviderReceipt } from './entities/notification-provider-receipt.entity';
+import { NotificationReceiptService } from './receipts/notification-receipt.service';
+import { NotificationReceiptController } from './receipts/notification-receipt.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate, UserConsent, NotificationDeliveryAuditLog]),
+    TypeOrmModule.forFeature([Notification, NotificationPreference, NotificationTemplate, UserConsent, NotificationDeliveryAuditLog, NotificationProviderReceipt]),
     BullModule.registerQueue({ name: NOTIFICATION_QUEUE }),
     ScheduleModule.forRoot(),
     JobsModule,
