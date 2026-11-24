@@ -885,3 +885,6 @@ MIT
 
 <!-- handsoff-issue-1426 -->
 - #1426: Preserve configured time zones in recurring schedule evaluation
+
+<!-- handsoff-issue-1427 -->
+- #1427: Detect stalled background workers with independent liveness heartbeats
