@@ -14,6 +14,10 @@ import { StellarConfigService } from '../config/stellar.service';
 import { SorobanException } from '../common/exceptions';
 import { SimulateContractDto } from './dto/simulate-contract.dto';
 import { SimulateContractResponseDto } from './dto/simulate-contract-response.dto';
+import {
+  classifyTransactionValidity,
+  lastValidLedgerForWindow,
+} from './transaction-validity';
 
 /**
  * Runs Soroban `simulateTransaction` (preflight) for a proposed contract call
@@ -189,6 +193,13 @@ export class SorobanSimulationService {
       );
     }
 
+    // Validity boundary for an envelope assembled from this preview (#1511)
+    const latestLedger = (simulation as { latestLedger?: number }).latestLedger;
+    const validity = classifyTransactionValidity(
+      lastValidLedgerForWindow(latestLedger),
+      latestLedger,
+    );
+
     return {
       success: true,
       resourceFee,
@@ -198,6 +209,9 @@ export class SorobanSimulationService {
       result,
       footprint,
       auth,
+      latestLedger: validity.latestLedger ?? undefined,
+      lastValidLedger: validity.lastValidLedger ?? undefined,
+      ledgersRemaining: validity.ledgersRemaining ?? undefined,
     };
   }
 

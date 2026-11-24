@@ -73,6 +73,22 @@ console.log('Webhook ID:', webhook.id);
 console.log('Secret:', webhook.secret); // Save this securely
 ```
 
+## Delivery Headers
+
+Every delivery is a `POST` with these headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-StellarSwipe-Signature` | Versioned HMAC signature of the body (`v1=<hex>`) |
+| `X-StellarSwipe-Signature-Version` | Signing algorithm version |
+| `X-StellarSwipe-Event` | Event type, e.g. `trade.executed` |
+| `X-StellarSwipe-Delivery-Id` | Unique ID for this delivery |
+| `X-StellarSwipe-Payload-Version` | Payload schema version (currently `1`) |
+
+The payload schema version is fixed when the event is queued. Retries and
+reconciliation attempts send the same version, even if the serializer changes
+after a deployment. Replays keep the version of the original delivery.
+
 ## Event Types
 
 ### Signal Events

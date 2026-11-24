@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Logger,
   Query,
   Res,
   BadRequestException,
@@ -20,6 +21,8 @@ import { SignedUrlGeneratorService } from './signed-url-generator.service';
 @ApiTags('compliance/exports')
 @Controller('compliance/download')
 export class SignedUrlDownloadController {
+  private readonly logger = new Logger(SignedUrlDownloadController.name);
+
   constructor(private readonly signedUrlGenerator: SignedUrlGeneratorService) {}
 
   /**
@@ -65,6 +68,8 @@ export class SignedUrlDownloadController {
       payload = this.signedUrlGenerator.validateAndDecodeSignedUrl(token);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // Audit trail: every refused download is logged. The token itself is not logged.
+      this.logger.warn(`AUDIT export_download_denied reason="${message}"`);
       if (message.includes('expired')) {
         throw new ForbiddenException(`Download link has expired: ${message}`);
       } else if (message.includes('signature')) {
@@ -95,6 +100,9 @@ export class SignedUrlDownloadController {
       res.setHeader('Expires', '0');
 
       // Send file content
+      this.logger.log(
+        `AUDIT export_download_served exportId=${payload.exportId} userId=${payload.userId} keyId=${payload.keyId}`,
+      );
       res.send(fileContent);
     } catch (error) {
       throw new BadRequestException(`Failed to read export file: ${error}`);

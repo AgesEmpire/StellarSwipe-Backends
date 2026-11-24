@@ -151,6 +151,14 @@ export class Trade {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage?: string;
 
+  /** Stable failure reason code (see TradeFailureCode, #1527). */
+  @Column({ name: 'failure_code', type: 'varchar', length: 64, nullable: true })
+  failureCode?: string;
+
+  /** Immutable copy-policy version that governed this follower trade (#1520). */
+  @Column({ name: 'copy_policy_version_id', type: 'uuid', nullable: true })
+  copyPolicyVersionId?: string;
+
   @Column({ name: 'executed_at', type: 'timestamp', nullable: true })
   executedAt?: Date;
 

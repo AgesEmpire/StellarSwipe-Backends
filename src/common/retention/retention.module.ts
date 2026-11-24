@@ -1,6 +1,9 @@
 import { Global, Module, OnModuleInit } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { RetentionService } from './retention.service';
+import { LegalHold } from './legal-hold.entity';
+import { LegalHoldService } from './legal-hold.service';
 import { resolveRetentionDays } from './retention.config';
 import { OutboxEvent, OutboxEventStatus } from '../../events/outbox/outbox-event.entity';
 import { WebhookDelivery } from '../../webhooks/entities/webhook-delivery.entity';
@@ -22,9 +25,9 @@ import { NotificationDeliveryAuditLog } from '../../notifications/entities/notif
  */
 @Global()
 @Module({
-  imports: [ScheduleModule.forRoot()],
-  providers: [RetentionService],
-  exports: [RetentionService],
+  imports: [ScheduleModule.forRoot(), TypeOrmModule.forFeature([LegalHold])],
+  providers: [RetentionService, LegalHoldService],
+  exports: [RetentionService, LegalHoldService],
 })
 export class RetentionModule implements OnModuleInit {
   constructor(private readonly retentionService: RetentionService) {}

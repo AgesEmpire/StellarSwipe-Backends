@@ -398,9 +398,11 @@ export class WebhooksService {
       originalDeliveryId: deliveryId,
     };
 
+    // The replayed body is the original payload, so it keeps the original schema version.
     const replayDelivery = await this.webhookSender.deliverWebhook(
       webhook,
       replayPayload,
+      delivery.schemaVersion,
     );
     return audit('queued', undefined, replayDelivery.id);
   }

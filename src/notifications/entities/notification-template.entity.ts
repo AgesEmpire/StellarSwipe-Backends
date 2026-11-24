@@ -60,9 +60,13 @@ export class NotificationTemplate {
   @Column({ default: true })
   isActive: boolean;
 
-  // Supported variables (e.g., ['userName', 'amount', 'tradeId'])
+  // Declared variables (e.g., ['userName', 'amount', 'tradeId']); optional ones included
   @Column('simple-array', { default: [] })
   variables: string[];
+
+  // Subset of declared variables that must be supplied and used by the template
+  @Column('simple-array', { default: [] })
+  requiredVariables?: string[];
 
   @CreateDateColumn()
   createdAt: Date;

@@ -48,6 +48,10 @@ export class CreateNotificationTemplateDto {
   variables?: string[];
 
   @IsOptional()
+  @IsArray()
+  requiredVariables?: string[];
+
+  @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 }

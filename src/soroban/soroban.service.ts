@@ -28,6 +28,12 @@ import { SorobanFeeTrackerService } from '../common/services/soroban-fee-tracker
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { EntrypointKilledException } from '../feature-flags/exceptions/entrypoint-killed.exception';
 import { SorobanRpcResilienceService } from './soroban-rpc-resilience.service';
+import {
+  assertEnvelopeSubmittable,
+  lastValidLedgerForWindow,
+  lastValidLedgerFromBounds,
+  TransactionEnvelopeExpiredException,
+} from './transaction-validity';
 
 // Optional import for monitoring - will be injected if available
 interface SorobanMonitoringService {
@@ -148,13 +154,20 @@ export class SorobanService implements OnModuleInit {
         params,
       );
 
-      const transaction = new TransactionBuilder(account, {
+      // Bound the envelope to a ledger window so clients get an explicit
+      // submit-ready boundary (#1511). maxLedger is exclusive.
+      const assembledAtLedger = await this.getCurrentLedgerSequence();
+      const windowLastValidLedger = lastValidLedgerForWindow(assembledAtLedger);
+      const builder = new TransactionBuilder(account, {
         fee: BASE_FEE,
         networkPassphrase: this.stellarConfig.networkPassphrase,
       })
         .addOperation(operation)
-        .setTimeout(30)
-        .build();
+        .setTimeout(30);
+      if (windowLastValidLedger !== null) {
+        builder.setLedgerbounds(0, windowLastValidLedger + 1);
+      }
+      const transaction = builder.build();
 
       const simulation = await this.simulateTransaction(transaction);
 
@@ -175,6 +188,14 @@ export class SorobanService implements OnModuleInit {
       );
 
       prepared.sign(sourceKeypair);
+
+      // Never broadcast an envelope that can no longer be included.
+      const lastValidLedger =
+        lastValidLedgerFromBounds(prepared.ledgerBounds) ?? windowLastValidLedger;
+      assertEnvelopeSubmittable(
+        lastValidLedger,
+        await this.getCurrentLedgerSequence(),
+      );
 
       sendResponse = await this.withTimeout(
         () => this.server.sendTransaction(prepared),
@@ -227,6 +248,7 @@ export class SorobanService implements OnModuleInit {
         result,
         events,
         feeCharged: confirmed.feeCharged?.toString(),
+        lastValidLedger: lastValidLedger ?? undefined,
         error: success
           ? undefined
           : (confirmed as Record<string, unknown>).errorResultXdr?.toString() ||
@@ -265,7 +287,10 @@ export class SorobanService implements OnModuleInit {
         });
       }
       
-      if (error instanceof SorobanException) {
+      if (
+        error instanceof SorobanException ||
+        error instanceof TransactionEnvelopeExpiredException
+      ) {
         throw error;
       }
 
@@ -357,4 +382,231 @@ export class SorobanService implements OnModuleInit {
     });
   }
 
-/* … rest of file unchanged … */
+  async getContractEvents(
+    txHash: string,
+  ): Promise<ContractEvent[]> {
+    if (!txHash) {
+      return [];
+    }
+
+    const transaction = await this.withTimeout(
+      () => this.server.getTransaction(txHash),
+      'getTransaction',
+    );
+
+    if (transaction.status !== 'SUCCESS') {
+      return [];
+    }
+
+    return this.parseEvents(transaction.events || []);
+  }
+
+  async estimateFees(operation: Operation): Promise<FeeEstimate> {
+    const mockAccount = this.getSimulationAccount();
+    const transaction = new TransactionBuilder(mockAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: this.stellarConfig.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    const simulation = await this.simulateTransaction(transaction);
+    const resourceFee = this.toBigInt(
+      simulation.minResourceFee || '0',
+    );
+    const feeStats = await this.withTimeout(
+      () =>
+        typeof (this.server as any).getFeeStats === 'function'
+          ? (this.server as any).getFeeStats()
+          : Promise.resolve({}),
+      'getFeeStats',
+    );
+    const inclusionFee = this.resolveInclusionFee(feeStats || {});
+    const totalFee = inclusionFee + resourceFee;
+
+    return {
+      inclusionFee: inclusionFee.toString(),
+      resourceFee: resourceFee.toString(),
+      totalFee: totalFee.toString(),
+    };
+  }
+
+  private buildContractOperation(
+    contractId: string,
+    method: string,
+    params: unknown[],
+  ): Operation {
+    const contract = new Contract(contractId);
+    const scVals = (params || []).map((param) =>
+      this.toScVal(param),
+    );
+    return contract.call(method, ...scVals);
+  }
+
+  private toScVal(param: unknown): xdr.ScVal {
+    if (param instanceof xdr.ScVal) {
+      return param;
+    }
+
+    if (
+      param &&
+      typeof param === 'object' &&
+      'scVal' in param &&
+      (param as { scVal: unknown }).scVal instanceof xdr.ScVal
+    ) {
+      return (param as { scVal: xdr.ScVal }).scVal;
+    }
+
+    try {
+      return nativeToScVal(param);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Invalid contract parameter';
+      throw new SorobanException(errorMessage);
+    }
+  }
+
+  private parseScVal(value?: unknown): unknown {
+    if (!value) {
+      return undefined;
+    }
+
+    if (value instanceof xdr.ScVal) {
+      return scValToNative(value);
+    }
+
+    if (typeof value === 'string') {
+      try {
+        return scValToNative(xdr.ScVal.fromXDR(value, 'base64'));
+      } catch {
+        return value;
+      }
+    }
+
+    return value;
+  }
+
+  private parseEvents(
+    events: Array<Record<string, unknown>>,
+  ): ContractEvent[] {
+    return events.map((event) => ({
+      type: String(event.type || 'unknown'),
+      contractId:
+        (event.contractId as string | undefined) ||
+        (event.contract_id as string | undefined),
+      topics: Array.isArray(event.topic || event.topics)
+        ? (event.topic || event.topics)?.map((topic: unknown) =>
+            this.parseScVal(topic),
+          )
+        : undefined,
+      data: this.parseScVal(event.data || event.value),
+    }));
+  }
+
+  private async waitForTransaction(
+    txHash: string,
+    timeoutMs?: number,
+  ): Promise<SorobanRpc.Api.GetTransactionResponse> {
+    const deadline =
+      Date.now() + (timeoutMs || this.stellarConfig.apiTimeout);
+    let attempt = 0;
+
+    while (Date.now() < deadline) {
+      const response = await this.withTimeout(
+        () => this.server.getTransaction(txHash),
+        'getTransaction',
+        timeoutMs,
+      );
+
+      if (response.status && response.status !== 'PENDING') {
+        return response;
+      }
+
+      const delayMs = Math.min(2000 * (attempt + 1), 8000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      attempt += 1;
+    }
+
+    throw new SorobanException(
+      'Timed out waiting for Soroban transaction',
+    );
+  }
+
+  private getSimulationAccount(): Account {
+    return new Account(
+      'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+      '0',
+    );
+  }
+
+  private resolveInclusionFee(feeStats: Record<string, any>): bigint {
+    const inclusionFee =
+      feeStats?.sorobanInclusionFee ||
+      feeStats?.inclusionFee ||
+      feeStats?.feeCharged;
+    const feeCandidate =
+      inclusionFee?.p95 ||
+      inclusionFee?.max ||
+      inclusionFee?.mode ||
+      inclusionFee?.min;
+
+    if (feeCandidate !== undefined) {
+      return this.toBigInt(feeCandidate);
+    }
+
+    return this.toBigInt(BASE_FEE);
+  }
+
+  private toBigInt(value: string | number | bigint): bigint {
+    if (typeof value === 'bigint') {
+      return value;
+    }
+
+    return BigInt(String(value));
+  }
+
+  /**
+   * Runs `fn` under a per-attempt timeout, through SorobanRpcResilienceService's
+   * retry-with-backoff and circuit breaker (issue #852).
+   */
+  private async withTimeout<T>(
+    fn: () => Promise<T>,
+    label: string,
+    timeoutMs?: number,
+  ): Promise<T> {
+    return this.resilience.execute(
+      () => this.runWithTimeout(fn, label, timeoutMs),
+      label,
+    );
+  }
+
+  private async runWithTimeout<T>(
+    fn: () => Promise<T>,
+    label: string,
+    timeoutMs?: number,
+  ): Promise<T> {
+    const timeout = timeoutMs || this.stellarConfig.apiTimeout;
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(
+          new SorobanException(
+            `Soroban ${label} timed out after ${timeout}ms`,
+          ),
+        );
+      }, timeout);
+    });
+
+    try {
+      return await Promise.race([fn(), timeoutPromise]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+}

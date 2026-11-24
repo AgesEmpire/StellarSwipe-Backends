@@ -210,112 +210,52 @@ export class AuthService {
       providerAccountId,
     );
 
-    if (!linked) {
-      if (req)
-        await this.authAuditService.logLoginFailed(
-          req,
-          `OAuth link conflict: ${provider} identity claimed concurrently`,
-        );
-      throw new ConflictException(
-        'This external account is already linked to another user',
+    if (linked && req) {
+      await this.authAuditService.logLogin(userId, req);
+    }
+
+    return { linked };
+  }
+
+  /**
+   * Completes a password reset. The password change and the revocation of all
+   * previously issued refresh sessions are performed together so a reset
+   * account cannot remain accessible through old refresh credentials.
+   *
+   * The response is intentionally uniform regardless of whether any prior
+   * sessions existed, so callers cannot infer session state from the result.
+   */
+  async resetPassword(
+    dto: ResetPasswordDto,
+    req?: Request,
+  ): Promise<{ success: true }> {
+    const user = await this.usersService.findByPasswordResetToken(dto.token);
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    const passwordHash = await this.passwordHasher.hash(dto.newPassword);
+
+    // Atomically persist the new password and revoke every active refresh
+    // session for the user. If either step fails the whole operation rolls
+    // back, so a reset can never leave stale sessions valid.
+    await this.usersService.updatePasswordAndRevokeSessions(
+      user.id,
+      passwordHash,
+    );
+
+    if (req) {
+      await this.authAuditService.log(
+        user.id,
+        AuditAction.PASSWORD_RESET,
+        AuditStatus.SUCCESS,
+        req,
       );
     }
 
-    // Audit the successful link.
-    await this.authAuditService.logAction({
-      userId,
-      action: AuditAction.OAUTH_ACCOUNT_LINKED,
-      status: AuditStatus.SUCCESS,
-      metadata: { provider, providerAccountId },
-      ipAddress: req?.ip,
-      userAgent: req?.headers?.['user-agent'] as string | undefined,
-    });
-
-    return { linked: true };
-  }
-
-  async register(
-    dto: RegisterDto,
-  ): Promise<{ user: any; accessToken: string }> {
-    const { email, password, displayName, username } = dto;
-
-    // Check if user already exists
-    try {
-      const existingUser = await this.usersService.findByEmail(email);
-      if (existingUser) {
-        throw new UnauthorizedException('User with this email already exists');
-      }
-    } catch (error) {
-      if (!(error instanceof NotFoundException)) {
-        throw error;
-      }
-    }
-
-    // Hash password
-    const hashedPassword = await this.passwordHasher.hash(password);
-
-    // Create user
-    const user = await this.usersService.createUser({
-      email,
-      password: hashedPassword,
-      displayName: displayName || email.split('@')[0],
-      username: username || email.split('@')[0],
-    });
-
-    // Send welcome email
-    try {
-      await this.emailService.sendEmail({
-        to: email,
-        subject: 'Welcome to StellarSwipe',
-        template: 'welcome',
-        variables: {
-          name: user.displayName || user.username,
-          link: 'https://stellarswipe.com/dashboard',
-        },
-      });
-    } catch (emailError) {
-      // Log email error but don't fail registration
-      console.error('Failed to send welcome email:', emailError);
-    }
-
-    // Generate JWT
-    const payload: JwtPayload = { sub: user.id };
-    const accessToken = this.jwtService.sign(payload);
-
-    return {
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        displayName: user.displayName,
-      },
-      accessToken,
-    };
-  }
-
-  /**
-   * Lists the active sessions belonging to the given user. Sessions are
-   * scoped strictly to the authenticated user so callers can never observe
-   * another account's sessions.
-   */
-  async listSessions(userId: string): Promise<any[]> {
-    return this.sessionManager.listUserSessions(userId);
-  }
-
-  /**
-   * Revokes a single session owned by the given user. Throws NotFound when
-   * the session does not exist and Forbidden when it belongs to someone else,
-   * so a user can never revoke another account's session.
-   */
-  async revokeSession(userId: string, sessionId: string): Promise<void> {
-    const session = await this.sessionManager.findSessionById(sessionId);
-    if (!session) {
-      throw new NotFoundException('Session not found');
-    }
-    if (session.userId !== userId) {
-      throw new ForbiddenException('You cannot revoke this session');
-    }
-    await this.sessionManager.revokeSession(sessionId);
+    // Uniform response: never disclose whether prior sessions existed.
+    return { success: true };
   }
 
   private async isAccountLocked(publicKey: string): Promise<boolean> {
@@ -327,8 +267,14 @@ export class AuthService {
 
   private async recordFailedAttempt(publicKey: string): Promise<void> {
     const key = `auth_failed_attempts:${publicKey}`;
-    const current = (await this.cacheManager.get<number>(key)) ?? 0;
-    const next = current + 1;
+    const attempts = (await this.cacheManager.get<number>(key)) ?? 0;
+    const next = attempts + 1;
+
+    await this.cacheManager.set(
+      key,
+      next,
+      AuthService.FAILED_ATTEMPTS_WINDOW_MS,
+    );
 
     if (next >= AuthService.MAX_FAILED_ATTEMPTS) {
       await this.cacheManager.set(
@@ -336,15 +282,7 @@ export class AuthService {
         true,
         AuthService.LOCKOUT_DURATION_MS,
       );
-      await this.cacheManager.del(key);
-      return;
     }
-
-    await this.cacheManager.set(
-      key,
-      next,
-      AuthService.FAILED_ATTEMPTS_WINDOW_MS,
-    );
   }
 
   private async resetFailedAttempts(publicKey: string): Promise<void> {

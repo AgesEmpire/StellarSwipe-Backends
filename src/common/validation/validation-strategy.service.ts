@@ -1,7 +1,11 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { plainToInstance, ClassConstructor } from 'class-transformer';
 import { validate, ValidatorOptions } from 'class-validator';
-import { formatValidationErrors } from './validation-error-formatter';
+import {
+  flattenValidationViolations,
+  formatValidationErrors,
+  ValidationViolation,
+} from './validation-error-formatter';
 
 const DEFAULT_VALIDATOR_OPTIONS: ValidatorOptions = {
   whitelist: true,
@@ -44,6 +48,7 @@ export class ValidationStrategyService {
       throw new BadRequestException({
         message: 'Validation failed',
         errors: formatValidationErrors(errors),
+        violations: flattenValidationViolations(errors),
       });
     }
 
@@ -55,7 +60,7 @@ export class ValidationStrategyService {
     cls: ClassConstructor<T>,
     payload: unknown,
     options: ValidatorOptions = {},
-  ): Promise<{ valid: boolean; value: T; errors: Record<string, unknown> }> {
+  ): Promise<{ valid: boolean; value: T; errors: Record<string, unknown>; violations: ValidationViolation[] }> {
     const instance = plainToInstance(cls, payload);
     const errors = await validate(instance, { ...DEFAULT_VALIDATOR_OPTIONS, ...options });
 
@@ -63,6 +68,7 @@ export class ValidationStrategyService {
       valid: errors.length === 0,
       value: instance,
       errors: formatValidationErrors(errors),
+      violations: flattenValidationViolations(errors),
     };
   }
 }

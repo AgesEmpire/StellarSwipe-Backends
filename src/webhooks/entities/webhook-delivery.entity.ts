@@ -43,6 +43,9 @@ export class WebhookDelivery {
   @Column({ type: 'jsonb' })
   payload!: Record<string, unknown>;
 
+  @Column({ type: 'int', default: 1 })
+  schemaVersion!: number;
+
   @Column({ type: 'varchar', length: 20, default: 'pending' })
   status!: DeliveryStatus;
 

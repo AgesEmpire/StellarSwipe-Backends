@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, WhereExpressionBuilder } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { RetentionPolicy, RetentionRunResult } from './retention-policy.interface';
 
@@ -44,22 +44,23 @@ export class RetentionService {
 
     try {
       const repository = this.dataSource.getRepository(policy.entity);
-      const qb = repository
-        .createQueryBuilder('record')
-        .delete()
-        .where(`record.${policy.dateProperty} < :cutoff`, { cutoff });
+      const held = this.heldPredicate(policy);
 
-      if (policy.extraWhere) {
-        qb.andWhere(policy.extraWhere, policy.extraParams ?? {});
-      }
+      // Operators need to see what legal holds kept out of this sweep.
+      const excluded = await this.eligibleQuery(repository.createQueryBuilder('record'), policy, cutoff)
+        .andWhere(held.sql, held.params)
+        .getCount();
+
+      const qb = this.eligibleQuery(repository.createQueryBuilder('record').delete(), policy, cutoff)
+        .andWhere(`NOT ${held.sql}`, held.params);
 
       const result = await qb.execute();
       const deleted = result.affected ?? 0;
 
       this.logger.log(
-        `Retention policy "${policy.name}": deleted ${deleted} record(s) older than ${policy.retentionDays} days`,
+        `Retention policy "${policy.name}": deleted ${deleted} record(s) older than ${policy.retentionDays} days, excluded ${excluded} under legal hold`,
       );
-      return { policy: policy.name, deleted };
+      return { policy: policy.name, deleted, excluded };
     } catch (error) {
       const message = (error as Error).message;
       this.logger.error(`Retention policy "${policy.name}" failed: ${message}`);
@@ -74,6 +75,31 @@ export class RetentionService {
       results.push(await this.runPolicy(policy));
     }
     return results;
+  }
+
+  /** Cutoff + policy predicate, shared by the delete and the exclusion count. */
+  private eligibleQuery<Q extends WhereExpressionBuilder>(qb: Q, policy: RetentionPolicy, cutoff: Date): Q {
+    qb.where(`record.${policy.dateProperty} < :cutoff`, { cutoff });
+    if (policy.extraWhere) {
+      qb.andWhere(policy.extraWhere, policy.extraParams ?? {});
+    }
+    return qb;
+  }
+
+  /** SQL matching records covered by an active (unreleased, unexpired) legal hold. */
+  private heldPredicate(policy: RetentionPolicy): { sql: string; params: Record<string, unknown> } {
+    const tenantMatch = policy.tenantProperty
+      ? `AND lh.tenant_id = CAST(record.${policy.tenantProperty} AS varchar)`
+      : '';
+    const sql = `EXISTS (
+      SELECT 1 FROM legal_holds lh
+      WHERE lh.policy_name = :holdPolicy
+        AND lh.released_at IS NULL
+        AND (lh.expires_at IS NULL OR lh.expires_at > :holdNow)
+        AND (lh.record_id IS NULL OR lh.record_id = CAST(record.id AS varchar))
+        ${tenantMatch}
+    )`;
+    return { sql, params: { holdPolicy: policy.name, holdNow: new Date() } };
   }
 
   /** Nightly sweep — 3 AM, after the (pre-existing) 2 AM audit-log cleanup window. */

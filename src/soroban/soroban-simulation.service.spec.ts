@@ -92,6 +92,20 @@ describe('SorobanSimulationService', () => {
       expect(BigInt(result.totalFee!)).toBeGreaterThan(BigInt('75000'));
     });
 
+    it('exposes the last-valid-ledger boundary for the assembled envelope (#1511)', async () => {
+      mockSimulateTransaction.mockResolvedValue(successSimulation({ latestLedger: 100 }));
+
+      const result = await service.simulate({
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM',
+        method: 'balance',
+        params: [],
+      });
+
+      expect(result.latestLedger).toBe(100);
+      expect(result.lastValidLedger).toBe(112);
+      expect(result.ledgersRemaining).toBe(12);
+    });
+
     it('includes result value when contract returns a value', async () => {
       mockSimulateTransaction.mockResolvedValue(
         successSimulation({
