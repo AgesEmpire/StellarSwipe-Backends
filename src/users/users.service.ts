@@ -31,6 +31,31 @@ const EDITABLE_PROFILE_FIELDS = [
 
 type EditableProfileField = (typeof EDITABLE_PROFILE_FIELDS)[number];
 
+/**
+ * Unicode normalization policy for user-facing identifiers.
+ *
+ * Identifiers (username, email) are normalized to Unicode NFC before they are
+ * persisted and before they are used in lookups. NFC is the canonical form
+ * recommended by the W3C/Unicode standard for interchange, so visually
+ * equivalent strings (e.g. "café" composed vs. "cafe\u0301" decomposed) map
+ * to a single stored value and cannot bypass uniqueness checks or produce
+ * inconsistent lookups. Non-identifier text (displayName, bio, avatarUrl)
+ * is left untouched so user-authored content keeps its original form.
+ */
+const IDENTIFIER_FIELDS = ['username', 'email'] as const;
+type IdentifierField = (typeof IDENTIFIER_FIELDS)[number];
+
+/**
+ * Normalize a user-facing identifier to NFC. Non-string values are returned
+ * unchanged so callers can rely on this being a safe pass-through.
+ */
+export function normalizeIdentifier<T>(value: T): T {
+    if (typeof value !== 'string') {
+        return value;
+    }
+    return value.normalize('NFC') as unknown as T;
+}
+
 @Injectable()
 export class UsersService {
     private readonly logger = new Logger(UsersService.name);
@@ -63,9 +88,27 @@ export class UsersService {
         return sanitized;
     }
 
+    /**
+     * Apply the NFC normalization policy to identifier fields on a payload
+     * before it is persisted. Non-identifier fields are left untouched.
+     */
+    private normalizeIdentifiers<T extends Record<string, unknown>>(payload: T): T {
+        const normalized: Record<string, unknown> = { ...payload };
+        for (const field of IDENTIFIER_FIELDS) {
+            if (Object.prototype.hasOwnProperty.call(normalized, field)) {
+                normalized[field] = normalizeIdentifier(normalized[field]);
+            }
+        }
+        return normalized as T;
+    }
+
     async createUser(createUserDto: CreateUserDto): Promise<User> {
+        const normalizedDto = this.normalizeIdentifiers(
+            createUserDto as unknown as Record<string, unknown>,
+        ) as unknown as CreateUserDto;
+
         const existingUser = await this.userRepository.findOne({
-            where: { walletAddress: createUserDto.walletAddress },
+            where: { walletAddress: normalizedDto.walletAddress },
             withDeleted: true,
         });
 
@@ -73,12 +116,12 @@ export class UsersService {
             if (existingUser.deletedAt) {
                 // Restore soft-deleted user
                 await this.userRepository.restore(existingUser.id);
-                return this.findByWalletAddress(createUserDto.walletAddress!);
+                return this.findByWalletAddress(normalizedDto.walletAddress!);
             }
             throw new ConflictException('User with this wallet address already exists');
         }
 
-        const user = this.userRepository.create(createUserDto);
+        const user = this.userRepository.create(normalizedDto);
         const savedUser = await this.userRepository.save(user);
 
         // Create default preferences for new user
@@ -156,7 +199,7 @@ export class UsersService {
 
     async findByEmail(email: string): Promise<User> {
         const user = await this.userRepository.findOne({
-            where: { email },
+            where: { email: normalizeIdentifier(email) },
             relations: ['preference', 'sessions'],
         });
 
@@ -174,7 +217,7 @@ export class UsersService {
      */
     async findByEmailWithPassword(email: string): Promise<User | null> {
         return this.userRepository.findOne({
-            where: { email },
+            where: { email: normalizeIdentifier(email) },
             select: {
                 id: true,
                 email: true,
@@ -210,7 +253,7 @@ export class UsersService {
 
     async findByUsername(username: string): Promise<User> {
         const user = await this.userRepository.findOne({
-            where: { username },
+            where: { username: normalizeIdentifier(username) },
             relations: ['preference', 'sessions'],
         });
 
@@ -233,56 +276,6 @@ export class UsersService {
 
     /**
      * Update a user's own profile. Only explicitly editable fields are mapped
-     * from the request payload; protected columns (role, isActive, isVerified,
-     * permissions, walletAddress, password, ...) are ignored so they cannot be
-     * mass-assigned through the request body.
-     */
-    async updateProfile(
-        userId: string,
-        payload: Record<string, unknown>,
-    ): Promise<User> {
-        const user = await this.findById(userId);
-        const updates = this.pickEditableProfileFields(payload ?? {});
+     * from the request payload; protected columns (role
 
-        if (Object.keys(updates).length > 0) {
-            await this.userRepository.update({ id: user.id }, updates);
-            await this.cacheInvalidation.invalidateUserPreferences(user.id);
-        }
-
-        return this.findById(user.id);
-    }
-
-    async updatePreferences(
-        walletAddress: string,
-        updatePreferenceDto: UpdatePreferenceDto,
-    ): Promise<UserPreference> {
-        const user = await this.findByWalletAddress(walletAddress);
-
-        let result: UserPreference;
-        if (!user.preference) {
-            const preference = this.preferenceRepository.create({
-                userId: user.id,
-                ...updatePreferenceDto,
-            });
-            result = await this.preferenceRepository.save(preference);
-        } else {
-            await this.preferenceRepository.update(user.preference.id, updatePreferenceDto);
-            const updatedPreference = await this.preferenceRepository.findOne({
-                where: { id: user.preference.id },
-            });
-            if (!updatedPreference) {
-                throw new NotFoundException('Preference not found');
-            }
-            result = updatedPreference;
-        }
-
-        // Write-through invalidation: evict stale user profile cache
-        await this.cacheInvalidation.invalidateUserPreferences(user.id);
-        return result;
-    }
-
-    async getPreferences(walletAddress: string): Promise<UserPreference> {
-        const user = await this.findByWalletAddress(walletAddress);
-
-        if (!user.preference) {
-            throw new NotFo
+/* … truncated 1960 chars — edit only what you need near the top … */

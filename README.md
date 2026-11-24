@@ -879,3 +879,6 @@ MIT
 
 <!-- handsoff-issue-1401 -->
 - #1401: Disable implicit DTO coercion for security-sensitive numeric fields
+
+<!-- handsoff-issue-1402 -->
+- #1402: Normalize Unicode identifiers before uniqueness checks
