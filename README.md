@@ -870,3 +870,6 @@ MIT
 
 <!-- handsoff-issue-1411 -->
 - #1411: Validate JWT issuer and audience per authentication strategy
+
+<!-- handsoff-issue-1412 -->
+- #1412: Refresh cached signing keys safely when a JWT key ID is unknown
