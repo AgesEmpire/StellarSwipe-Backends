@@ -879,3 +879,6 @@ MIT
 
 <!-- handsoff-issue-1422 -->
 - #1422: Publish completed export artifacts atomically
+
+<!-- handsoff-issue-1425 -->
+- #1425: Define catch-up behavior for scheduled jobs missed during downtime
