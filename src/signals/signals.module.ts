@@ -23,6 +23,12 @@ import { AnalyzeSignalDecayJob } from './decay-analysis/jobs/analyze-signal-deca
 import { CacheModule } from '../cache/cache.module';
 import { SignalQuotaService } from './quota/signal-quota.service';
 import { SignalStatusSubscriber } from '../common/subscribers/signal-status.subscriber';
+import { SignalSourceAttribution } from './attribution/signal-source-attribution.entity';
+import { SignalSourceAttributionService } from './attribution/signal-source-attribution.service';
+import { SignalSourceAttributionController } from './attribution/signal-source-attribution.controller';
+import { SignalCorrectionEvent } from './corrections/signal-correction-event.entity';
+import { SignalCorrectionService } from './corrections/signal-correction.service';
+import { SignalCorrectionController } from './corrections/signal-correction.controller';
 
 @Module({
   imports: [
@@ -34,6 +40,8 @@ import { SignalStatusSubscriber } from '../common/subscribers/signal-status.subs
       SignalVersionApproval,
       SignalDecay,
       SignalPerformance,
+      SignalSourceAttribution,
+      SignalCorrectionEvent,
     ]),
     CacheModule,
     BullModule.registerQueueAsync({
@@ -69,8 +77,15 @@ import { SignalStatusSubscriber } from '../common/subscribers/signal-status.subs
     AnalyzeSignalDecayJob,
     SignalQuotaService,
     SignalStatusSubscriber,
+    SignalSourceAttributionService,
+    SignalCorrectionService,
   ],
-  controllers: [SignalsController, SignalVersionController],
+  controllers: [
+    SignalsController,
+    SignalVersionController,
+    SignalSourceAttributionController,
+    SignalCorrectionController,
+  ],
   exports: [
     SignalsService,
     PremiumSignalService,
@@ -79,6 +94,8 @@ import { SignalStatusSubscriber } from '../common/subscribers/signal-status.subs
     SignalPerformanceService,
     SdexPriceService,
     SignalQuotaService,
+    SignalSourceAttributionService,
+    SignalCorrectionService,
     TypeOrmModule,
   ],
 })
