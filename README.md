@@ -888,3 +888,48 @@ MIT
 
 <!-- handsoff-issue-1427 -->
 - #1427: Detect stalled background workers with independent liveness heartbeats
+
+<!-- handsoff-issue-1505 -->
+- #1505: Validate Stellar issuer authorization before allowing trade execution
+
+<!-- handsoff-issue-1506 -->
+- #1506: Include operation fee and reserve deltas in Stellar transaction previews
+
+<!-- handsoff-issue-1512 -->
+- #1512: Include Stellar network degradation context in trade quotes
+
+<!-- handsoff-issue-1513 -->
+- #1513: Record user consent for provider strategy mirroring
+
+<!-- handsoff-issue-1401 -->
+- #1401: Disable implicit DTO coercion for security-sensitive numeric fields
+
+<!-- handsoff-issue-1402 -->
+- #1402: Normalize Unicode identifiers before uniqueness checks
+
+<!-- handsoff-issue-1403 -->
+- #1403: Standardize omitted and null semantics for PATCH requests
+
+<!-- handsoff-issue-1404 -->
+- #1404: Bound query parameter counts and repeated-value lengths
+
+<!-- handsoff-issue-1405 -->
+- #1405: Require explicit offsets for API timestamp filters
+
+<!-- handsoff-issue-1406 -->
+- #1406: Restrict API documentation endpoints by deployment policy
+
+<!-- handsoff-issue-1407 -->
+- #1407: Apply no-store cache policy to personalized API responses
+
+<!-- handsoff-issue-1408 -->
+- #1408: Add regression tests for secret and PII redaction in structured logs
+
+<!-- handsoff-issue-1414 -->
+- #1414: Consume OAuth state values atomically and only once
+
+<!-- handsoff-issue-1415 -->
+- #1415: Prevent account enumeration in credential recovery responses
+
+<!-- handsoff-issue-1416 -->
+- #1416: Rate-limit credential recovery by account and network source

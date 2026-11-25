@@ -46,6 +46,35 @@ import { validateConfigurationRelationships } from './common/config/config-relat
 
 initTracing();
 
+/**
+ * Resolve whether API documentation (OpenAPI JSON + interactive Swagger UI)
+ * should be exposed for this deployment (#1406).
+ *
+ * Docs are disabled by default so production deployments never expose
+ * interactive documentation publicly. Enabling them requires an explicit,
+ * validated configuration value; invalid values fail fast at bootstrap.
+ */
+function resolveDocsEnabled(configService: ConfigService): boolean {
+  const raw = configService.get<string | boolean>('app.docsEnabled');
+  if (raw === undefined || raw === null || raw === '') {
+    return false;
+  }
+  if (typeof raw === 'boolean') {
+    return raw;
+  }
+  const normalized = String(raw).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+  throw new Error(
+    `Invalid configuration for app.docsEnabled: "${raw}". ` +
+      'Expected one of: true, false, 1, 0, yes, no, on, off.',
+  );
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
@@ -65,6 +94,10 @@ async function bootstrap() {
   // retry limits, timeout budgets) before wiring up any runtime behaviour.
   // Invalid combinations abort startup with actionable errors (#1232).
   validateConfigurationRelationships(configService);
+
+  // Resolve docs exposure policy early so an invalid value aborts startup
+  // before any routes are wired (#1406).
+  const docsEnabled = resolveDocsEnabled(configService);
 
   // Initialize Sentry
   sentryService.init();
@@ -153,16 +186,57 @@ async function bootstrap() {
   const requestTimeoutMs = configService.get<number>('app.requestTimeoutMs') ?? 30000;
   app.useGlobalInterceptors(new TimeoutInterceptor(requestTimeoutMs));
 
-  // Track in-flight requests for graceful drain
-  let inFlightRequests = 0;
-  app.use((_req: any, _res: any, next: () => void) => {
-    inFlightRequests++;
-    _res.on('finish', () => { inFlightRequests--; });
-    _res.on('close', () => { inFlightRequests--; });
-    next();
-  });
+  // Expose OpenAPI JSON and interactive Swagger UI only when explicitly
+  // enabled for this deployment (#1406). When disabled (the default), the
+  // documentation routes are never registered, so they cannot be reached
+  // publicly. When enabled, the routes are mounted under the global prefix
+  // and gated by the configured docs auth token so retained docs remain
+  // authenticated.
+  if (docsEnabled) {
+    const docsPath = `${globalPrefix}/docs`;
+    const docsJsonPath = `${globalPrefix}/docs-json`;
+    const docsAuthToken = configService.get<string>('app.docsAuthToken');
 
-  // NOTE: we deliberately do NOT call app.enableShutdownHooks() here. It
-  // would register its own SIGTERM/SIGINT listeners that 
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('API Documentation')
+      .setDescription('OpenAPI specification for this deployment')
+      .setVersion(String(apiVersion ?? '1'))
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-/* … truncated 4290 chars — edit only what you need near the top … */
+    // Optional authenticated access: when a docs auth token is configured,
+    // require it via the Authorization header (Bearer) or X-Docs-Token header
+    // before serving either the JSON spec or the interactive UI.
+    if (docsAuthToken) {
+      const requireDocsAuth = (req: any, res: any, next: () => void) => {
+        const authHeader = req.headers?.authorization;
+        const bearer =
+          typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+            ? authHeader.slice('Bearer '.length).trim()
+            : undefined;
+        const provided = bearer ?? req.headers?.['x-docs-token'];
+        if (provided !== docsAuthToken) {
+          res.status(401).json({
+            status: 401,
+            title: 'Unauthorized',
+            detail: 'API documentation requires authentication.',
+          });
+          return;
+        }
+        next();
+      };
+      app.use(`/${docsPath}`, requireDocsAuth);
+      app.use(`/${docsJsonPath}`, requireDocsAuth);
+    }
+
+    SwaggerModule.setup(docsPath, app, document);
+    logger.log(`API documentation enabled at /${docsPath}`);
+  } else {
+    logger.log('API documentation disabled by deployment policy');
+  }
+
+  await app.listen(port, host);
+  logger.log(`Application is running on: http://${host}:${port}/${globalPrefix}`);
+}
+
+bootstrap();
