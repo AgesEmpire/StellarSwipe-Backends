@@ -877,6 +877,30 @@ MIT
 <!-- handsoff-issue-1413 -->
 - #1413: Revoke active refresh sessions after a successful password reset
 
+<!-- handsoff-issue-1401 -->
+- #1401: Disable implicit DTO coercion for security-sensitive numeric fields
+
+<!-- handsoff-issue-1402 -->
+- #1402: Normalize Unicode identifiers before uniqueness checks
+
+<!-- handsoff-issue-1403 -->
+- #1403: Standardize omitted and null semantics for PATCH requests
+
+<!-- handsoff-issue-1404 -->
+- #1404: Bound query parameter counts and repeated-value lengths
+
+<!-- handsoff-issue-1405 -->
+- #1405: Require explicit offsets for API timestamp filters
+
+<!-- handsoff-issue-1406 -->
+- #1406: Restrict API documentation endpoints by deployment policy
+
+<!-- handsoff-issue-1407 -->
+- #1407: Apply no-store cache policy to personalized API responses
+
+<!-- handsoff-issue-1408 -->
+- #1408: Add regression tests for secret and PII redaction in structured logs
+
 <!-- handsoff-issue-1414 -->
 - #1414: Consume OAuth state values atomically and only once
 
