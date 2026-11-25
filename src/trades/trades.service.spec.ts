@@ -14,6 +14,7 @@ describe('TradesService', () => {
   let mockRiskManager: jest.Mocked<Partial<RiskManagerService>>;
   let mockTradeExecutor: jest.Mocked<Partial<TradeExecutorService>>;
   let mockVelocityRiskManager: any;
+  let mockStellarAuthPreflight: any;
 
   beforeEach(async () => {
     mockRepository = createMockRepository();
@@ -31,6 +32,9 @@ describe('TradesService', () => {
       recordTradeExecution: jest.fn(),
       handleTradeLoss: jest.fn(),
     };
+    mockStellarAuthPreflight = {
+      checkAssetAuthorization: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -39,6 +43,7 @@ describe('TradesService', () => {
         { provide: RiskManagerService, useValue: mockRiskManager },
         { provide: TradeExecutorService, useValue: mockTradeExecutor },
         { provide: 'VelocityRiskManager', useValue: mockVelocityRiskManager },
+        { provide: 'StellarAuthPreflight', useValue: mockStellarAuthPreflight },
       ],
     }).compile();
 
@@ -58,6 +63,13 @@ describe('TradesService', () => {
       walletAddress: 'GABC...',
     };
 
+    beforeEach(() => {
+      mockStellarAuthPreflight.checkAssetAuthorization.mockResolvedValue({
+        authorized: true,
+        reason: null,
+      });
+    });
+
     it('should execute trade successfully', async () => {
       mockRiskManager.checkDuplicateTrade.mockResolvedValue(false);
       mockRiskManager.validateTrade.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
@@ -75,6 +87,7 @@ describe('TradesService', () => {
 
       expect(result.status).toBe(TradeStatus.COMPLETED);
       expect(mockRiskManager.checkDuplicateTrade).toHaveBeenCalled();
+      expect(mockStellarAuthPreflight.checkAssetAuthorization).toHaveBeenCalled();
       expect(mockTradeExecutor.executeTrade).toHaveBeenCalled();
     });
 
@@ -107,6 +120,80 @@ describe('TradesService', () => {
       });
 
       await expect(service.executeTrade(dto)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject trade when issuer authorization is revoked', async () => {
+      mockRiskManager.checkDuplicateTrade.mockResolvedValue(false);
+      mockRiskManager.validateTrade.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
+      mockVelocityRiskManager.validateTrade.mockResolvedValue(undefined);
+      mockStellarAuthPreflight.checkAssetAuthorization.mockResolvedValue({
+        authorized: false,
+        reason: 'STELLAR_ISSUER_AUTHORIZATION_REVOKED',
+      });
+
+      await expect(service.executeTrade(dto)).rejects.toThrow(BadRequestException);
+      expect(mockTradeExecutor.executeTrade).not.toHaveBeenCalled();
+    });
+
+    it('should reject trade when asset is frozen', async () => {
+      mockRiskManager.checkDuplicateTrade.mockResolvedValue(false);
+      mockRiskManager.validateTrade.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
+      mockVelocityRiskManager.validateTrade.mockResolvedValue(undefined);
+      mockStellarAuthPreflight.checkAssetAuthorization.mockResolvedValue({
+        authorized: false,
+        reason: 'STELLAR_ASSET_FROZEN',
+      });
+
+      await expect(service.executeTrade(dto)).rejects.toThrow(BadRequestException);
+      expect(mockTradeExecutor.executeTrade).not.toHaveBeenCalled();
+    });
+
+    it('should reject trade when clawback state is unsupported', async () => {
+      mockRiskManager.checkDuplicateTrade.mockResolvedValue(false);
+      mockRiskManager.validateTrade.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
+      mockVelocityRiskManager.validateTrade.mockResolvedValue(undefined);
+      mockStellarAuthPreflight.checkAssetAuthorization.mockResolvedValue({
+        authorized: false,
+        reason: 'STELLAR_CLAWBACK_UNSUPPORTED',
+      });
+
+      await expect(service.executeTrade(dto)).rejects.toThrow(BadRequestException);
+      expect(mockTradeExecutor.executeTrade).not.toHaveBeenCalled();
+    });
+
+    it('should reject trade when issuer lookup fails', async () => {
+      mockRiskManager.checkDuplicateTrade.mockResolvedValue(false);
+      mockRiskManager.validateTrade.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
+      mockVelocityRiskManager.validateTrade.mockResolvedValue(undefined);
+      mockStellarAuthPreflight.checkAssetAuthorization.mockRejectedValue(
+        new Error('issuer lookup failed'),
+      );
+
+      await expect(service.executeTrade(dto)).rejects.toThrow(BadRequestException);
+      expect(mockTradeExecutor.executeTrade).not.toHaveBeenCalled();
+    });
+
+    it('should retry issuer authorization lookup before failing', async () => {
+      mockRiskManager.checkDuplicateTrade.mockResolvedValue(false);
+      mockRiskManager.validateTrade.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
+      mockVelocityRiskManager.validateTrade.mockResolvedValue(undefined);
+      mockStellarAuthPreflight.checkAssetAuthorization
+        .mockRejectedValueOnce(new Error('transient issuer lookup failure'))
+        .mockResolvedValueOnce({ authorized: true, reason: null });
+      mockRepository.create.mockReturnValue(tradeFactory());
+      mockRepository.save.mockResolvedValue(tradeFactory({ status: TradeStatus.COMPLETED }));
+      mockTradeExecutor.executeTrade.mockResolvedValue({
+        success: true,
+        transactionHash: 'hash123',
+        contractId: 'contract123',
+      });
+      mockVelocityRiskManager.recordTradeExecution.mockResolvedValue(undefined);
+
+      const result = await service.executeTrade(dto);
+
+      expect(result.status).toBe(TradeStatus.COMPLETED);
+      expect(mockStellarAuthPreflight.checkAssetAuthorization).toHaveBeenCalledTimes(2);
+      expect(mockTradeExecutor.executeTrade).toHaveBeenCalled();
     });
   });
 
