@@ -99,11 +99,14 @@ export class LoggerService implements NestLoggerService {
 
     this.logger = winston.createLogger({
       level: logLevel,
-      // Stamp every log line with the active request's correlation ID
+      // Stamp every log line with the active request's correlation ID and
+      // redact sensitive / PII fields at the transport boundary so that no
+      // transport (console, error file, combined file) can leak protected
+      // values, regardless of how the log call was made.
       format: winston.format((info) => {
         const correlationId = getCorrelationId();
         if (correlationId && !info.correlationId) info.correlationId = correlationId;
-        return info;
+        return redactSensitiveFields(info);
       })(),
       transports,
       exitOnError: false,
