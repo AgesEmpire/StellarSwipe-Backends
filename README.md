@@ -877,6 +877,18 @@ MIT
 <!-- handsoff-issue-1413 -->
 - #1413: Revoke active refresh sessions after a successful password reset
 
+<!-- handsoff-issue-1422 -->
+- #1422: Publish completed export artifacts atomically
+
+<!-- handsoff-issue-1425 -->
+- #1425: Define catch-up behavior for scheduled jobs missed during downtime
+
+<!-- handsoff-issue-1426 -->
+- #1426: Preserve configured time zones in recurring schedule evaluation
+
+<!-- handsoff-issue-1427 -->
+- #1427: Detect stalled background workers with independent liveness heartbeats
+
 <!-- handsoff-issue-1505 -->
 - #1505: Validate Stellar issuer authorization before allowing trade execution
 
