@@ -876,3 +876,15 @@ MIT
 
 <!-- handsoff-issue-1413 -->
 - #1413: Revoke active refresh sessions after a successful password reset
+
+<!-- handsoff-issue-1405 -->
+- #1405: Require explicit offsets for API timestamp filters
+
+<!-- handsoff-issue-1406 -->
+- #1406: Restrict API documentation endpoints by deployment policy
+
+<!-- handsoff-issue-1407 -->
+- #1407: Apply no-store cache policy to personalized API responses
+
+<!-- handsoff-issue-1408 -->
+- #1408: Add regression tests for secret and PII redaction in structured logs
