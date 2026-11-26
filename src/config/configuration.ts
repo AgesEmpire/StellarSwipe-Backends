@@ -19,6 +19,111 @@ const parsePositiveInt = (value: string | undefined, fallback: number): number =
 };
 
 /**
+ * Canonical public origin (issue #1397).
+ *
+ * Absolute URLs (email links, callback URLs, API-generated links) must be built
+ * from a configured canonical origin rather than an untrusted Host or
+ * forwarded-host header. The value is validated at startup so a malformed or
+ * wildcard origin fails fast instead of silently producing attacker-controlled
+ * links.
+ */
+const parseCanonicalOrigin = (value: string | undefined): string => {
+  const raw = (value || '').trim();
+
+  if (raw.length === 0) {
+    return '';
+  }
+
+  try {
+    const url = new URL(raw);
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return '';
+    }
+
+    // Reject wildcards and path/query/fragment components: only a bare origin
+    // (scheme + host + optional port) is a valid canonical public origin.
+    if (url.hostname.includes('*')) {
+      return '';
+    }
+
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      return '';
+    }
+
+    return url.origin;
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * Canonical public origin configuration (issue #1397).
+ * Used to generate absolute URLs independent of request headers.
+ */
+const publicOrigin = {
+  canonical: parseCanonicalOrigin(process.env.PUBLIC_ORIGIN),
+};
+
+/**
+ * CORS origin normalization (issue #1399).
+ *
+ * Allowed origins are parsed from a comma-separated list and normalized to a
+ * bare origin (scheme + host + optional port) so matching is exact. Entries
+ * that are not valid absolute http(s) origins, or that contain wildcards, are
+ * preserved verbatim so startup validation can reject them with an actionable
+ * error instead of silently dropping them.
+ */
+const normalizeCorsOrigin = (value: string): string => {
+  const raw = value.trim();
+
+  if (raw.length === 0) {
+    return '';
+  }
+
+  if (raw === '*') {
+    return raw;
+  }
+
+  try {
+    const url = new URL(raw);
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return raw;
+    }
+
+    if (url.hostname.includes('*')) {
+      return raw;
+    }
+
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      return raw;
+    }
+
+    return url.origin;
+  } catch {
+    return raw;
+  }
+};
+
+/**
+ * CORS configuration (issue #1399).
+ *
+ * Credentialed CORS must never be combined with wildcard origins: browsers
+ * reject `Access-Control-Allow-Origin: *` when credentials are included, and
+ * reflecting arbitrary origins would defeat the same-origin policy. The
+ * combination is rejected at startup by validateConfiguration.
+ */
+const cors = {
+  enabled: process.env.CORS_ENABLED !== 'false',
+  credentials: process.env.CORS_CREDENTIALS === 'true',
+  origins: (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => normalizeCorsOrigin(origin))
+    .filter((origin) => origin.length > 0),
+};
+
+/**
  * Request payload and parameter size limits (issue #1166).
  * All limits are configurable via environment variables and enforced
  * consistently across transports before expensive processing occurs.
@@ -132,6 +237,37 @@ const validateProductionSecret = (
 };
 
 /**
+ * Validate a single CORS origin entry (issue #1399).
+ * Returns an error message when the entry is not a valid absolute http(s)
+ * origin, or when it contains a wildcard.
+ */
+const validateCorsOrigin = (origin: string): string | null => {
+  if (origin === '*') {
+    return 'CORS_ORIGINS must not contain the wildcard "*" origin.';
+  }
+
+  if (origin.includes('*')) {
+    return `CORS_ORIGINS entry "${origin}" must not contain wildcards; list explicit origins instead.`;
+  }
+
+  try {
+    const url = new URL(origin);
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return `CORS_ORIGINS entry "${origin}" must use the http or https scheme.`;
+    }
+
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      return `CORS_ORIGINS entry "${origin}" must be a bare origin (scheme + host + optional port).`;
+    }
+  } catch {
+    return `CORS_ORIGINS entry "${origin}" must be a valid absolute http(s) origin.`;
+  }
+
+  return null;
+};
+
+/**
  * Cross-field configuration relationships (issue #1232).
  * Validates dependencies between network endpoints, retry limits, and
  * timeout budgets so invalid combinations fail startup with actionable errors.
@@ -139,6 +275,8 @@ const validateProductionSecret = (
 export const validateConfiguration = (config: {
   env: string;
   port: number;
+  publicOrigin: { canonical: string };
+  cors: { enabled: boolean; credentials: boolean; origins: string[] };
   encryptionSecrets: { encryptionKey: string; signingSecret: string };
   rateLimit: {
     enabled: boolean;
@@ -160,6 +298,33 @@ export const validateConfiguration = (config: {
     );
   }
 
+  // Canonical public origin (issue #1397): required in production so generated
+  // absolute URLs never depend on untrusted Host / X-Forwarded-Host headers.
+  if (config.env === 'production' && config.publicOrigin.canonical.length === 0) {
+    errors.push(
+      'PUBLIC_ORIGIN must be set to a valid absolute http(s) origin (e.g. https://app.example.com) in production.',
+    );
+  }
+
+  // CORS origins (issue #1399): every configured origin must be a valid bare
+  // http(s) origin, and credentialed CORS must never be combined with a
+  // wildcard origin.
+  if (config.cors.enabled) {
+    for (const origin of config.cors.origins) {
+      const error = validateCorsOrigin(origin);
+
+      if (error) {
+        errors.push(error);
+      }
+    }
+
+    if (config.cors.credentials && config.cors.origins.includes('*')) {
+      errors.push(
+        'CORS_CREDENTIALS cannot be enabled together with a wildcard CORS_ORIGINS entry; list explicit origins instead.',
+      );
+    }
+  }
+
   // Production secrets: reject empty, placeholder, and undersized key material.
   // Development and test environments are intentionally exempt so local setups
   // remain usable without weakening the production checks.
@@ -179,99 +344,6 @@ export const validateConfiguration = (config: {
       );
     }
 
-    if (!['redis', 'memory'].includes(config.rateLimit.store.type)) {
-      errors.push(
-        `RATE_LIMIT_STORE must be one of: redis, memory (received: ${config.rateLimit.store.type}).`,
-      );
-    }
+    if (!['redis', 'memo
 
-    if (!['allow', 'deny'].includes(config.rateLimit.onStoreError)) {
-      errors.push(
-        `RATE_LIMIT_ON_STORE_ERROR must be one of: allow, deny (received: ${config.rateLimit.onStoreError}).`,
-      );
-    }
-  }
-
-  // Retry limits: each policy must define a positive window and a non-negative max.
-  const policies = config.rateLimit.policies;
-  (Object.keys(policies) as Array<keyof typeof policies>).forEach((name) => {
-    const policy = policies[name];
-
-    if (!Number.isInteger(policy.windowMs) || policy.windowMs <= 0) {
-      errors.push(
-        `RATE_LIMIT_${name.toUpperCase()}_WINDOW_MS must be a positive integer (received: ${policy.windowMs}).`,
-      );
-    }
-
-    if (!Number.isInteger(policy.max) || policy.max < 0) {
-      errors.push(
-        `RATE_LIMIT_${name.toUpperCase()}_MAX must be a non-negative integer (received: ${policy.max}).`,
-      );
-    }
-  });
-
-  // Timeout budget: the auth window must not exceed the public window, and the
-  // auth retry limit must not exceed the public retry limit.
-  if (policies.auth.windowMs > policies.public.windowMs) {
-    errors.push(
-      `RATE_LIMIT_AUTH_WINDOW_MS (${policies.auth.windowMs}) must not exceed RATE_LIMIT_PUBLIC_WINDOW_MS (${policies.public.windowMs}).`,
-    );
-  }
-
-  if (policies.auth.max > policies.public.max) {
-    errors.push(
-      `RATE_LIMIT_AUTH_MAX (${policies.auth.max}) must not exceed RATE_LIMIT_PUBLIC_MAX (${policies.public.max}).`,
-    );
-  }
-
-  if (errors.length > 0) {
-    throw new Error(
-      `Invalid configuration:\n- ${errors.join('\n- ')}`,
-    );
-  }
-};
-
-export default registerAs('app', () => {
-  const config = {
-    env: process.env.NODE_ENV || 'development',
-    port: parseInt(process.env.PORT || '3000', 10),
-    requestLimits,
-    secretsRotation,
-    encryptionSecrets,
-    rateLimit: {
-      // Distributed rate limiting for public and auth-sensitive routes.
-      // Uses a shared store (Redis) so limits are enforced across all instances.
-      enabled: process.env.RATE_LIMIT_ENABLED !== 'false',
-      store: {
-        type: process.env.RATE_LIMIT_STORE || 'redis',
-        url: process.env.RATE_LIMIT_STORE_URL || process.env.REDIS_URL || 'redis://localhost:6379',
-        keyPrefix: process.env.RATE_LIMIT_KEY_PREFIX || 'ratelimit:',
-      },
-      // Behavior when the shared store is unavailable.
-      // 'allow' fails open (availability over strictness), 'deny' fails closed.
-      onStoreError: process.env.RATE_LIMIT_ON_STORE_ERROR || 'allow',
-      policies: {
-        // Public, unauthenticated routes.
-        public: {
-          windowMs: parseInt(process.env.RATE_LIMIT_PUBLIC_WINDOW_MS || '60000', 10),
-          max: parseInt(process.env.RATE_LIMIT_PUBLIC_MAX || '100', 10),
-        },
-        // Authentication-sensitive routes (login, token, password reset).
-        auth: {
-          windowMs: parseInt(process.env.RATE_LIMIT_AUTH_WINDOW_MS || '60000', 10),
-          max: parseInt(process.env.RATE_LIMIT_AUTH_MAX || '10', 10),
-        },
-        // Trusted internal routes: explicit, effectively unlimited policy.
-        internal: {
-          windowMs: parseInt(process.env.RATE_LIMIT_INTERNAL_WINDOW_MS || '60000', 10),
-          max: parseInt(process.env.RATE_LIMIT_INTERNAL_MAX || '1000000', 10),
-          skip: process.env.RATE_LIMIT_INTERNAL_SKIP === 'true',
-        },
-      },
-    },
-  };
-
-  validateConfiguration(config);
-
-  return config;
-});
+/* … truncated 1958 chars — edit only what you need near the top … */

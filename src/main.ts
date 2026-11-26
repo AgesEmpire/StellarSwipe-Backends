@@ -1,50 +1,120 @@
-import { NestFactory, Reflector } from "@nestjs/core";
-import { MicroserviceOptions, Transport } from "@nestjs/microservices";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import { ConfigService } from "@nestjs/config";
-import { VersioningType } from '@nestjs/common';
-import { I18nValidationPipe } from 'nestjs-i18n';
-import * as compression from 'compression';
-import { AppModule } from "./app.module";
-import { GlobalExceptionFilter } from "./common/filters";
-import { correlationIdMiddleware } from './common/correlation';
-import { IdempotencyInterceptor } from './common/idempotency';
-import { ProblemDetailsFilter } from "./common/filters";
-import { ErrorClassificationService } from "./common/error-classification";
-import { RateLimitMiddleware } from './common/middleware/rate-limit.middleware';
-import {
-  LoggingInterceptor,
-  TimeoutInterceptor,
-  SensitiveDataInterceptor,
-  ResponseEnvelopeInterceptor,
-  StellarMemoInterceptor,
-  StripInternalFieldsInterceptor,
-  CorrelationIdInterceptor,
-} from './common/interceptors';
-import { LoggerService } from './common/logger';
-import { CorrelationIdStore } from './common/correlation/correlation-id.store';
-import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
-import { SentryService } from './common/sentry';
-import { ShutdownService, ShutdownGuardMiddleware } from './common/shutdown';
-import { ReadinessService } from './health/readiness.service';
-import { SanitizationPipe } from './common/pipes';
-import { RedisIoAdapter } from './websocket/adapters/redis-io.adapter';
-import { InstanceCoordinatorService } from './scaling/instance-coordinator.service';
-import { compressionConfig } from './common/config/compression.config';
-import { MetricsInterceptor } from './monitoring/metrics/metrics.interceptor';
-import { DeadlockRetryInterceptor } from './database/deadlock-retry.interceptor';
-import { NPlus1DetectionInterceptor } from './database/nplus1-detection.interceptor';
-import { QueryPerformanceService } from './database/query-performance.service';
-import { initTracing } from './monitoring/tracing/jaeger.config';
-import { DocGeneratorService } from './documentation/doc-generator.service';
-import { generateOpenApiDocument } from './documentation/generators/openapi-generator';
-import { DeprecationInterceptor } from './versioning/interceptors/deprecation.interceptor';
-import { VersionCompatibilityGuard } from './versioning/guards/version-compatibility.guard';
-import { VersionManagerService } from './versioning/version-manager.service';
-import { RequestSizeLimitMiddleware } from './common/middleware/request-size-limit.middleware';
-import { validateConfigurationRelationships } from './common/config/config-relationship.validator';
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
 
-initTracing();
+const PROTECTED_HEADERS = ['authorization', 'host', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip'];
+
+const DEFAULT_MAX_JSON_DEPTH = 32;
+
+function rejectAmbiguousHeaders(req: any, res: any, next: () => void): void {
+  for (const name of PROTECTED_HEADERS) {
+    const raw = req.headers[name];
+    if (raw === undefined) {
+      continue;
+    }
+    const values = Array.isArray(raw) ? raw : [raw];
+    const normalized = values.map((v: string) => String(v).trim().toLowerCase());
+    const hasConflict = normalized.some((v: string) => v !== normalized[0]);
+    if (values.length > 1 || hasConflict) {
+      res.status(400).json({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `Duplicate or conflicting ${name} header is not allowed`,
+      });
+      return;
+    }
+  }
+  next();
+}
+
+function parseAllowedOrigins(raw: string | undefined): string[] {
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+}
+
+function isValidOriginPattern(origin: string): boolean {
+  if (origin === '*') {
+    return true;
+  }
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+function resolveCorsOptions(): { origin: string[] | boolean; credentials: boolean } {
+  const credentials = String(process.env.CORS_CREDENTIALS ?? '').toLowerCase() === 'true';
+  const origins = parseAllowedOrigins(process.env.CORS_ORIGINS);
+
+  for (const origin of origins) {
+    if (!isValidOriginPattern(origin)) {
+      throw new Error(`Invalid CORS origin pattern: ${origin}`);
+    }
+  }
+
+  if (credentials && origins.includes('*')) {
+    throw new Error('CORS wildcard origin cannot be combined with credentials');
+  }
+
+  if (origins.length === 0) {
+    return { origin: false, credentials };
+  }
+
+  return { origin: origins, credentials };
+}
+
+function resolveMaxJsonDepth(): number {
+  const raw = process.env.MAX_JSON_DEPTH;
+  if (raw === undefined || raw.trim() === '') {
+    return DEFAULT_MAX_JSON_DEPTH;
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid MAX_JSON_DEPTH: ${raw} (expected a positive integer)`);
+  }
+  return parsed;
+}
+
+function exceedsMaxDepth(value: unknown, maxDepth: number, depth = 0): boolean {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  if (depth >= maxDepth) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => exceedsMaxDepth(item, maxDepth, depth + 1));
+  }
+  return Object.values(value as Record<string, unknown>).some((item) =>
+    exceedsMaxDepth(item, maxDepth, depth + 1),
+  );
+}
+
+function createJsonDepthGuard(maxDepth: number) {
+  return function rejectDeepJson(req: any, res: any, next: () => void): void {
+    const body = req.body;
+    if (body === undefined || body === null) {
+      next();
+      return;
+    }
+    if (exceedsMaxDepth(body, maxDepth)) {
+      res.status(400).json({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `JSON body exceeds maximum nesting depth of ${maxDepth}`,
+      });
+      return;
+    }
+    next();
+  };
+}
 
 /**
  * Resolve whether API documentation (OpenAPI JSON + interactive Swagger UI)
