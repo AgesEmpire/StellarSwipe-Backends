@@ -11,6 +11,8 @@ import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { BulkExport, ExportFormat, ExportStatus, ExportType } from './entities/bulk-export.entity';
 import { InitiateExportDto } from './dto/initiate-export.dto';
 
@@ -22,6 +24,18 @@ const URL_TTL_MS = 60 * 60 * 1000;
 
 /** Max concurrent pending/processing exports per user */
 const MAX_ACTIVE_EXPORTS = 3;
+
+/**
+ * Private staging directory where in-progress artifacts are written.
+ * Files here are never resolvable through download endpoints.
+ */
+const STAGING_DIR = path.join(process.cwd(), 'storage', 'exports', '.staging');
+
+/**
+ * Public directory where finalized artifacts live. Only files that have
+ * been atomically moved here are exposed through download endpoints.
+ */
+const PUBLIC_DIR = path.join(process.cwd(), 'storage', 'exports');
 
 @Injectable()
 export class ExportsService {
@@ -96,10 +110,43 @@ export class ExportsService {
   }
 
   /**
+   * Returns the private staging path for an export. Generators must write
+   * their output here; the artifact is not downloadable until finalized.
+   */
+  getStagingPath(exportId: string, format: ExportFormat): string {
+    const ext = format === ExportFormat.CSV ? 'csv' : 'json';
+    return path.join(STAGING_DIR, `${exportId}.${ext}`);
+  }
+
+  /**
    * Called by the queue processor once the file is ready.
-   * Generates a signed temporary download URL (token-based).
+   * Atomically finalizes the staged artifact (rename into the public
+   * directory) and only then generates a signed temporary download URL.
+   * If the staged file is missing or empty, the export is marked failed
+   * and no download URL is exposed.
    */
   async markCompleted(exportId: string, rowCount: number): Promise<void> {
+    const exportJob = await this.exportRepo.findOne({ where: { id: exportId } });
+    if (!exportJob) throw new NotFoundException(`Export ${exportId} not found`);
+
+    const stagedPath = this.getStagingPath(exportId, exportJob.format);
+    const finalPath = path.join(PUBLIC_DIR, path.basename(stagedPath));
+
+    try {
+      const stat = await fs.promises.stat(stagedPath);
+      if (!stat.isFile() || stat.size === 0) {
+        throw new Error('Staged artifact is missing or empty');
+      }
+
+      await fs.promises.mkdir(PUBLIC_DIR, { recursive: true });
+      // Atomic finalization: rename within the same filesystem is atomic,
+      // so the artifact becomes visible only once fully written.
+      await fs.promises.rename(stagedPath, finalPath);
+    } catch (err) {
+      await this.markFailed(exportId, `Finalization failed: ${(err as Error).message}`);
+      return;
+    }
+
     const token = crypto.randomBytes(32).toString('hex');
     const urlExpiresAt = new Date(Date.now() + URL_TTL_MS);
     const downloadUrl = `/api/v1/exports/${exportId}/download?token=${token}`;
@@ -115,6 +162,14 @@ export class ExportsService {
   }
 
   async markFailed(exportId: string, errorMessage: string): Promise<void> {
+    // Clean up any partial staged artifact so restarts do not resume from
+    // an incomplete file.
+    const exportJob = await this.exportRepo.findOne({ where: { id: exportId } });
+    if (exportJob) {
+      const stagedPath = this.getStagingPath(exportId, exportJob.format);
+      await fs.promises.rm(stagedPath, { force: true }).catch(() => undefined);
+    }
+
     await this.exportRepo.update(exportId, {
       status: ExportStatus.FAILED,
       errorMessage,
@@ -128,6 +183,8 @@ export class ExportsService {
 
   /**
    * Validate download token and return export if valid.
+   * Incomplete artifacts are never resolvable: the export must be COMPLETED
+   * and its finalized file must exist in the public directory.
    */
   async validateDownload(userId: string, exportId: string, token: string): Promise<BulkExport> {
     const exportJob = await this.findOne(userId, exportId);
@@ -143,6 +200,16 @@ export class ExportsService {
     const expectedToken = exportJob.downloadUrl?.split('token=')[1];
     if (!expectedToken || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expectedToken))) {
       throw new ForbiddenException('Invalid download token');
+    }
+
+    const finalPath = path.join(PUBLIC_DIR, path.basename(this.getStagingPath(exportId, exportJob.format)));
+    try {
+      const stat = await fs.promises.stat(finalPath);
+      if (!stat.isFile() || stat.size === 0) {
+        throw new Error('missing');
+      }
+    } catch {
+      throw new NotFoundException('Export artifact is not available');
     }
 
     return exportJob;

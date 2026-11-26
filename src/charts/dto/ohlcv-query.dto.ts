@@ -21,6 +21,27 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   [Timeframe.ONE_WEEK]: 604800,
 };
 
+// RFC 3339 timestamp with a mandatory timezone offset or Z designator.
+// Rejects ambiguous local timestamps (no offset) and unsupported precision
+// (fractional seconds beyond milliseconds).
+const RFC3339_WITH_OFFSET =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Parse an RFC 3339 timestamp that carries an explicit offset (or Z) and
+ * normalize it to a UTC Date. Returns null for ambiguous or invalid input.
+ */
+export function parseRfc3339ToUtc(value: unknown): Date | null {
+  if (typeof value !== 'string' || !RFC3339_WITH_OFFSET.test(value)) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
 export class OhlcvQueryDto {
   @IsEnum(Timeframe)
   @IsOptional()
@@ -32,4 +53,12 @@ export class OhlcvQueryDto {
   @IsOptional()
   @Type(() => Number)
   limit?: number = 100;
+
+  @IsOptional()
+  @Type(() => String)
+  from?: string;
+
+  @IsOptional()
+  @Type(() => String)
+  to?: string;
 }
